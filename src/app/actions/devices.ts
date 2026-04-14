@@ -24,6 +24,11 @@ const unassignDeviceSchema = z.object({
   deviceId: z.string().uuid(),
 });
 
+const updateTagsSchema = z.object({
+  deviceId: z.string().uuid(),
+  tags: z.array(z.string().min(1).max(50)).max(20),
+});
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -98,6 +103,30 @@ export async function unassignDevice(
   const { error } = await supabase
     .from("devices")
     .update({ account_id: null })
+    .eq("id", parsed.data.deviceId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/infrastructure");
+  return { error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Tags
+// ---------------------------------------------------------------------------
+
+export async function updateDeviceTags(
+  input: z.infer<typeof updateTagsSchema>
+): Promise<{ error: string | null }> {
+  await requireAdmin();
+
+  const parsed = updateTagsSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("devices")
+    .update({ tags: parsed.data.tags })
     .eq("id", parsed.data.deviceId);
 
   if (error) return { error: error.message };

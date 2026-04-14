@@ -28,12 +28,15 @@ import {
   Globe,
   Shield,
   Tag,
+  X,
 } from "lucide-react";
 import {
   assignDeviceToAccount,
   unassignDevice,
   syncDeviceDetail,
+  updateDeviceTags,
 } from "@/app/actions/devices";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { Account, Device } from "@/types";
@@ -109,6 +112,7 @@ interface DeviceItemProps {
 export function DeviceItem({ device, accounts, onUpdated }: DeviceItemProps) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [tagInput, setTagInput] = useState("");
   const isRunning = device.state === "running";
   const isRemoved = device.state === "removed";
 
@@ -153,6 +157,41 @@ export function DeviceItem({ device, accounts, onUpdated }: DeviceItemProps) {
     [device.id, onUpdated, startTransition]
   );
 
+  const handleAddTag = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== "Enter") return;
+      const tag = tagInput.trim().toLowerCase();
+      if (!tag || device.tags.includes(tag)) {
+        setTagInput("");
+        return;
+      }
+      setTagInput("");
+      startTransition(async () => {
+        const result = await updateDeviceTags({
+          deviceId: device.id,
+          tags: [...device.tags, tag],
+        });
+        if (result.error) toast.error(result.error);
+        else onUpdated();
+      });
+    },
+    [device.id, device.tags, tagInput, onUpdated, startTransition]
+  );
+
+  const handleRemoveTag = useCallback(
+    (tag: string) => {
+      startTransition(async () => {
+        const result = await updateDeviceTags({
+          deviceId: device.id,
+          tags: device.tags.filter((t) => t !== tag),
+        });
+        if (result.error) toast.error(result.error);
+        else onUpdated();
+      });
+    },
+    [device.id, device.tags, onUpdated, startTransition]
+  );
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       {/* Trigger row */}
@@ -191,6 +230,22 @@ export function DeviceItem({ device, accounts, onUpdated }: DeviceItemProps) {
               {device.user_name || device.db_id}
             </span>
           </div>
+
+          {/* Tags */}
+          {device.tags.length > 0 && (
+            <div className="hidden items-center gap-1 sm:flex">
+              {device.tags.slice(0, 2).map((tag) => (
+                <Badge key={tag} variant="secondary" className="text-[10px] px-1.5 py-0">
+                  {tag}
+                </Badge>
+              ))}
+              {device.tags.length > 2 && (
+                <span className="text-[10px] text-muted-foreground">
+                  +{device.tags.length - 2}
+                </span>
+              )}
+            </div>
+          )}
 
           {device.account_id && (
             <span title="Assigned to account">
@@ -340,6 +395,35 @@ export function DeviceItem({ device, accounts, onUpdated }: DeviceItemProps) {
                   ))}
                 </SelectContent>
               </Select>
+
+              <Separator className="my-2" />
+
+              <div className="mb-2">
+                <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Tags
+                </span>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {device.tags.map((tag) => (
+                    <Badge key={tag} variant="outline" className="gap-0.5 pr-0.5 text-[10px]">
+                      {tag}
+                      <button
+                        onClick={() => handleRemoveTag(tag)}
+                        className="ml-0.5 rounded-sm p-0.5 hover:bg-destructive/10 hover:text-destructive transition-colors"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+                <Input
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={handleAddTag}
+                  placeholder="Add tag + Enter"
+                  className="mt-1 h-7 text-xs"
+                  disabled={isPending}
+                />
+              </div>
 
               <Separator className="my-2" />
 

@@ -88,6 +88,7 @@ export interface Device {
   proxy_password: string | null;
   battery_level: number | null;
   docker_ip: string | null;
+  tags: string[];
   last_seen: string | null;
 
   created_at: string;
