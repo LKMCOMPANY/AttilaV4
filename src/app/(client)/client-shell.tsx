@@ -10,10 +10,7 @@ import type { UserProfile } from "@/types";
 import { createClient } from "@/lib/supabase/client";
 
 const CLIENT_NAV = [
-  { label: "Overview", href: "/dashboard" },
-  { label: "Avatars", href: "/dashboard/avatars" },
-  { label: "Devices", href: "/dashboard/devices" },
-  { label: "Campaigns", href: "/dashboard/campaigns" },
+  { label: "Operator", href: "/dashboard/operator" },
 ];
 
 interface ClientShellProps {

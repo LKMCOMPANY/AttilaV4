@@ -98,3 +98,76 @@ export interface Device {
 export interface DeviceWithBox extends Device {
   box: Box;
 }
+
+// ---------------------------------------------------------------------------
+// Avatars — Personality enums (single source of truth)
+// ---------------------------------------------------------------------------
+
+export const WRITING_STYLES = ["casual", "formal", "journalistic", "provocative", "diplomatic"] as const;
+export const TONES = ["neutral", "humorous", "serious", "sarcastic", "empathetic", "aggressive"] as const;
+export const VOCABULARY_LEVELS = ["simple", "standard", "advanced", "technical"] as const;
+export const EMOJI_USAGES = ["none", "sparse", "moderate", "frequent"] as const;
+export const SOCIAL_PLATFORMS = ["twitter", "tiktok", "reddit", "instagram"] as const;
+
+export type WritingStyle = (typeof WRITING_STYLES)[number];
+export type Tone = (typeof TONES)[number];
+export type VocabularyLevel = (typeof VOCABULARY_LEVELS)[number];
+export type EmojiUsage = (typeof EMOJI_USAGES)[number];
+export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
+
+export interface SocialCredentials {
+  handle?: string;
+  email?: string;
+  password?: string;
+  phone?: string;
+  user_id?: string;
+}
+
+export interface Avatar {
+  id: string;
+  account_id: string;
+  first_name: string;
+  last_name: string;
+  profile_image_url: string | null;
+  email: string | null;
+  phone: string | null;
+  country_code: string;
+  language_code: string;
+  device_id: string | null;
+  writing_style: WritingStyle;
+  tone: Tone;
+  vocabulary_level: VocabularyLevel;
+  emoji_usage: EmojiUsage;
+  personality_traits: string[];
+  topics_expertise: string[];
+  topics_avoid: string[];
+  twitter_enabled: boolean;
+  tiktok_enabled: boolean;
+  reddit_enabled: boolean;
+  instagram_enabled: boolean;
+  twitter_credentials: SocialCredentials;
+  tiktok_credentials: SocialCredentials;
+  reddit_credentials: SocialCredentials;
+  instagram_credentials: SocialCredentials;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AvatarWithRelations extends Avatar {
+  device?: Device | null;
+  armies?: Army[];
+  operators?: UserProfile[];
+}
+
+// ---------------------------------------------------------------------------
+// Armies
+// ---------------------------------------------------------------------------
+
+export interface Army {
+  id: string;
+  account_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}

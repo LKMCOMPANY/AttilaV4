@@ -142,7 +142,7 @@ export function AccountDetail({ account, onUpdated }: AccountDetailProps) {
 
         <div className="ml-auto">
           <Link
-            href={`/dashboard?account=${account.id}`}
+            href={`/dashboard/operator?account=${account.id}`}
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
             <ExternalLink data-icon="inline-start" className="h-3.5 w-3.5" />
