@@ -2,12 +2,6 @@
 
 import { Badge } from "@/components/ui/badge";
 import {
-  Accordion,
-  AccordionItem,
-  AccordionTrigger,
-  AccordionContent,
-} from "@/components/ui/accordion";
-import {
   Smartphone,
   Wifi,
   Shield,
@@ -59,7 +53,7 @@ export function DeviceTab({ avatar }: DeviceTabProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {/* Status header */}
       <div className="flex items-center gap-2 rounded-lg border bg-card/50 px-3 py-2.5">
         <span className={cn("h-2 w-2 rounded-full", STATE_CONFIG[device.state].dot)} />
@@ -72,85 +66,46 @@ export function DeviceTab({ avatar }: DeviceTabProps) {
         )}
       </div>
 
-      {/* Data sections */}
-      <Accordion defaultValue={["hardware"]}>
-        <AccordionItem value="hardware">
-          <AccordionTrigger className="py-2 text-[11px] hover:no-underline">
-            <div className="flex items-center gap-1.5">
-              <Cpu className="h-3 w-3 text-muted-foreground/60" />
-              <span className="font-semibold tracking-wide uppercase">Hardware</span>
-            </div>
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="divide-y divide-border/30 pb-1">
-              <InfoRow icon={Hash} label="DB ID" value={device.db_id} />
-              <InfoRow icon={User} label="Name" value={device.user_name} />
-              <InfoRow icon={Smartphone} label="Model" value={device.model} />
-              <InfoRow icon={HardDrive} label="Brand" value={device.brand} />
-              <InfoRow icon={Hash} label="Serial" value={device.serial} />
-              <InfoRow icon={Monitor} label="Resolution" value={device.resolution} />
-              <InfoRow icon={HardDrive} label="Memory" value={device.memory_mb ? `${device.memory_mb} MB` : null} />
-              <InfoRow icon={Monitor} label="DPI" value={device.dpi} />
-              <InfoRow icon={Eye} label="FPS" value={device.fps} />
-              <InfoRow icon={Battery} label="Battery" value={device.battery_level != null ? `${device.battery_level}%` : null} />
-            </div>
-          </AccordionContent>
-        </AccordionItem>
+      {/* Hardware */}
+      <Section title="Hardware" icon={Cpu}>
+        <InfoRow icon={Hash} label="DB ID" value={device.db_id} />
+        <InfoRow icon={User} label="Name" value={device.user_name} />
+        <InfoRow icon={Smartphone} label="Model" value={device.model} />
+        <InfoRow icon={HardDrive} label="Brand" value={device.brand} />
+        <InfoRow icon={Hash} label="Serial" value={device.serial} />
+        <InfoRow icon={Monitor} label="Resolution" value={device.resolution} />
+        <InfoRow icon={HardDrive} label="Memory" value={device.memory_mb ? `${device.memory_mb} MB` : null} />
+        <InfoRow icon={Monitor} label="DPI" value={device.dpi} />
+        <InfoRow icon={Eye} label="FPS" value={device.fps} />
+        <InfoRow icon={Battery} label="Battery" value={device.battery_level != null ? `${device.battery_level}%` : null} />
+      </Section>
 
-        <AccordionItem value="software">
-          <AccordionTrigger className="py-2 text-[11px] hover:no-underline">
-            <div className="flex items-center gap-1.5">
-              <Monitor className="h-3 w-3 text-muted-foreground/60" />
-              <span className="font-semibold tracking-wide uppercase">Software</span>
-            </div>
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="divide-y divide-border/30 pb-1">
-              <InfoRow icon={Image} label="Image" value={device.image} />
-              <InfoRow icon={Smartphone} label="AOSP" value={device.aosp_version} />
-              <InfoRow icon={Monitor} label="Screen" value={device.screen_state} />
-              <InfoRow icon={Monitor} label="Foreground App" value={device.foreground_app} />
-            </div>
-          </AccordionContent>
-        </AccordionItem>
+      {/* Software */}
+      <Section title="Software" icon={Monitor}>
+        <InfoRow icon={Image} label="Image" value={device.image} />
+        <InfoRow icon={Smartphone} label="AOSP" value={device.aosp_version} />
+        <InfoRow icon={Monitor} label="Screen" value={device.screen_state} />
+        <InfoRow icon={Monitor} label="Foreground App" value={device.foreground_app} />
+      </Section>
 
-        <AccordionItem value="network">
-          <AccordionTrigger className="py-2 text-[11px] hover:no-underline">
-            <div className="flex items-center gap-1.5">
-              <Globe className="h-3 w-3 text-muted-foreground/60" />
-              <span className="font-semibold tracking-wide uppercase">Network</span>
-            </div>
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="divide-y divide-border/30 pb-1">
-              <InfoRow icon={Globe} label="Country" value={device.country} />
-              <InfoRow icon={Globe} label="Locale" value={device.locale} />
-              <InfoRow icon={Clock} label="Timezone" value={device.timezone} />
-              <InfoRow icon={Wifi} label="Docker IP" value={device.docker_ip} />
-            </div>
-          </AccordionContent>
-        </AccordionItem>
+      {/* Network */}
+      <Section title="Network" icon={Globe}>
+        <InfoRow icon={Globe} label="Country" value={device.country} />
+        <InfoRow icon={Globe} label="Locale" value={device.locale} />
+        <InfoRow icon={Clock} label="Timezone" value={device.timezone} />
+        <InfoRow icon={Wifi} label="Docker IP" value={device.docker_ip} />
+      </Section>
 
-        {device.proxy_enabled && (
-          <AccordionItem value="proxy">
-            <AccordionTrigger className="py-2 text-[11px] hover:no-underline">
-              <div className="flex items-center gap-1.5">
-                <Shield className="h-3 w-3 text-muted-foreground/60" />
-                <span className="font-semibold tracking-wide uppercase">Proxy</span>
-              </div>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="divide-y divide-border/30 pb-1">
-                <InfoRow icon={Shield} label="Type" value={device.proxy_type} />
-                <InfoRow icon={Shield} label="Host" value={device.proxy_host} />
-                <InfoRow icon={Shield} label="Port" value={device.proxy_port} />
-                <InfoRow icon={User} label="Account" value={device.proxy_account} />
-                <InfoRow icon={Lock} label="Password" value={device.proxy_password ? "••••••••" : null} />
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        )}
-      </Accordion>
+      {/* Proxy */}
+      {device.proxy_enabled && (
+        <Section title="Proxy" icon={Shield}>
+          <InfoRow icon={Shield} label="Type" value={device.proxy_type} />
+          <InfoRow icon={Shield} label="Host" value={device.proxy_host} />
+          <InfoRow icon={Shield} label="Port" value={device.proxy_port} />
+          <InfoRow icon={User} label="Account" value={device.proxy_account} />
+          <InfoRow icon={Lock} label="Password" value={device.proxy_password ? "••••••••" : null} />
+        </Section>
+      )}
 
       {/* Tags */}
       {device.tags.length > 0 && (
@@ -163,6 +118,28 @@ export function DeviceTab({ avatar }: DeviceTabProps) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function Section({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border bg-card/50 px-3 py-2.5">
+      <div className="mb-1 flex items-center gap-1.5">
+        <Icon className="h-3 w-3 text-muted-foreground/60" />
+        <h4 className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">
+          {title}
+        </h4>
+      </div>
+      <div className="divide-y divide-border/30">{children}</div>
     </div>
   );
 }
