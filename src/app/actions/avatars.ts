@@ -9,8 +9,9 @@ import {
   TONES,
   VOCABULARY_LEVELS,
   EMOJI_USAGES,
+  AVATAR_STATUSES,
 } from "@/types";
-import type { Avatar, Army, Device, UserProfile } from "@/types";
+import type { Avatar, AvatarWithRelations, Army, Device, UserProfile } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -136,6 +137,53 @@ export async function getAccountArmies(
   return (data ?? []) as Army[];
 }
 
+export async function getAvatars(
+  accountId: string
+): Promise<AvatarWithRelations[]> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  if (!isAdmin && session.profile.account_id !== accountId) {
+    throw new Error("Forbidden");
+  }
+
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("avatars")
+    .select(
+      `*,
+      device:devices(*),
+      avatar_armies(army:armies(*)),
+      avatar_operators(operator:profiles(*))`
+    )
+    .eq("account_id", accountId)
+    .order("updated_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+
+  return (data ?? []).map((row: Record<string, unknown>) => {
+    const armies = (
+      (row.avatar_armies as Record<string, unknown>[] | null) ?? []
+    )
+      .map((aa) => aa.army)
+      .filter(Boolean) as Army[];
+
+    const operators = (
+      (row.avatar_operators as Record<string, unknown>[] | null) ?? []
+    )
+      .map((ao) => ao.operator)
+      .filter(Boolean) as UserProfile[];
+
+    const { avatar_armies: _aa, avatar_operators: _ao, ...rest } = row;
+    return {
+      ...rest,
+      device: (row.device as Device | null) || null,
+      armies,
+      operators,
+    } as AvatarWithRelations;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
@@ -243,4 +291,168 @@ export async function createAvatar(
     error: null,
     ...(warnings.length > 0 && { warnings }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Update avatar columns
+// ---------------------------------------------------------------------------
+
+const updateAvatarSchema = z.object({
+  first_name: z.string().min(1).max(50).optional(),
+  last_name: z.string().min(1).max(50).optional(),
+  profile_image_url: z.string().url().nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  phone: z.string().max(30).nullable().optional(),
+  country_code: z.string().length(2).optional(),
+  language_code: z.string().min(2).max(3).optional(),
+  writing_style: z.enum(WRITING_STYLES).optional(),
+  tone: z.enum(TONES).optional(),
+  vocabulary_level: z.enum(VOCABULARY_LEVELS).optional(),
+  emoji_usage: z.enum(EMOJI_USAGES).optional(),
+  personality_traits: z.array(z.string()).optional(),
+  topics_expertise: z.array(z.string()).optional(),
+  topics_avoid: z.array(z.string()).optional(),
+  twitter_enabled: z.boolean().optional(),
+  tiktok_enabled: z.boolean().optional(),
+  reddit_enabled: z.boolean().optional(),
+  instagram_enabled: z.boolean().optional(),
+  twitter_credentials: socialCredentialsSchema.optional(),
+  tiktok_credentials: socialCredentialsSchema.optional(),
+  reddit_credentials: socialCredentialsSchema.optional(),
+  instagram_credentials: socialCredentialsSchema.optional(),
+  status: z.enum(AVATAR_STATUSES).optional(),
+  tags: z.array(z.string()).optional(),
+}).refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
+
+export async function updateAvatar(
+  avatarId: string,
+  patch: Record<string, unknown>
+): Promise<{ error: string | null }> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  const isManager = session.profile.role === "manager";
+
+  if (!isAdmin && !isManager) {
+    return { error: "Only admins and managers can edit avatars" };
+  }
+
+  const parsed = updateAvatarSchema.safeParse(patch);
+  if (!parsed.success) {
+    return { error: parsed.error.issues[0].message };
+  }
+
+  const supabase = await createClient();
+
+  const { data: existing } = await supabase
+    .from("avatars")
+    .select("account_id")
+    .eq("id", avatarId)
+    .single();
+
+  if (!existing) return { error: "Avatar not found" };
+  if (!isAdmin && session.profile.account_id !== existing.account_id) {
+    return { error: "Cannot edit avatars for another account" };
+  }
+
+  const { error } = await supabase
+    .from("avatars")
+    .update(parsed.data)
+    .eq("id", avatarId);
+
+  if (error) return { error: error.message };
+
+  revalidatePath("/dashboard/operator");
+  return { error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Replace avatar armies (junction table)
+// ---------------------------------------------------------------------------
+
+export async function setAvatarArmies(
+  avatarId: string,
+  armyIds: string[],
+  newArmyNames: string[] = []
+): Promise<{ error: string | null }> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  const isManager = session.profile.role === "manager";
+  if (!isAdmin && !isManager) return { error: "Forbidden" };
+
+  const supabase = await createClient();
+
+  const { data: avatar } = await supabase
+    .from("avatars")
+    .select("account_id")
+    .eq("id", avatarId)
+    .single();
+
+  if (!avatar) return { error: "Avatar not found" };
+  if (!isAdmin && session.profile.account_id !== avatar.account_id) {
+    return { error: "Forbidden" };
+  }
+
+  const createdIds: string[] = [];
+  for (const name of newArmyNames) {
+    const { data: army, error: err } = await supabase
+      .from("armies")
+      .upsert({ account_id: avatar.account_id, name }, { onConflict: "account_id,name" })
+      .select("id")
+      .single();
+    if (err) return { error: `Failed to create army "${name}": ${err.message}` };
+    createdIds.push(army.id);
+  }
+
+  const allIds = [...armyIds, ...createdIds];
+
+  await supabase.from("avatar_armies").delete().eq("avatar_id", avatarId);
+
+  if (allIds.length > 0) {
+    const { error } = await supabase
+      .from("avatar_armies")
+      .insert(allIds.map((army_id) => ({ avatar_id: avatarId, army_id })));
+    if (error) return { error: error.message };
+  }
+
+  revalidatePath("/dashboard/operator");
+  return { error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Replace avatar operators (junction table)
+// ---------------------------------------------------------------------------
+
+export async function setAvatarOperators(
+  avatarId: string,
+  profileIds: string[]
+): Promise<{ error: string | null }> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  const isManager = session.profile.role === "manager";
+  if (!isAdmin && !isManager) return { error: "Forbidden" };
+
+  const supabase = await createClient();
+
+  const { data: avatar } = await supabase
+    .from("avatars")
+    .select("account_id")
+    .eq("id", avatarId)
+    .single();
+
+  if (!avatar) return { error: "Avatar not found" };
+  if (!isAdmin && session.profile.account_id !== avatar.account_id) {
+    return { error: "Forbidden" };
+  }
+
+  await supabase.from("avatar_operators").delete().eq("avatar_id", avatarId);
+
+  if (profileIds.length > 0) {
+    const { error } = await supabase
+      .from("avatar_operators")
+      .insert(profileIds.map((profile_id) => ({ avatar_id: avatarId, profile_id })));
+    if (error) return { error: error.message };
+  }
+
+  revalidatePath("/dashboard/operator");
+  return { error: null };
 }

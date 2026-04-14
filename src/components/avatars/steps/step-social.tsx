@@ -9,43 +9,26 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ChevronDown } from "lucide-react";
-import type { SocialCredentials, SocialPlatform } from "@/types";
+import { PLATFORM_LIST } from "@/lib/constants/avatar";
+import { SocialIcon } from "@/components/icons/social-icons";
+import type { SocialCredentials } from "@/types";
 import type { StepProps } from "../types";
 
-type EnabledKey = "twitter_enabled" | "tiktok_enabled" | "reddit_enabled" | "instagram_enabled";
-type CredKey = "twitter_credentials" | "tiktok_credentials" | "reddit_credentials" | "instagram_credentials";
-
-interface PlatformDef {
-  id: SocialPlatform;
-  label: string;
-  enabledKey: EnabledKey;
-  credKey: CredKey;
-  color: string;
-  abbr: string;
-}
-
-const PLATFORMS: PlatformDef[] = [
-  { id: "twitter", label: "Twitter / X", enabledKey: "twitter_enabled", credKey: "twitter_credentials", color: "bg-sky-500/10 text-sky-600 dark:text-sky-400", abbr: "X" },
-  { id: "tiktok", label: "TikTok", enabledKey: "tiktok_enabled", credKey: "tiktok_credentials", color: "bg-pink-500/10 text-pink-600 dark:text-pink-400", abbr: "Tk" },
-  { id: "reddit", label: "Reddit", enabledKey: "reddit_enabled", credKey: "reddit_credentials", color: "bg-orange-500/10 text-orange-600 dark:text-orange-400", abbr: "Re" },
-  { id: "instagram", label: "Instagram", enabledKey: "instagram_enabled", credKey: "instagram_credentials", color: "bg-purple-500/10 text-purple-600 dark:text-purple-400", abbr: "Ig" },
-];
-
 export function StepSocial({ data, onChange }: StepProps) {
-  const togglePlatform = (key: EnabledKey, value: boolean) => {
+  const togglePlatform = (key: string, value: boolean) => {
     onChange({ [key]: value });
   };
 
   const updateCredentials = (
-    key: CredKey,
+    key: string,
     field: keyof SocialCredentials,
     value: string
   ) => {
-    const current = data[key] ?? {};
+    const current = (data[key as keyof typeof data] ?? {}) as Record<string, unknown>;
     onChange({ [key]: { ...current, [field]: value || undefined } });
   };
 
-  const enabledCount = PLATFORMS.filter((p) => data[p.enabledKey]).length;
+  const enabledCount = PLATFORM_LIST.filter((p) => data[p.enabledKey]).length;
 
   return (
     <div className="space-y-5">
@@ -62,7 +45,7 @@ export function StepSocial({ data, onChange }: StepProps) {
       </div>
 
       <div className="space-y-2.5">
-        {PLATFORMS.map((platform) => {
+        {PLATFORM_LIST.map((platform) => {
           const enabled = data[platform.enabledKey];
           const creds = data[platform.credKey] ?? {};
 
@@ -75,8 +58,8 @@ export function StepSocial({ data, onChange }: StepProps) {
               >
                 <div className="flex items-center justify-between px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <div className={`flex h-8 w-8 items-center justify-center rounded-md text-xs font-bold ${platform.color}`}>
-                      {platform.abbr}
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-md ${platform.bgColor} ${platform.color}`}>
+                      <SocialIcon platform={platform.id} className="h-4 w-4" />
                     </div>
                     <span className="text-sm font-medium">{platform.label}</span>
                   </div>

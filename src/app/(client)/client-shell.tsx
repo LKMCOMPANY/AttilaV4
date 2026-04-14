@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { DashboardHeader } from "@/components/layout/dashboard-header";
-import { DashboardFooter } from "@/components/layout/dashboard-footer";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import type { UserProfile } from "@/types";
@@ -58,9 +57,9 @@ export function ClientShell({ profile, children }: ClientShellProps) {
   if (isAdmin && !impersonatedAccountId) return null;
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex h-screen flex-col overflow-hidden">
       {isAdmin && impersonatedAccountId && (
-        <div className="border-b bg-primary/5 px-4 py-1.5 sm:px-6">
+        <div className="shrink-0 border-b bg-primary/5 px-4 py-1.5 sm:px-6">
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">
               Viewing as{" "}
@@ -80,10 +79,9 @@ export function ClientShell({ profile, children }: ClientShellProps) {
         </div>
       )}
       <DashboardHeader profile={profile} navigation={navigation} />
-      <main className="flex min-h-0 flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
+      <main className="min-h-0 flex-1">
         {children}
       </main>
-      <DashboardFooter />
     </div>
   );
 }

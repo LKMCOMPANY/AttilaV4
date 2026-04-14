@@ -1,6 +1,7 @@
 import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
-import { AvatarsPageClient } from "@/components/avatars/avatars-page";
+import { getAvatars } from "@/app/actions/avatars";
+import { OperatorLayout } from "@/components/operator/operator-layout";
 
 export default async function OperatorPage({
   searchParams,
@@ -19,5 +20,7 @@ export default async function OperatorPage({
 
   if (!accountId) redirect("/admin/accounts");
 
-  return <AvatarsPageClient accountId={accountId} />;
+  const avatars = await getAvatars(accountId);
+
+  return <OperatorLayout accountId={accountId} avatars={avatars} />;
 }

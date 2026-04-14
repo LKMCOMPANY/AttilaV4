@@ -27,11 +27,8 @@ import {
   EMOJI_USAGES,
 } from "@/types";
 import type { WritingStyle, Tone, VocabularyLevel, EmojiUsage } from "@/types";
+import { toOptions } from "@/lib/constants/avatar";
 import type { StepProps } from "../types";
-
-function toOptions<T extends string>(values: readonly T[]): { value: T; label: string }[] {
-  return values.map((v) => ({ value: v, label: v.charAt(0).toUpperCase() + v.slice(1) }));
-}
 
 const STYLE_OPTIONS = toOptions(WRITING_STYLES);
 const TONE_OPTIONS = toOptions(TONES);
