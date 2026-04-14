@@ -274,7 +274,7 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
 
 function DeviceMockup({ device }: { device: AvatarWithRelations["device"] }) {
   return (
-    <div className="w-full max-w-[200px]">
+    <div className="w-full max-w-[280px]">
       <div
         className={cn(
           "relative flex aspect-[9/19] w-full flex-col overflow-hidden rounded-[1.8rem] border-[3px] bg-card shadow-lg",
