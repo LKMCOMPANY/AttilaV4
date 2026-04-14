@@ -17,6 +17,7 @@ export type AvatarSortField =
 interface OperatorLayoutProps {
   accountId: string;
   avatars: AvatarWithRelations[];
+  deviceCount: number;
 }
 
 function stableSort(
@@ -32,11 +33,12 @@ const panelStyle = { overflow: "hidden" as const, height: "100%" as const };
 
 const defaultLayout = { avatars: 33, device: 34, details: 33 };
 
-export function OperatorLayout({ accountId, avatars }: OperatorLayoutProps) {
+export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayoutProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(
     avatars[0]?.id ?? null
   );
   const [sortField, setSortField] = useState<AvatarSortField>("last_used");
+  const [filterArmyId, setFilterArmyId] = useState<string | null>(null);
 
   const [localAvatars, setLocalAvatars] = useState(avatars);
 
@@ -69,36 +71,53 @@ export function OperatorLayout({ accountId, avatars }: OperatorLayoutProps) {
     [localAvatars, selectedAvatarId]
   );
 
+  const armies = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const a of localAvatars) {
+      for (const army of a.armies ?? []) {
+        map.set(army.id, army.name);
+      }
+    }
+    return [...map.entries()].map(([id, name]) => ({ id, name }));
+  }, [localAvatars]);
+
+  const filteredAvatars = useMemo(() => {
+    if (!filterArmyId) return localAvatars;
+    return localAvatars.filter((a) =>
+      a.armies?.some((army) => army.id === filterArmyId)
+    );
+  }, [localAvatars, filterArmyId]);
+
   const sortedAvatars = useMemo(() => {
     switch (sortField) {
       case "alphabetical":
-        return stableSort(localAvatars, (a, b) =>
+        return stableSort(filteredAvatars, (a, b) =>
           `${a.first_name} ${a.last_name}`.localeCompare(
             `${b.first_name} ${b.last_name}`
           )
         );
       case "created":
         return stableSort(
-          localAvatars,
+          filteredAvatars,
           (a, b) =>
             new Date(b.created_at).getTime() -
             new Date(a.created_at).getTime()
         );
       case "status":
-        return stableSort(localAvatars, (a, b) =>
+        return stableSort(filteredAvatars, (a, b) =>
           a.status.localeCompare(b.status)
         );
       case "usage":
       case "last_used":
       default:
         return stableSort(
-          localAvatars,
+          filteredAvatars,
           (a, b) =>
             new Date(b.updated_at).getTime() -
             new Date(a.updated_at).getTime()
         );
     }
-  }, [localAvatars, sortField]);
+  }, [filteredAvatars, sortField]);
 
   const handleSelectAvatar = useCallback((id: string) => {
     setSelectedAvatarId(id);
@@ -113,6 +132,10 @@ export function OperatorLayout({ accountId, avatars }: OperatorLayoutProps) {
           onSelect={handleSelectAvatar}
           sortField={sortField}
           onSortChange={setSortField}
+          armies={armies}
+          filterArmyId={filterArmyId}
+          onFilterArmyChange={setFilterArmyId}
+          deviceCount={deviceCount}
           accountId={accountId}
         />
       </Panel>

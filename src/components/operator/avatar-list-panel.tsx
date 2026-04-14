@@ -7,7 +7,7 @@ import { UserPlus, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
 import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
-import type { AvatarWithRelations } from "@/types";
+import type { AvatarWithRelations, Army } from "@/types";
 import type { AvatarSortField } from "./operator-layout";
 
 const SORT_OPTIONS: { value: AvatarSortField; label: string; short: string }[] = [
@@ -24,6 +24,10 @@ interface AvatarListPanelProps {
   onSelect: (id: string) => void;
   sortField: AvatarSortField;
   onSortChange: (field: AvatarSortField) => void;
+  armies: Pick<Army, "id" | "name">[];
+  filterArmyId: string | null;
+  onFilterArmyChange: (armyId: string | null) => void;
+  deviceCount: number;
   accountId: string;
 }
 
@@ -33,6 +37,10 @@ export function AvatarListPanel({
   onSelect,
   sortField,
   onSortChange,
+  armies,
+  filterArmyId,
+  onFilterArmyChange,
+  deviceCount,
   accountId,
 }: AvatarListPanelProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -45,6 +53,13 @@ export function AvatarListPanel({
           Avatars
           <span className="ml-1.5 text-foreground/50">
             {avatars.length}
+          </span>
+          <span className="mx-1 text-border">/</span>
+          <span className="text-foreground/50">
+            {deviceCount}
+          </span>
+          <span className="ml-0.5 hidden @[240px]/list:inline text-[9px] font-normal normal-case tracking-normal">
+            devices
           </span>
         </h2>
         <Button
@@ -81,6 +96,39 @@ export function AvatarListPanel({
           </button>
         ))}
       </div>
+
+      {/* Army filter */}
+      {armies.length > 0 && (
+        <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b px-1.5 py-1.5 scrollbar-hide">
+          <button
+            onClick={() => onFilterArmyChange(null)}
+            className={cn(
+              "shrink-0 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+              filterArmyId === null
+                ? "bg-secondary text-secondary-foreground shadow-sm"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
+          >
+            All
+          </button>
+          {armies.map((army) => (
+            <button
+              key={army.id}
+              onClick={() =>
+                onFilterArmyChange(filterArmyId === army.id ? null : army.id)
+              }
+              className={cn(
+                "shrink-0 truncate rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                filterArmyId === army.id
+                  ? "bg-secondary text-secondary-foreground shadow-sm"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              )}
+            >
+              {army.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* List */}
       <ScrollArea className="flex-1">

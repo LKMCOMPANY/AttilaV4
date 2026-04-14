@@ -45,7 +45,7 @@ export function AvatarDetailPanel({
 
   return (
     <div className="@container/detail flex h-full flex-col bg-background">
-      <Tabs defaultValue="overview" className="flex h-full flex-col">
+      <Tabs defaultValue="overview" className="flex min-h-0 h-full flex-col">
         <div className="flex h-10 shrink-0 items-center overflow-x-auto border-b px-3 scrollbar-hide">
           <TabsList variant="line">
             <TabsTrigger value="overview" className="text-[11px] @[300px]/detail:text-xs">
@@ -66,7 +66,7 @@ export function AvatarDetailPanel({
           </TabsList>
         </div>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="p-3 @[350px]/detail:p-4">
             <TabsContent value="overview">
               <OverviewTab avatar={avatar} accountId={accountId} onUpdated={onAvatarUpdated} />
