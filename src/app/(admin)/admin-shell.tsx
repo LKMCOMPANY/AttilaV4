@@ -7,8 +7,7 @@ import type { UserProfile } from "@/types";
 const ADMIN_NAV = [
   { label: "Overview", href: "/admin" },
   { label: "Accounts", href: "/admin/accounts" },
-  { label: "Boxes", href: "/admin/boxes" },
-  { label: "Devices", href: "/admin/devices" },
+  { label: "Infrastructure", href: "/admin/infrastructure" },
 ];
 
 export function AdminShell({
