@@ -66,3 +66,20 @@ export async function requireAdmin(): Promise<Session> {
   }
   return session;
 }
+
+export async function requireBoxAccess(boxId: string): Promise<Session> {
+  const session = await requireSession();
+  if (session.profile.role === "admin") return session;
+
+  const supabase = await createClient();
+  const { count } = await supabase
+    .from("devices")
+    .select("*", { count: "exact", head: true })
+    .eq("box_id", boxId)
+    .eq("account_id", session.profile.account_id);
+
+  if (!count || count === 0) {
+    throw new Error("Forbidden: no access to this box");
+  }
+  return session;
+}

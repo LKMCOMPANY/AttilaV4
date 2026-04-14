@@ -11,6 +11,7 @@ import {
   EMOJI_USAGES,
   AVATAR_STATUSES,
 } from "@/types";
+import { fetchContainerList } from "@/lib/box-api";
 import type { Avatar, AvatarWithRelations, Army, Device, UserProfile } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ export async function getAvatars(
 
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((row: Record<string, unknown>) => {
+  const avatars = (data ?? []).map((row: Record<string, unknown>) => {
     const armies = (
       (row.avatar_armies as Record<string, unknown>[] | null) ?? []
     )
@@ -182,6 +183,70 @@ export async function getAvatars(
       operators,
     } as AvatarWithRelations;
   });
+
+  await syncDeviceStates(supabase, avatars);
+
+  return avatars;
+}
+
+// ---------------------------------------------------------------------------
+// Sync device states with actual box state (prevents DB drift)
+// ---------------------------------------------------------------------------
+
+async function syncDeviceStates(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  avatars: AvatarWithRelations[]
+) {
+  const devicesWithBoxes = avatars
+    .filter((a) => a.device?.box_id)
+    .map((a) => a.device!);
+
+  if (devicesWithBoxes.length === 0) return;
+
+  const boxIds = [...new Set(devicesWithBoxes.map((d) => d.box_id))];
+
+  const { data: boxes } = await supabase
+    .from("boxes")
+    .select("id, tunnel_hostname")
+    .in("id", boxIds);
+
+  if (!boxes || boxes.length === 0) return;
+
+  const stateMap = new Map<string, string>();
+
+  await Promise.all(
+    boxes.map(async (box) => {
+      try {
+        const containerData = await fetchContainerList(box.tunnel_hostname);
+        for (const c of containerData.list) {
+          stateMap.set(c.db_id, c.state);
+        }
+      } catch {
+        // Box unreachable -- don't update states
+      }
+    })
+  );
+
+  if (stateMap.size === 0) return;
+
+  const now = new Date().toISOString();
+  const updates: PromiseLike<unknown>[] = [];
+
+  for (const device of devicesWithBoxes) {
+    const realState = stateMap.get(device.db_id);
+    if (!realState || realState === device.state) continue;
+
+    device.state = realState as Device["state"];
+
+    updates.push(
+      supabase
+        .from("devices")
+        .update({ state: realState, last_seen: now })
+        .eq("id", device.id)
+    );
+  }
+
+  if (updates.length > 0) await Promise.all(updates);
 }
 
 // ---------------------------------------------------------------------------
