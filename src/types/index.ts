@@ -108,12 +108,14 @@ export const TONES = ["neutral", "humorous", "serious", "sarcastic", "empathetic
 export const VOCABULARY_LEVELS = ["simple", "standard", "advanced", "technical"] as const;
 export const EMOJI_USAGES = ["none", "sparse", "moderate", "frequent"] as const;
 export const SOCIAL_PLATFORMS = ["twitter", "tiktok", "reddit", "instagram"] as const;
+export const AVATAR_STATUSES = ["active", "inactive", "suspended"] as const;
 
 export type WritingStyle = (typeof WRITING_STYLES)[number];
 export type Tone = (typeof TONES)[number];
 export type VocabularyLevel = (typeof VOCABULARY_LEVELS)[number];
 export type EmojiUsage = (typeof EMOJI_USAGES)[number];
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
+export type AvatarStatus = (typeof AVATAR_STATUSES)[number];
 
 export interface SocialCredentials {
   handle?: string;
@@ -149,6 +151,8 @@ export interface Avatar {
   tiktok_credentials: SocialCredentials;
   reddit_credentials: SocialCredentials;
   instagram_credentials: SocialCredentials;
+  status: AvatarStatus;
+  tags: string[];
   created_by: string | null;
   created_at: string;
   updated_at: string;

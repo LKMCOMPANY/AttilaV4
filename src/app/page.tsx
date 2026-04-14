@@ -16,7 +16,7 @@ export default async function HomePage() {
       .single();
 
     if (profile) {
-      redirect(profile.role === "admin" ? "/admin" : "/dashboard");
+      redirect(profile.role === "admin" ? "/admin/accounts" : "/dashboard");
     }
 
     await supabase.auth.signOut();

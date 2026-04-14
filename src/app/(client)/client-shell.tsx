@@ -28,7 +28,7 @@ export function ClientShell({ profile, children }: ClientShellProps) {
   // Admin without ?account param → redirect back to admin dashboard
   useEffect(() => {
     if (isAdmin && !impersonatedAccountId) {
-      router.replace("/admin");
+      router.replace("/admin/accounts");
     }
   }, [isAdmin, impersonatedAccountId, router]);
 

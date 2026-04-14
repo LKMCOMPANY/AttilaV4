@@ -80,7 +80,7 @@ export function StepCountry({ data, onChange }: StepProps) {
 
         <div
           ref={listRef}
-          className="max-h-[260px] overflow-y-auto rounded-lg border scrollbar-thin"
+          className="max-h-[200px] overflow-y-auto rounded-lg border scrollbar-thin"
         >
           {search.trim() ? (
             <div className="p-1">

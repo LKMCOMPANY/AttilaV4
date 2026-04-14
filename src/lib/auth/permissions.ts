@@ -19,6 +19,6 @@ export function isManager(role: UserRole): boolean {
 }
 
 export function getDashboardPath(role: UserRole): string {
-  if (role === "admin") return "/admin";
+  if (role === "admin") return "/admin/accounts";
   return "/dashboard";
 }

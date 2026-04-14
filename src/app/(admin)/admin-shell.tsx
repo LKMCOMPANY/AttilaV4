@@ -5,7 +5,6 @@ import { DashboardFooter } from "@/components/layout/dashboard-footer";
 import type { UserProfile } from "@/types";
 
 const ADMIN_NAV = [
-  { label: "Overview", href: "/admin" },
   { label: "Accounts", href: "/admin/accounts" },
   { label: "Infrastructure", href: "/admin/infrastructure" },
 ];

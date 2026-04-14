@@ -128,7 +128,7 @@ export function CreateAvatarDialog({
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="flex max-h-[90vh] flex-col overflow-hidden sm:max-w-2xl lg:max-w-3xl"
+        className="max-h-[80vh] flex flex-col overflow-hidden sm:max-w-2xl lg:max-w-3xl"
         showCloseButton={!submitting}
       >
         <DialogHeader>

@@ -17,7 +17,7 @@ export default async function OperatorPage({
       ? params.account ?? null
       : session.profile.account_id;
 
-  if (!accountId) redirect("/admin");
+  if (!accountId) redirect("/admin/accounts");
 
   return <AvatarsPageClient accountId={accountId} />;
 }

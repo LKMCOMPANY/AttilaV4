@@ -87,7 +87,7 @@ export function DashboardHeader({
           </SheetContent>
         </Sheet>
 
-        <Link href={profile.role === "admin" ? "/admin" : "/dashboard"}>
+        <Link href={profile.role === "admin" ? "/admin/accounts" : "/dashboard"}>
           <span className="text-lg font-bold tracking-[0.15em]">ATTILA</span>
         </Link>
 
