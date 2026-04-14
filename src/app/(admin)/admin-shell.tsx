@@ -9,7 +9,6 @@ const ADMIN_NAV = [
   { label: "Accounts", href: "/admin/accounts" },
   { label: "Boxes", href: "/admin/boxes" },
   { label: "Devices", href: "/admin/devices" },
-  { label: "Users", href: "/admin/users" },
 ];
 
 export function AdminShell({
@@ -22,7 +21,9 @@ export function AdminShell({
   return (
     <div className="flex min-h-screen flex-col">
       <DashboardHeader profile={profile} navigation={ADMIN_NAV} />
-      <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+      <main className="flex min-h-0 flex-1 flex-col px-4 py-6 sm:px-6 lg:px-8">
+        {children}
+      </main>
       <DashboardFooter />
     </div>
   );

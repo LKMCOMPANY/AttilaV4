@@ -10,7 +10,9 @@ export default async function ClientLayout({
   const session = await getSession();
 
   if (!session) redirect("/");
-  if (session.profile.role === "admin") redirect("/admin");
+
+  // Admins are allowed through for impersonation (via ?account=xxx).
+  // The ClientShell handles redirect if the param is missing.
 
   return <ClientShell profile={session.profile}>{children}</ClientShell>;
 }

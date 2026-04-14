@@ -1,7 +1,13 @@
 import { createClient } from "@/lib/supabase/server";
-import type { UserProfile } from "@/types";
+import type { UserProfile, AccountStatus } from "@/types";
 
-export async function getSession() {
+interface Session {
+  claims: Record<string, unknown>;
+  profile: UserProfile;
+  accountStatus: AccountStatus | null;
+}
+
+export async function getSession(): Promise<Session | null> {
   const supabase = await createClient();
   const { data, error } = await supabase.auth.getClaims();
 
@@ -17,13 +23,35 @@ export async function getSession() {
 
   if (!profile) return null;
 
+  const typedProfile = profile as UserProfile;
+  let accountStatus: AccountStatus | null = null;
+
+  if (typedProfile.account_id) {
+    const { data: account } = await supabase
+      .from("accounts")
+      .select("status")
+      .eq("id", typedProfile.account_id)
+      .single();
+
+    accountStatus = (account?.status as AccountStatus) ?? null;
+  }
+
+  if (
+    typedProfile.role !== "admin" &&
+    accountStatus &&
+    accountStatus !== "active"
+  ) {
+    return null;
+  }
+
   return {
     claims: data.claims,
-    profile: profile as UserProfile,
+    profile: typedProfile,
+    accountStatus,
   };
 }
 
-export async function requireSession() {
+export async function requireSession(): Promise<Session> {
   const session = await getSession();
   if (!session) {
     throw new Error("Unauthorized");
@@ -31,7 +59,7 @@ export async function requireSession() {
   return session;
 }
 
-export async function requireAdmin() {
+export async function requireAdmin(): Promise<Session> {
   const session = await requireSession();
   if (session.profile.role !== "admin") {
     throw new Error("Forbidden: admin access required");
