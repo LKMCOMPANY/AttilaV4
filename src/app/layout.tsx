@@ -23,7 +23,7 @@ export const metadata: Metadata = {
   },
   description: "Avatar management and automation platform",
   icons: {
-    icon: "/favicon.ico",
+    icon: "/logo.svg",
   },
 };
 

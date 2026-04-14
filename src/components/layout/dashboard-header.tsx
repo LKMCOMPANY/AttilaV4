@@ -14,6 +14,7 @@ import {
 import { LogOut, User, Moon, Sun, Menu } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { AttilaLogo } from "@/components/icons/attila-logo";
 import type { UserProfile } from "@/types";
 
 interface NavItem {
@@ -96,6 +97,10 @@ export function DashboardHeader({
           pathname={pathname}
           className="ml-4 hidden items-center gap-1 md:flex"
         />
+
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <AttilaLogo className="h-7 w-7 text-foreground/10" />
+        </div>
 
         <div className="ml-auto flex items-center gap-1">
           <Button
