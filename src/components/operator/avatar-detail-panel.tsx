@@ -5,6 +5,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { OverviewTab } from "./tabs/overview-tab";
 import { IdentityTab } from "./tabs/identity-tab";
 import { PersonalityTab } from "./tabs/personality-tab";
+import { DeviceTab } from "./tabs/device-tab";
 import { ContentTab } from "./tabs/content-tab";
 import type { AvatarWithRelations } from "@/types";
 import { User } from "lucide-react";
@@ -56,6 +57,9 @@ export function AvatarDetailPanel({
             <TabsTrigger value="personality" className="text-[11px] @[300px]/detail:text-xs">
               Personality
             </TabsTrigger>
+            <TabsTrigger value="device" className="text-[11px] @[300px]/detail:text-xs">
+              Device
+            </TabsTrigger>
             <TabsTrigger value="content" className="text-[11px] @[300px]/detail:text-xs">
               Content
             </TabsTrigger>
@@ -72,6 +76,9 @@ export function AvatarDetailPanel({
             </TabsContent>
             <TabsContent value="personality">
               <PersonalityTab avatar={avatar} accountId={accountId} onUpdated={onAvatarUpdated} />
+            </TabsContent>
+            <TabsContent value="device">
+              <DeviceTab avatar={avatar} />
             </TabsContent>
             <TabsContent value="content">
               <ContentTab avatar={avatar} />
