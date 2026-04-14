@@ -217,7 +217,17 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
       </div>
 
       {/* Device mockup */}
-      <div className="flex flex-1 flex-col items-center justify-center overflow-hidden p-4">
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden p-4">
+        <div
+          className="pointer-events-none absolute inset-0 z-0 opacity-[0.35] dark:opacity-[0.18]"
+          style={{
+            backgroundImage: "radial-gradient(circle at 50% 50%, var(--foreground) 1px, transparent 1px)",
+            backgroundSize: "32px 32px",
+            maskImage: "radial-gradient(ellipse 80% 70% at 50% 50%, black 20%, transparent 100%)",
+            WebkitMaskImage: "radial-gradient(ellipse 80% 70% at 50% 50%, black 20%, transparent 100%)",
+          }}
+          aria-hidden="true"
+        />
         <div className="w-full max-w-[320px]">
           <div
             className={cn(
