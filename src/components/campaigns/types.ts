@@ -1,4 +1,5 @@
-import type { CampaignFilters, CampaignPlatform, CampaignStatus } from "@/types";
+import type { CampaignFilters, CampaignPlatform, CampaignStatus, CapacityParams } from "@/types";
+import { DEFAULT_CAPACITY_PARAMS } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Shared constants
@@ -37,6 +38,7 @@ export interface CampaignFormData {
   // Step 3 — Configuration
   army_ids: string[];
   filters: CampaignFilters;
+  capacity_params: CapacityParams;
 
   // Step 4 — Guidelines
   operational_context: string;
@@ -52,6 +54,10 @@ export const DEFAULT_FORM_DATA: CampaignFormData = {
   gorgone_zone_name: "",
   army_ids: [],
   filters: {},
+  capacity_params: {
+    twitter: { ...DEFAULT_CAPACITY_PARAMS.twitter },
+    tiktok: { ...DEFAULT_CAPACITY_PARAMS.tiktok },
+  },
   operational_context: "",
   strategy: "",
   key_messages: "",

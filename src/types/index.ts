@@ -281,6 +281,20 @@ export interface CampaignFilters {
   min_collect_count?: number;
 }
 
+export interface PlatformCapacityParams {
+  max_responses_per_hour: number;
+  max_responses_per_day: number;
+  min_avatars_per_post: number;
+  max_avatars_per_post: number;
+}
+
+export type CapacityParams = Record<CampaignPlatform, PlatformCapacityParams>;
+
+export const DEFAULT_CAPACITY_PARAMS: CapacityParams = {
+  twitter: { max_responses_per_hour: 5, max_responses_per_day: 50, min_avatars_per_post: 1, max_avatars_per_post: 3 },
+  tiktok: { max_responses_per_hour: 3, max_responses_per_day: 30, min_avatars_per_post: 1, max_avatars_per_post: 2 },
+};
+
 export interface Campaign {
   id: string;
   account_id: string;
@@ -292,6 +306,7 @@ export interface Campaign {
   gorgone_zone_name: string | null;
   army_ids: string[];
   filters: CampaignFilters;
+  capacity_params: CapacityParams;
   operational_context: string | null;
   strategy: string | null;
   key_messages: string | null;

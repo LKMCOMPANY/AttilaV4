@@ -116,25 +116,32 @@ export interface FilteredVolume {
   filters_applied: { name: string; pass_rate: number }[];
 }
 
-export interface AvatarCapacityParams {
+export interface AvatarCapacityInput {
   total_avatars: number;
+  active_avatars: number;
   max_responses_per_avatar_per_hour: number;
   max_responses_per_avatar_per_day: number;
-  avg_avatars_per_post: number;
-  blocked_rate: number;
+  min_avatars_per_post: number;
+  max_avatars_per_post: number;
 }
 
 export interface CapacityEstimate {
+  avg_avatars_per_post: number;
   responses_needed_per_hour: number;
   responses_needed_per_day: number;
+  total_avatars: number;
   available_avatars: number;
+  blocked_rate: number;
   capacity_per_hour: number;
   capacity_per_day: number;
   surplus_per_hour: number;
   surplus_per_day: number;
   coverage_rate: number;
+  avatars_needed_hourly: number;
+  avatars_needed_daily: number;
   avatars_needed: number;
   avatars_missing: number;
+  bottleneck: "hourly" | "daily";
 }
 
 export interface CampaignCapacityResult {

@@ -73,6 +73,7 @@ export function CreateCampaignDialog({
         gorgone_zone_name: formData.gorgone_zone_name || null,
         army_ids: formData.army_ids,
         filters: formData.filters,
+        capacity_params: formData.capacity_params,
         operational_context: formData.operational_context || null,
         strategy: formData.strategy || null,
         key_messages: formData.key_messages || null,

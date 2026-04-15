@@ -7,5 +7,4 @@ export {
   estimateZoneVolume,
   applyFilters,
   estimateCapacity,
-  estimateCampaignCapacity,
 } from "./capacity-estimator";

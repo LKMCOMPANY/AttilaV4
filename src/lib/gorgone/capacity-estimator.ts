@@ -5,9 +5,8 @@ import type {
   TiktokBreakdown,
   EstimatorFilters,
   FilteredVolume,
-  AvatarCapacityParams,
+  AvatarCapacityInput,
   CapacityEstimate,
-  CampaignCapacityResult,
 } from "./types";
 
 const PERIOD_HOURS = 24;
@@ -29,7 +28,7 @@ async function estimateTwitterVolume(
   zoneId: string
 ): Promise<ZoneVolumeEstimate> {
   const gorgone = createGorgoneClient();
-  const since = hoursAgo(PERIOD_HOURS);
+  const since = await resolveWindowStart(gorgone, "twitter_tweets", zoneId);
 
   const baseFilter = {
     zone_id: zoneId,
@@ -75,7 +74,7 @@ async function estimateTiktokVolume(
   zoneId: string
 ): Promise<ZoneVolumeEstimate> {
   const gorgone = createGorgoneClient();
-  const since = hoursAgo(PERIOD_HOURS);
+  const since = await resolveWindowStart(gorgone, "tiktok_videos", zoneId);
 
   const [total, ads, privateAuthors, langRows, authorStats] =
     await Promise.all([
@@ -204,16 +203,24 @@ export function applyFilters(
 
 export function estimateCapacity(
   filtered: FilteredVolume,
-  params: AvatarCapacityParams
+  params: AvatarCapacityInput
 ): CapacityEstimate {
-  const responsesPerHour = filtered.filtered_per_hour * params.avg_avatars_per_post;
+  const avgAvatarsPerPost =
+    (params.min_avatars_per_post + params.max_avatars_per_post) / 2;
+
+  const responsesPerHour = filtered.filtered_per_hour * avgAvatarsPerPost;
   const responsesPerDay = responsesPerHour * 24;
 
-  const availableAvatars = Math.floor(
-    params.total_avatars * (1 - params.blocked_rate)
-  );
-  const capacityPerHour = availableAvatars * params.max_responses_per_avatar_per_hour;
-  const capacityPerDay = availableAvatars * params.max_responses_per_avatar_per_day;
+  const availableAvatars = params.active_avatars;
+  const blockedRate =
+    params.total_avatars > 0
+      ? round(1 - availableAvatars / params.total_avatars, 4)
+      : 0;
+
+  const capacityPerHour =
+    availableAvatars * params.max_responses_per_avatar_per_hour;
+  const capacityPerDay =
+    availableAvatars * params.max_responses_per_avatar_per_day;
 
   const surplusPerHour = capacityPerHour - responsesPerHour;
   const surplusPerDay = capacityPerDay - responsesPerDay;
@@ -221,42 +228,40 @@ export function estimateCapacity(
   const coverageRate =
     responsesPerHour > 0 ? round(capacityPerHour / responsesPerHour, 2) : 1;
 
-  const avatarsNeeded =
+  const avatarsNeededHourly =
     params.max_responses_per_avatar_per_hour > 0
       ? Math.ceil(responsesPerHour / params.max_responses_per_avatar_per_hour)
       : 0;
 
-  const avatarsMissing = Math.max(0, avatarsNeeded - params.total_avatars);
+  const avatarsNeededDaily =
+    params.max_responses_per_avatar_per_day > 0
+      ? Math.ceil(responsesPerDay / params.max_responses_per_avatar_per_day)
+      : 0;
+
+  const avatarsNeeded = Math.max(avatarsNeededHourly, avatarsNeededDaily);
+  const bottleneck: "hourly" | "daily" =
+    avatarsNeededHourly >= avatarsNeededDaily ? "hourly" : "daily";
+
+  const avatarsMissing = Math.max(0, avatarsNeeded - availableAvatars);
 
   return {
+    avg_avatars_per_post: round(avgAvatarsPerPost, 1),
     responses_needed_per_hour: round(responsesPerHour),
     responses_needed_per_day: round(responsesPerDay),
+    total_avatars: params.total_avatars,
     available_avatars: availableAvatars,
+    blocked_rate: blockedRate,
     capacity_per_hour: capacityPerHour,
     capacity_per_day: capacityPerDay,
     surplus_per_hour: round(surplusPerHour),
     surplus_per_day: round(surplusPerDay),
     coverage_rate: coverageRate,
+    avatars_needed_hourly: avatarsNeededHourly,
+    avatars_needed_daily: avatarsNeededDaily,
     avatars_needed: avatarsNeeded,
     avatars_missing: avatarsMissing,
+    bottleneck,
   };
-}
-
-// ---------------------------------------------------------------------------
-// 4. estimateCampaignCapacity — orchestrator
-// ---------------------------------------------------------------------------
-
-export async function estimateCampaignCapacity(params: {
-  zone_id: string;
-  platform: "twitter" | "tiktok";
-  filters: EstimatorFilters;
-  avatars: AvatarCapacityParams;
-}): Promise<CampaignCapacityResult> {
-  const volume = await estimateZoneVolume(params.zone_id, params.platform);
-  const filtered = applyFilters(volume, params.filters);
-  const capacity = estimateCapacity(filtered, params.avatars);
-
-  return { volume, filtered, capacity };
 }
 
 // ---------------------------------------------------------------------------
@@ -553,6 +558,30 @@ async function tiktokAuthorStats(
 // ---------------------------------------------------------------------------
 // Utils
 // ---------------------------------------------------------------------------
+
+/**
+ * Find the start of the 24h estimation window.
+ * Uses the most recent collected_at for the zone rather than NOW(),
+ * so zones whose collection has paused still return meaningful data.
+ */
+async function resolveWindowStart(
+  gorgone: GorgoneSupabase,
+  table: "twitter_tweets" | "tiktok_videos",
+  zoneId: string
+): Promise<string> {
+  const { data } = await gorgone
+    .from(table)
+    .select("collected_at")
+    .eq("zone_id", zoneId)
+    .order("collected_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!data?.collected_at) return hoursAgo(PERIOD_HOURS);
+
+  const latestMs = new Date(data.collected_at as string).getTime();
+  return new Date(latestMs - PERIOD_HOURS * 3600_000).toISOString();
+}
 
 function hoursAgo(hours: number): string {
   return new Date(Date.now() - hours * 3600_000).toISOString();

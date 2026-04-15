@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { XIcon, TikTokIcon } from "@/components/icons/social-icons";
 import { CampaignFiltersSection } from "@/components/campaigns/campaign-filters";
-import { CapacityPreview } from "@/components/campaigns/capacity-preview";
+import { CapacityEstimator } from "@/components/campaigns/capacity-estimator";
 import {
   updateCampaign,
   getAccountArmies,
@@ -72,10 +72,6 @@ export function CampaignSettingsPanel({
     [campaign, onCampaignUpdated]
   );
 
-  const totalAvatars = armies
-    .filter((a) => campaign.army_ids.includes(a.id))
-    .reduce((sum, a) => sum + a.avatar_count, 0);
-
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
@@ -95,18 +91,24 @@ export function CampaignSettingsPanel({
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-5 p-3">
           <StatusSection campaign={campaign} onSave={save} />
-          <NetworksSection campaign={campaign} onSave={save} />
+          <CapacityEstimator
+            accountId={accountId}
+            zoneId={campaign.gorgone_zone_id}
+            platforms={campaign.platforms}
+            filters={campaign.filters}
+            armyIds={campaign.army_ids}
+            capacityParams={campaign.capacity_params}
+            onParamsChange={(capacity_params) => save({ capacity_params })}
+            compact
+          />
+          <FiltersSection campaign={campaign} onSave={save} />
           <ArmySection
             campaign={campaign}
             armies={armies}
             loading={armiesLoading}
             onSave={save}
           />
-          <CapacityPreview
-            totalAvatars={totalAvatars}
-            armyCount={campaign.army_ids.length}
-          />
-          <FiltersSection campaign={campaign} onSave={save} />
+          <NetworksSection campaign={campaign} onSave={save} />
         </div>
       </ScrollArea>
     </div>

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
 import { fetchGorgoneZones } from "@/lib/gorgone";
-import type { Campaign, CampaignFilters, CampaignPlatform, GorgoneSyncCursor } from "@/types";
+import type { Campaign, CampaignFilters, CampaignPlatform, CapacityParams, GorgoneSyncCursor } from "@/types";
 import type { GorgoneZone } from "@/lib/gorgone/types";
 
 // ---------------------------------------------------------------------------
@@ -169,6 +169,7 @@ export type UpdateCampaignInput = Partial<
     | "gorgone_zone_name"
     | "army_ids"
     | "filters"
+    | "capacity_params"
     | "operational_context"
     | "strategy"
     | "key_messages"
@@ -232,6 +233,7 @@ export interface CreateCampaignInput {
   gorgone_zone_name: string | null;
   army_ids: string[];
   filters: CampaignFilters;
+  capacity_params?: CapacityParams;
   operational_context: string | null;
   strategy: string | null;
   key_messages: string | null;
@@ -270,6 +272,7 @@ export async function createCampaign(
       gorgone_zone_name: input.gorgone_zone_name,
       army_ids: input.army_ids,
       filters: input.filters,
+      ...(input.capacity_params && { capacity_params: input.capacity_params }),
       operational_context: input.operational_context || null,
       strategy: input.strategy || null,
       key_messages: input.key_messages || null,

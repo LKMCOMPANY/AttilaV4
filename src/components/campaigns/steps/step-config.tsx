@@ -6,7 +6,7 @@ import { Loader2, Shield, Users, Filter } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getAccountArmies } from "@/app/actions/campaigns";
 import { CampaignFiltersSection } from "../campaign-filters";
-import { CapacityPreview } from "../capacity-preview";
+import { CapacityEstimator } from "../capacity-estimator";
 import type { StepProps, ArmyOption } from "../types";
 
 export function StepConfig({ data, onChange, accountId }: StepProps) {
@@ -32,13 +32,9 @@ export function StepConfig({ data, onChange, accountId }: StepProps) {
     onChange({ army_ids: updated });
   };
 
-  const totalAvatars = armies
-    .filter((a) => data.army_ids.includes(a.id))
-    .reduce((sum, a) => sum + a.avatar_count, 0);
-
   return (
     <div className="space-y-6 px-1">
-      {/* A — Army selection */}
+      {/* 1 — Army selection */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-muted-foreground" />
@@ -91,7 +87,18 @@ export function StepConfig({ data, onChange, accountId }: StepProps) {
         )}
       </div>
 
-      {/* B — Filters by platform */}
+      {/* 2 — Capacity estimator */}
+      <CapacityEstimator
+        accountId={accountId}
+        zoneId={data.gorgone_zone_id}
+        platforms={data.platforms}
+        filters={data.filters}
+        armyIds={data.army_ids}
+        capacityParams={data.capacity_params}
+        onParamsChange={(capacity_params) => onChange({ capacity_params })}
+      />
+
+      {/* 3 — Filters by platform */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-muted-foreground" />
@@ -103,9 +110,6 @@ export function StepConfig({ data, onChange, accountId }: StepProps) {
           onChange={(filters) => onChange({ filters })}
         />
       </div>
-
-      {/* C — Capacity estimator preview */}
-      <CapacityPreview totalAvatars={totalAvatars} armyCount={data.army_ids.length} />
     </div>
   );
 }
