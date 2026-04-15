@@ -65,11 +65,13 @@ export interface GorgoneRawTiktokVideoRow {
   collect_count: number;
   total_engagement: number;
   share_url: string | null;
+  is_ad: boolean;
   author: {
     username: string | null;
     nickname: string | null;
     follower_count: number;
     is_verified: boolean;
+    is_private: boolean;
     avatar_thumb: string | null;
   } | null;
 }

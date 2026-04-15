@@ -179,6 +179,36 @@ Double protection : cursor strict `>` + `UNIQUE(gorgone_id)` avec `ON CONFLICT D
 - Le code dans `lib/gorgone/` est du TypeScript pur, déplaçable vers un worker dédié sans modification
 - Batch de 500 rows max : si plus de 500 en attente, les prochains cycles rattrapent
 
+### Filtres disponibles pour les campagnes
+
+Toutes les données nécessaires au filtrage sont déjà ingérées. Aucune query vers Gorgone nécessaire.
+
+**Twitter :**
+
+| Filtre | Champ | Exemple |
+|--------|-------|---------|
+| Post type (post original) | `is_reply = false AND text NOT LIKE 'RT @%'` | Exclure replies et RT |
+| Post type (reply) | `is_reply = true` | Seulement les réponses |
+| Post type (retweet) | `text LIKE 'RT @%'` | Seulement les RT |
+| Min followers auteur | `author_followers >= N` | `>= 100` |
+| Verified only | `author_verified = true` | Comptes vérifiés |
+| Langue | `lang IN ('en', 'fr')` | Cibler des langues |
+| Min engagement | `total_engagement >= N` | `>= 50` |
+| Min likes / views | `like_count >= N`, `view_count >= N` | Seuils spécifiques |
+
+**TikTok :**
+
+| Filtre | Champ | Exemple |
+|--------|-------|---------|
+| Min followers auteur | `author_followers >= N` | `>= 100` |
+| Verified only | `author_verified = true` | Comptes vérifiés |
+| Exclure comptes privés | `author_is_private = false` | Ne peut pas commenter |
+| Exclure les pubs | `is_ad = false` | Pas de réponse aux ads |
+| Langue | `language IN ('en', 'fr')` | Cibler des langues |
+| Min plays | `play_count >= N` | `>= 1000` |
+| Min engagement | `total_engagement >= N` | `>= 100` |
+| Min comments | `comment_count >= N` | Vidéos commentées |
+
 ### Prochaines étapes (pipeline automator)
 
 ```

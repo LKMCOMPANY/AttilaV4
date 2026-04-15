@@ -7,9 +7,9 @@ const GORGONE_TIKTOK_SELECT = `
   id, zone_id, video_id, description, language,
   tiktok_created_at, collected_at,
   play_count, digg_count, comment_count, share_count, collect_count,
-  total_engagement, share_url,
+  total_engagement, share_url, is_ad,
   author:tiktok_profiles!author_profile_id(
-    username, nickname, follower_count, is_verified, avatar_thumb
+    username, nickname, follower_count, is_verified, is_private, avatar_thumb
   )
 `.trim();
 
@@ -33,8 +33,10 @@ function mapTiktokRow(v: GorgoneRawTiktokVideoRow, accountId: string) {
     author_username: v.author?.username ?? null,
     author_nickname: v.author?.nickname ?? null,
     author_followers: v.author?.follower_count ?? 0,
-    author_verified: v.author?.is_verified ?? false,
-    author_avatar: v.author?.avatar_thumb ?? null,
+      author_verified: v.author?.is_verified ?? false,
+      author_is_private: v.author?.is_private ?? false,
+      author_avatar: v.author?.avatar_thumb ?? null,
+      is_ad: v.is_ad ?? false,
   };
 }
 
