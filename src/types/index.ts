@@ -175,3 +175,42 @@ export interface Army {
   created_at: string;
   updated_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Gorgone Integration
+// ---------------------------------------------------------------------------
+
+export type GorgoneSyncStatus = "idle" | "syncing" | "error";
+export type GorgoneSyncPlatform = "twitter" | "tiktok";
+
+export interface GorgoneLink {
+  id: string;
+  account_id: string;
+  gorgone_client_id: string;
+  gorgone_client_name: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GorgoneLinkWithCursors extends GorgoneLink {
+  cursors: GorgoneSyncCursor[];
+}
+
+export interface GorgoneSyncCursor {
+  id: string;
+  gorgone_link_id: string;
+  account_id: string;
+  zone_id: string;
+  zone_name: string;
+  platform: GorgoneSyncPlatform;
+  is_active: boolean;
+  last_cursor: string | null;
+  last_synced_at: string | null;
+  total_synced: number;
+  status: GorgoneSyncStatus;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+

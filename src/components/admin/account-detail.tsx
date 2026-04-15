@@ -24,6 +24,7 @@ import { Separator } from "@/components/ui/separator";
 import { AutoSaveField } from "@/components/admin/auto-save-field";
 import { UserRow } from "@/components/admin/user-row";
 import { UserCreateDialog } from "@/components/admin/user-create-dialog";
+import { GorgoneSection } from "@/components/admin/gorgone-section";
 import Link from "next/link";
 import { ExternalLink, Users } from "lucide-react";
 import { updateAccount, updateAccountStatus } from "@/app/actions/accounts";
@@ -200,6 +201,11 @@ export function AccountDetail({ account, onUpdated }: AccountDetailProps) {
           </div>
         )}
       </div>
+
+      <Separator />
+
+      {/* Gorgone integration */}
+      <GorgoneSection accountId={account.id} />
 
       {/* Status change confirmation */}
       <AlertDialog
