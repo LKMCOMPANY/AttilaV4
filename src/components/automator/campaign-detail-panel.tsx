@@ -2,6 +2,7 @@
 
 import { Crosshair } from "lucide-react";
 import { EmptyPanel } from "@/components/ui/empty";
+import { PipelineStats } from "./pipeline-stats";
 import { PipelineActivity } from "./pipeline-activity";
 import type { Campaign } from "@/types";
 
@@ -20,5 +21,12 @@ export function CampaignDetailPanel({ campaign }: CampaignDetailPanelProps) {
     );
   }
 
-  return <PipelineActivity campaign={campaign} />;
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <PipelineStats campaign={campaign} />
+      <div className="min-h-0 flex-1">
+        <PipelineActivity campaign={campaign} />
+      </div>
+    </div>
+  );
 }

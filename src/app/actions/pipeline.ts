@@ -2,7 +2,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireSession, requireAdmin } from "@/lib/auth/session";
-import type { CampaignPost, CampaignJob } from "@/types";
+import type { CampaignPost, CampaignJob, CampaignJobWithAvatar } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Read — Campaign posts and jobs (session-scoped)
@@ -30,13 +30,13 @@ export async function getCampaignPosts(campaignId: string): Promise<CampaignPost
 export async function getCampaignJobs(
   campaignId: string,
   statusFilter?: string[],
-): Promise<CampaignJob[]> {
+): Promise<CampaignJobWithAvatar[]> {
   const session = await requireSession();
   const supabase = createAdminClient();
 
   let query = supabase
     .from("campaign_jobs")
-    .select("*")
+    .select("*, avatars:avatar_id(first_name, last_name)")
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
     .limit(200);
@@ -50,7 +50,15 @@ export async function getCampaignJobs(
   }
 
   const { data } = await query;
-  return (data ?? []) as CampaignJob[];
+
+  return (data ?? []).map((row) => {
+    const { avatars, ...job } = row as Record<string, unknown>;
+    const av = avatars as { first_name: string; last_name: string } | null;
+    return {
+      ...job,
+      avatar_name: av ? `${av.first_name} ${av.last_name}` : null,
+    } as CampaignJobWithAvatar;
+  });
 }
 
 export async function getJobQueue(boxId?: string): Promise<CampaignJob[]> {

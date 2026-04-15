@@ -373,6 +373,10 @@ export interface CampaignJob {
   created_at: string;
 }
 
+export interface CampaignJobWithAvatar extends CampaignJob {
+  avatar_name: string | null;
+}
+
 export interface CampaignJobWithRelations extends CampaignJob {
   avatar?: Avatar;
   campaign_post?: CampaignPost;
