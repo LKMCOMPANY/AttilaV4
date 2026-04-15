@@ -7,6 +7,7 @@ import { IdentityTab } from "./tabs/identity-tab";
 import { PersonalityTab } from "./tabs/personality-tab";
 import { DeviceTab } from "./tabs/device-tab";
 import { ContentTab } from "./tabs/content-tab";
+import { EmptyPanel } from "@/components/ui/empty";
 import type { AvatarWithRelations } from "@/types";
 import { User } from "lucide-react";
 
@@ -29,17 +30,11 @@ export function AvatarDetailPanel({
 }: AvatarDetailPanelProps) {
   if (!avatar) {
     return (
-      <div className="flex h-full flex-col items-center justify-center bg-background">
-        <div className="rounded-full bg-muted p-3">
-          <User className="h-5 w-5 text-muted-foreground/40" />
-        </div>
-        <p className="mt-3 text-sm font-medium text-muted-foreground">
-          Select an avatar
-        </p>
-        <p className="mt-0.5 text-xs text-muted-foreground/60">
-          Choose an avatar from the list to view details
-        </p>
-      </div>
+      <EmptyPanel
+        icon={User}
+        title="Select an avatar"
+        description="Choose an avatar from the list to view details"
+      />
     );
   }
 

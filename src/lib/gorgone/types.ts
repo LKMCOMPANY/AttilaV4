@@ -94,7 +94,7 @@ export interface ZoneVolumeEstimate {
   };
 }
 
-export interface CampaignFilters {
+export interface EstimatorFilters {
   platforms: ("twitter" | "tiktok")[];
   post_types?: ("post" | "reply" | "retweet")[];
   exclude_ads?: boolean;

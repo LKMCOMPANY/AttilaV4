@@ -244,3 +244,63 @@ export interface GorgoneSyncCursor {
   updated_at: string;
 }
 
+// ---------------------------------------------------------------------------
+// Campaigns (Automator)
+// ---------------------------------------------------------------------------
+
+export const CAMPAIGN_MODES = ["sniper"] as const;
+export const CAMPAIGN_STATUSES = ["draft", "active", "paused", "archived"] as const;
+export const CAMPAIGN_PLATFORMS = ["twitter", "tiktok"] as const;
+
+export type CampaignMode = (typeof CAMPAIGN_MODES)[number];
+export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
+export type CampaignPlatform = (typeof CAMPAIGN_PLATFORMS)[number];
+
+export interface CampaignFilters {
+  // Common (both platforms)
+  min_author_followers?: number;
+  verified_only?: boolean;
+  languages?: string[];
+  min_engagement?: number;
+
+  // Twitter (X)
+  post_types?: ("post" | "reply" | "retweet")[];
+  min_like_count?: number;
+  min_view_count?: number;
+  min_reply_count?: number;
+  min_quote_count?: number;
+  min_retweet_count?: number;
+
+  // TikTok
+  exclude_ads?: boolean;
+  exclude_private?: boolean;
+  min_play_count?: number;
+  min_comment_count?: number;
+  min_digg_count?: number;
+  min_share_count?: number;
+  min_collect_count?: number;
+}
+
+export interface Campaign {
+  id: string;
+  account_id: string;
+  name: string;
+  mode: CampaignMode;
+  status: CampaignStatus;
+  platforms: CampaignPlatform[];
+  gorgone_zone_id: string;
+  gorgone_zone_name: string | null;
+  army_ids: string[];
+  filters: CampaignFilters;
+  operational_context: string | null;
+  strategy: string | null;
+  key_messages: string | null;
+  total_posts_ingested: number;
+  total_posts_filtered: number;
+  total_responses_sent: number;
+  total_responses_failed: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+

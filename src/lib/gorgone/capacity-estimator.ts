@@ -3,7 +3,7 @@ import type {
   ZoneVolumeEstimate,
   TwitterBreakdown,
   TiktokBreakdown,
-  CampaignFilters,
+  EstimatorFilters,
   FilteredVolume,
   AvatarCapacityParams,
   CapacityEstimate,
@@ -115,7 +115,7 @@ async function estimateTiktokVolume(
 
 export function applyFilters(
   volume: ZoneVolumeEstimate,
-  filters: CampaignFilters
+  filters: EstimatorFilters
 ): FilteredVolume {
   const applied: { name: string; pass_rate: number }[] = [];
   let rate = 1.0;
@@ -249,7 +249,7 @@ export function estimateCapacity(
 export async function estimateCampaignCapacity(params: {
   zone_id: string;
   platform: "twitter" | "tiktok";
-  filters: CampaignFilters;
+  filters: EstimatorFilters;
   avatars: AvatarCapacityParams;
 }): Promise<CampaignCapacityResult> {
   const volume = await estimateZoneVolume(params.zone_id, params.platform);

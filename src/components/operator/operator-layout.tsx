@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
+import { Group, Panel } from "react-resizable-panels";
+import { ResizableHandle } from "@/components/ui/resizable";
 import { AvatarListPanel } from "./avatar-list-panel";
 import { DevicePanel } from "./device-panel";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
@@ -140,17 +141,13 @@ export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayo
         />
       </Panel>
 
-      <Separator className="group/handle relative flex w-px items-center justify-center bg-border transition-colors hover:bg-primary/40 active:bg-primary/60">
-        <div className="z-10 h-8 w-[3px] rounded-full bg-border transition-colors group-hover/handle:bg-primary/50 group-active/handle:bg-primary" />
-      </Separator>
+      <ResizableHandle withHandle />
 
       <Panel id="device" minSize="15%" maxSize="50%" style={panelStyle}>
         <DevicePanel avatar={selectedAvatar} />
       </Panel>
 
-      <Separator className="group/handle relative flex w-px items-center justify-center bg-border transition-colors hover:bg-primary/40 active:bg-primary/60">
-        <div className="z-10 h-8 w-[3px] rounded-full bg-border transition-colors group-hover/handle:bg-primary/50 group-active/handle:bg-primary" />
-      </Separator>
+      <ResizableHandle withHandle />
 
       <Panel id="details" minSize="20%" style={panelStyle}>
         <AvatarDetailPanel
