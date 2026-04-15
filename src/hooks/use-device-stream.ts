@@ -9,6 +9,7 @@ import {
   type StreamStatus,
 } from "@/lib/streaming/scrcpy-stream";
 import { ANDROID_KEYCODES, META_CTRL, META_SHIFT, META_ALT } from "@/lib/streaming/scrcpy-codec";
+import { AudioPlayer, type AudioPlayerStatus } from "@/lib/streaming/audio-player";
 
 interface UseDeviceStreamOptions {
   boxId: string | null;
@@ -33,6 +34,9 @@ export interface UseDeviceStreamReturn {
   sendKeycode: (action: number, keycode: number, metastate?: number) => void;
   sendText: (text: string) => void;
   sendClipboard: (text: string) => void;
+  audioStatus: AudioPlayerStatus;
+  audioEnabled: boolean;
+  toggleAudio: () => void;
 }
 
 function buildWsUrl(boxId: string, dbId: string, type: string): string {
@@ -47,12 +51,15 @@ export function useDeviceStream({
 }: UseDeviceStreamOptions): UseDeviceStreamReturn {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<ScrcpyStream | null>(null);
+  const audioRef = useRef<AudioPlayer | null>(null);
   const pointerDown = useRef(false);
   const [status, setStatus] = useState<StreamStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [audioStatus, setAudioStatus] = useState<AudioPlayerStatus>("idle");
+  const [audioEnabled, setAudioEnabled] = useState(false);
 
   // -------------------------------------------------------------------------
-  // Stream lifecycle
+  // Video stream lifecycle
   // -------------------------------------------------------------------------
 
   useEffect(() => {
@@ -86,6 +93,37 @@ export function useDeviceStream({
       stream.dispose();
     };
   }, [boxId, dbId, enabled]);
+
+  // -------------------------------------------------------------------------
+  // Audio stream lifecycle
+  // -------------------------------------------------------------------------
+
+  useEffect(() => {
+    if (!audioEnabled || !boxId || !dbId || !enabled) {
+      audioRef.current?.dispose();
+      audioRef.current = null;
+      setAudioStatus("idle");
+      return;
+    }
+
+    const player = new AudioPlayer({
+      url: buildWsUrl(boxId, dbId, "audio"),
+      onStatus: setAudioStatus,
+      onError: (msg) => setError((prev) => prev ?? `Audio: ${msg}`),
+    });
+
+    audioRef.current = player;
+    player.start();
+
+    return () => {
+      audioRef.current = null;
+      player.dispose();
+    };
+  }, [boxId, dbId, enabled, audioEnabled]);
+
+  const toggleAudio = useCallback(() => {
+    setAudioEnabled((prev) => !prev);
+  }, []);
 
   // -------------------------------------------------------------------------
   // Keyboard input (when canvas is focused)
@@ -309,5 +347,8 @@ export function useDeviceStream({
     sendKeycode,
     sendText,
     sendClipboard,
+    audioStatus,
+    audioEnabled,
+    toggleAudio,
   };
 }

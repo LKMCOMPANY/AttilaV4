@@ -34,6 +34,7 @@ export default async function StreamPage({
       boxId={device.box_id}
       dbId={device.db_id}
       deviceName={device.user_name || device.db_id}
+      deviceId={device.id}
     />
   );
 }

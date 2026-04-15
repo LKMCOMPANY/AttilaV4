@@ -1,6 +1,6 @@
 # ATTILA V4 — Architecture technique
 
-> Documentation de référence pour le développement. Validée par tests live le 13 avril 2026.
+> Documentation de référence pour le développement. Mise à jour le 15 avril 2026.
 
 ---
 
@@ -493,9 +493,11 @@ Le streaming vidéo utilise des WebSockets avec un protocole binaire spécifique
 ```
 Navigateur → wss://box-N.attila.army/stream/{db_id}/video  (flux H.264)
 Navigateur → wss://box-N.attila.army/stream/{db_id}/touch  (contrôle tactile)
+Navigateur → wss://box-N.attila.army/stream/{db_id}/audio  (flux Opus via TCP→WS bridge)
 ```
 
 Le `magicbox-proxy` sur la box résout les ports dynamiques via `list_names` et proxy les WebSockets.
+Pour l'audio, le proxy bridge le TCP brut du port audio en WebSocket (`audio-bridge.js`).
 
 ### Frame 0 — Méta (130 bytes)
 
@@ -533,13 +535,69 @@ bytes 24-27 : action_button (int32 BE)
 bytes 28-31 : buttons (int32 BE)
 ```
 
-### Décodage navigateur
+### Décodage navigateur — Vidéo
 
 - **WebCodecs API** (`VideoDecoder`) pour le décodage H.264 hardware
 - Codec string extrait du SPS : `avc1.42c032`
 - Rendu sur canvas 2D (`ctx.drawImage(videoFrame, 0, 0)`)
 - 30fps (timestamps synthétiques, incréments de 33333µs)
 - Requiert Chrome/Edge. Fallback screenshot pour Firefox.
+
+### Audio streaming — Protocole et décodage
+
+L'audio n'est **pas activé par défaut** sur les containers VMOS (le scrcpy principal
+tourne avec `audio=false`). L'app démarre un processus scrcpy audio dédié à la demande.
+
+#### Activation (server action `enableDeviceAudio`)
+
+```
+1. Vérifie si le port 9998 est déjà en écoute (netstat)
+2. Si non, démarre un scrcpy audio-only :
+   CLASSPATH=$([ -f /data/local/scd ] && echo /data/local/scd || echo /vendor/bin/scd)
+   app_process / com.genymobile.scrcpy.Server 3.3.3
+     connection_mode=tcp video=false audio=true audio_port=9998
+     control=false daemon=true
+3. Poll jusqu'à ce que le port 9998 soit en écoute (~2s)
+```
+
+Le classpath utilise la même logique de fallback que le script `/data/local/scd.sh`
+du système VMOS : préfère `/data/local/scd`, fallback sur `/vendor/bin/scd`.
+
+#### Protocole audio (TCP → WebSocket bridge)
+
+Le flux audio passe par le `audio-bridge.js` du proxy (TCP brut → WebSocket).
+Les chunks TCP arrivent en messages WebSocket de taille arbitraire. Le client
+doit réassembler le flux avec un parser à états :
+
+```
+64 bytes   device name (UTF-8, null-padded, ex: "SM-S9010")
+4 bytes    codec string ("opus")
+repeated:
+  12 bytes  frame header
+  N bytes   frame data (Opus encoded)
+
+Frame header :
+  byte 0      flags (0x80 = config frame / OpusHead)
+  bytes 1-3   padding
+  bytes 4-7   PTS (uint32 BE)
+  bytes 8-11  data length N (uint32 BE)
+```
+
+#### Décodage navigateur — Audio
+
+- **WebCodecs API** (`AudioDecoder`) pour le décodage Opus hardware
+- Opus stereo, 48 kHz, frames de 20ms
+- Playback via `AudioContext` → `AudioBufferSourceNode` → `GainNode`
+- Scheduling avec `nextPlayTime` pour un playback fluide sans gaps
+- Auto-reconnexion avec backoff exponentiel (2s → 15s max)
+
+#### Fichiers
+
+| Fichier | Rôle |
+|---------|------|
+| `src/lib/streaming/audio-player.ts` | Player : stream parser + AudioDecoder + AudioContext |
+| `src/hooks/use-audio-toggle.ts` | Hook partagé : enable scrcpy audio + toggle stream |
+| `src/app/actions/device-control.ts` | `enableDeviceAudio()` — démarre le process sur le device |
 
 ---
 
@@ -684,6 +742,29 @@ Toutes les 30 secondes :
    - UPDATE state='stopped', screen_state=NULL, foreground_app=NULL
 ```
 
+### Table `content_items` (bibliothèque de contenu par avatar)
+
+| Colonne | Type | Description |
+|---------|------|-------------|
+| `id` | uuid PK | Identifiant |
+| `account_id` | uuid FK → accounts | Tenant propriétaire |
+| `avatar_id` | uuid FK → avatars, NULL | Avatar associé |
+| `file_name` | text | Nom original du fichier |
+| `file_type` | text | `video` ou `image` |
+| `file_size` | bigint | Taille en bytes |
+| `mime_type` | text | `video/mp4`, `image/jpeg`, etc. |
+| `storage_path` | text | Chemin dans le bucket Supabase Storage `content` |
+| `status` | text | `uploading` / `ready` / `pushed` / `error` |
+| `pushed_to_device_id` | uuid FK → devices, NULL | Device cible du dernier push |
+| `pushed_at` | timestamptz | Date du dernier push |
+| `created_by` | uuid FK → auth.users | User qui a uploadé |
+| `created_at` | timestamptz | Date de création |
+
+RLS : admin voit tout, les users ne voient que le contenu de leur `account_id`.
+
+Storage : bucket `content` (privé, 100 MB max, types autorisés : MP4, MOV, WebM, MKV, JPEG, PNG, WebP, GIF).
+Organisation : `{account_id}/{timestamp}_{filename}`.
+
 ### Données métier (100% Supabase, pas d'API box)
 
 | Table | Description |
@@ -693,6 +774,7 @@ Toutes les 30 secondes :
 | `avatars` | Identités virtuelles (identité, personnalité, style, device attribué) |
 | `avatar_accounts` | Comptes réseaux sociaux par avatar (platform, username, credentials chiffrés) |
 | `armies` | Groupes d'avatars |
+| `content_items` | Bibliothèque de contenu (vidéos, images) par avatar, avec push vers device |
 | `campaigns` | Campagnes d'automation (rules, guidelines, stats) |
 | `campaign_posts` | Posts sources à traiter |
 | `campaign_jobs` | Jobs individuels (avatar, device, contenu, scheduled_at, status, result) |
@@ -741,13 +823,14 @@ L'app veut agir sur le device uuid-a :
 ```
 Soit : BOX = tunnel_hostname, DEVICE = db_id
 
-API Container :     https://{BOX}/container_api/v1/{endpoint}/{DEVICE}
-API Android :       https://{BOX}/android_api/v1/{endpoint}/{DEVICE}
-Streaming vidéo :   wss://{BOX}/stream/{DEVICE}/video
-Streaming touch :   wss://{BOX}/stream/{DEVICE}/touch
-Streaming audio :   wss://{BOX}/stream/{DEVICE}/audio
-Screenshot :        https://{BOX}/container_api/v1/screenshots/{DEVICE}
-Health box :        https://{BOX}/healthz
+API Container :      https://{BOX}/container_api/v1/{endpoint}/{DEVICE}
+API Android :        https://{BOX}/android_api/v1/{endpoint}/{DEVICE}
+Streaming vidéo :    wss://{BOX}/stream/{DEVICE}/video     (WebSocket natif)
+Streaming touch :    wss://{BOX}/stream/{DEVICE}/touch     (WebSocket natif)
+Streaming audio :    wss://{BOX}/stream/{DEVICE}/audio     (TCP→WS bridge, requiert scrcpy audio actif)
+Upload fichier URL : POST https://{BOX}/android_api/v1/upload_file_from_url_batch
+Screenshot :         https://{BOX}/container_api/v1/screenshots/{DEVICE}
+Health box :         https://{BOX}/healthz
 ```
 
 Toutes les requêtes nécessitent les headers CF-Access :
@@ -760,26 +843,50 @@ CF-Access-Client-Secret: {service_token_secret}
 
 ## Flux opérateur
 
-### Streaming (contrôle manuel)
+### Streaming (contrôle manuel + audio)
 
 ```
 1. Opérateur clique "Streamer" sur un device dans le dashboard
-2. Dashboard → Render API : "je veux streamer device uuid-a"
-3. Render :
-   a. Vérifie RBAC (ce user a-t-il accès à ce device ?)
-   b. Résout : device uuid-a → db_id + box tunnel_hostname
-   c. Répond : {
-        wsUrl: "wss://box-1.attila.army/stream/EDGE85P6LQWN3OHY/video",
-        touchUrl: "wss://box-1.attila.army/stream/EDGE85P6LQWN3OHY/touch"
-      }
-4. Navigateur ouvre les WebSockets directement vers la box
-   → Cloudflare Tunnel → magicbox-proxy → scrcpy
-   (le gateway n'est PAS dans ce chemin)
-   Latence : ~180ms (RTT 137ms + frame 30fps)
+2. Dashboard résout : device uuid-a → db_id + box tunnel_hostname
+3. Navigateur ouvre les WebSockets via le custom server (server.mjs) :
+   → /ws/stream/{boxId}/{dbId}/video  (H.264)
+   → /ws/stream/{boxId}/{dbId}/touch  (contrôle tactile)
+4. server.mjs valide la session (cookie Supabase), résout la box,
+   puis proxy vers wss://box-N.attila.army/stream/{dbId}/{type}
+   avec les headers CF-Access injectés côté serveur
+5. Latence : ~180ms (RTT 137ms + frame 30fps)
+
+Audio (à la demande) :
+6. Opérateur clique l'icône speaker dans la NavBar
+7. enableDeviceAudio() démarre le scrcpy audio sur le device (si pas déjà actif)
+8. WebSocket audio connecté : /ws/stream/{boxId}/{dbId}/audio
+9. AudioPlayer parse le flux TCP/Opus → AudioDecoder → AudioContext
 ```
 
 Le streaming passe par le proxy existant, protégé par CF-Access. Le gateway
 n'intercepte pas le streaming.
+
+### Upload de contenu + push vers device
+
+```
+1. Opérateur ouvre l'onglet "Content" d'un avatar
+2. Drag & drop ou sélection de fichiers (vidéos/images, max 100 MB)
+3. Upload :
+   a. POST /api/content/upload (FormData: file + accountId)
+   b. Validation : session, ownership, type MIME, taille
+   c. Upload vers Supabase Storage (bucket "content")
+   d. Création du record content_items en base
+4. Push vers device :
+   a. Opérateur clique l'icône smartphone sur un fichier
+   b. pushContentToDevice() :
+      - Vérifie ownership du contenu ET du device (anti cross-tenant)
+      - Génère un signed URL Supabase (5 min)
+      - POST /android_api/v1/upload_file_from_url_batch
+        { db_ids: "{db_id}", url: "{signed_url}", dest_path: "/sdcard/DCIM/Camera/" }
+      - Trigger media scanner Android (am broadcast MEDIA_SCANNER_SCAN_FILE)
+      - Update status = "pushed" en base
+5. Le fichier apparaît dans la galerie/camera roll du device
+```
 
 ### Automation (campagne de commentaires)
 

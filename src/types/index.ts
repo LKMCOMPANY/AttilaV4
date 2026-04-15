@@ -165,6 +165,36 @@ export interface AvatarWithRelations extends Avatar {
 }
 
 // ---------------------------------------------------------------------------
+// Content Items
+// ---------------------------------------------------------------------------
+
+export const CONTENT_STATUSES = ["uploading", "ready", "pushed", "error"] as const;
+export type ContentStatus = (typeof CONTENT_STATUSES)[number];
+
+export interface ContentItem {
+  id: string;
+  account_id: string;
+  avatar_id: string | null;
+  file_name: string;
+  file_type: string;
+  file_size: number;
+  mime_type: string;
+  storage_path: string;
+  thumbnail_path: string | null;
+  duration_seconds: number | null;
+  width: number | null;
+  height: number | null;
+  status: ContentStatus;
+  pushed_to_device_id: string | null;
+  pushed_at: string | null;
+  tags: string[];
+  metadata: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // Armies
 // ---------------------------------------------------------------------------
 

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDeviceStream, type UseDeviceStreamReturn } from "@/hooks/use-device-stream";
+import { useAudioToggle } from "@/hooks/use-audio-toggle";
 import { isWebCodecsSupported, type StreamStatus } from "@/lib/streaming/scrcpy-stream";
 import { StreamCanvas } from "./stream-canvas";
 import { ScreenshotViewer } from "./screenshot-viewer";
@@ -57,11 +58,22 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
   );
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const { status, error, canvasRef, handlers, sendKeycode } = useDeviceStream({
+  const {
+    status,
+    error,
+    canvasRef,
+    handlers,
+    sendKeycode,
+    audioEnabled,
+    audioStatus,
+    toggleAudio,
+  } = useDeviceStream({
     boxId: device?.box_id ?? null,
     dbId: device?.db_id ?? null,
     enabled: isRunning && mode === "stream" && webCodecs,
   });
+
+  const handleToggleAudio = useAudioToggle(device?.id, audioEnabled, toggleAudio);
 
   useEffect(() => {
     if (!webCodecs) setMode("screenshot");
@@ -157,7 +169,13 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
       {/* Device viewport */}
       <div className="device-viewport relative flex flex-1 flex-col items-center justify-center overflow-hidden">
         <PhoneFrame status={frameStatus} navBar={
-          <NavBar isStreaming={status === "streaming"} sendKeycode={sendKeycode} />
+          <NavBar
+            isStreaming={status === "streaming"}
+            sendKeycode={sendKeycode}
+            audioEnabled={audioEnabled}
+            audioStatus={audioStatus}
+            onToggleAudio={handleToggleAudio}
+          />
         }>
           <DeviceScreen
             device={device}

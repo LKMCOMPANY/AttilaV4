@@ -160,3 +160,62 @@ export async function shellTap(
     return { error: err instanceof Error ? err.message : "Unknown error" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Enable audio capture — starts a dedicated scrcpy audio process
+// ---------------------------------------------------------------------------
+
+// Mirrors the fallback logic in /data/local/scd.sh on the device:
+// prefers /data/local/scd, falls back to /vendor/bin/scd
+const SCRCPY_AUDIO_CMD = [
+  "SCD=$([ -f /data/local/scd ] && echo /data/local/scd || echo /vendor/bin/scd);",
+  "CLASSPATH=$SCD nohup app_process / com.genymobile.scrcpy.Server 3.3.3",
+  "connection_mode=tcp",
+  "video=false",
+  "audio=true",
+  "audio_port=9998",
+  "control=false",
+  "daemon=true",
+  "send_dummy_byte=false",
+  "log_level=error",
+  "> /dev/null 2>&1 &",
+].join(" ");
+
+export async function enableDeviceAudio(
+  deviceId: string
+): Promise<{ error: string | null }> {
+  try {
+    const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
+
+    const checkRes = await boxFetch<{
+      code: number;
+      data: { message: string };
+    }>(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
+      method: "POST",
+      body: JSON.stringify({
+        cmd: "netstat -tlnp 2>/dev/null | grep ':9998 ' | grep LISTEN || echo NO_AUDIO",
+      }),
+    });
+
+    if (!checkRes.data?.message?.includes("NO_AUDIO")) {
+      return { error: null };
+    }
+
+    await boxFetch(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
+      method: "POST",
+      body: JSON.stringify({ cmd: SCRCPY_AUDIO_CMD }),
+    });
+
+    // Wait for the audio port to start accepting connections (up to ~2.5s)
+    await boxFetch(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
+      method: "POST",
+      body: JSON.stringify({
+        cmd: "for i in 1 2 3 4 5; do netstat -tlnp 2>/dev/null | grep ':9998 ' | grep -q LISTEN && break; sleep 0.5; done",
+      }),
+    });
+
+    return { error: null };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
