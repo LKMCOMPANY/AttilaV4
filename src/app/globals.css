@@ -582,8 +582,8 @@
     background:
       radial-gradient(
         ellipse 55% 45% at 50% 46%,
-        oklch(0.96 0 0) 0%,
-        var(--background) 100%
+        #faf9f7 0%,
+        #f0eee9 100%
       );
   }
 
@@ -591,8 +591,8 @@
     background:
       radial-gradient(
         ellipse 55% 45% at 50% 46%,
-        oklch(0.16 0.01 75) 0%,
-        var(--background) 100%
+        #1f1d19 0%,
+        #15140f 100%
       );
   }
 
