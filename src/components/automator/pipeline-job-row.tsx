@@ -1,10 +1,11 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { ExternalLink, User } from "lucide-react";
+import { ExternalLink, User, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { DeviceScreenshot } from "./device-screenshot";
-import { JobStatusIcon, JobStatusBadge } from "./pipeline-status";
+import { JobStatusIcon, JobStatusLabel } from "./pipeline-status";
 import { formatDistanceToNow, format } from "date-fns";
 import type { CampaignJobWithAvatar, SocialPlatform } from "@/types";
 
@@ -18,13 +19,19 @@ interface PipelineJobRowProps {
   onSelect: () => void;
 }
 
-export function PipelineJobRow({ job, selected, onSelect }: PipelineJobRowProps) {
+export function PipelineJobRow({
+  job,
+  selected,
+  onSelect,
+}: PipelineJobRowProps) {
   return (
     <button
       onClick={onSelect}
       className={cn(
-        "group flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition-colors",
-        selected ? "bg-primary/10 text-foreground" : "hover:bg-muted/50"
+        "flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors",
+        selected
+          ? "bg-primary/5 ring-1 ring-primary/20"
+          : "hover:bg-muted/50"
       )}
     >
       <JobStatusIcon status={job.status} className="mt-0.5" />
@@ -47,21 +54,25 @@ export function PipelineJobRow({ job, selected, onSelect }: PipelineJobRowProps)
             {job.platform}
           </span>
           <span>
-            {formatDistanceToNow(new Date(job.created_at), { addSuffix: true })}
+            {formatDistanceToNow(new Date(job.created_at), {
+              addSuffix: true,
+            })}
           </span>
           {job.duration_ms != null && (
-            <span className="tabular-nums">{(job.duration_ms / 1000).toFixed(1)}s</span>
+            <span className="tabular-nums">
+              {(job.duration_ms / 1000).toFixed(1)}s
+            </span>
           )}
         </div>
       </div>
 
-      <JobStatusBadge status={job.status} />
+      <JobStatusLabel status={job.status} />
     </button>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Job detail (expandable bottom panel)
+// Job detail (bottom panel)
 // ---------------------------------------------------------------------------
 
 interface PipelineJobDetailProps {
@@ -71,20 +82,21 @@ interface PipelineJobDetailProps {
 
 export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
   return (
-    <div className="shrink-0 border-t bg-muted/20">
-      <div className="flex items-center justify-between border-b border-border/50 px-3 py-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-          Job detail
-        </span>
-        <button
+    <div className="shrink-0 border-t bg-card">
+      <div className="flex items-center justify-between px-3 py-1.5">
+        <span className="text-caption">Job Detail</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-5 w-5"
           onClick={onClose}
-          className="text-[10px] text-muted-foreground hover:text-foreground"
         >
-          Close
-        </button>
+          <X className="h-3 w-3" />
+          <span className="sr-only">Close</span>
+        </Button>
       </div>
 
-      <div className="space-y-2.5 p-3">
+      <div className="space-y-2 px-3 pb-3">
         <DetailField label="Comment" value={job.comment_text} />
 
         {job.avatar_name && (
@@ -92,9 +104,7 @@ export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
         )}
 
         <div>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Post URL
-          </span>
+          <span className="text-caption">Post URL</span>
           <a
             href={job.post_url}
             target="_blank"
@@ -108,7 +118,7 @@ export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
 
         {job.error_message && (
           <div>
-            <span className="text-[10px] font-medium uppercase tracking-wider text-destructive">
+            <span className="text-[10px] font-medium uppercase text-destructive">
               Error
             </span>
             <p className="mt-0.5 text-[11px] text-destructive/80">
@@ -118,17 +128,15 @@ export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
         )}
 
         <div>
-          <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-            Timeline
-          </span>
-          <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1">
+          <span className="text-caption">Timeline</span>
+          <div className="mt-0.5 grid grid-cols-2 gap-x-3 gap-y-0.5">
             <TimelineEntry label="Queued" timestamp={job.queued_at} />
             <TimelineEntry label="Scheduled" timestamp={job.scheduled_at} />
             <TimelineEntry label="Started" timestamp={job.started_at} />
             <TimelineEntry label="Completed" timestamp={job.completed_at} />
           </div>
           {job.duration_ms != null && (
-            <p className="mt-1 text-[10px] tabular-nums text-muted-foreground">
+            <p className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
               Duration: {(job.duration_ms / 1000).toFixed(1)}s
             </p>
           )}
@@ -136,29 +144,33 @@ export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
 
         {(job.source_screenshot || job.proof_screenshot) && (
           <div>
-            <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Screenshots
-            </span>
-            <div className="mt-1 flex gap-3">
+            <span className="text-caption">Screenshots</span>
+            <div className="mt-0.5 flex gap-2.5">
               {job.source_screenshot && (
                 <div>
-                  <span className="text-[9px] text-muted-foreground/60">Source</span>
-                  <DeviceScreenshot url={job.source_screenshot} alt="Source screenshot" />
+                  <span className="text-[9px] text-muted-foreground/60">
+                    Source
+                  </span>
+                  <DeviceScreenshot
+                    url={job.source_screenshot}
+                    alt="Source screenshot"
+                  />
                 </div>
               )}
               {job.proof_screenshot && (
                 <div>
-                  <span className="text-[9px] text-muted-foreground/60">Proof</span>
-                  <DeviceScreenshot url={job.proof_screenshot} alt="Proof screenshot" />
+                  <span className="text-[9px] text-muted-foreground/60">
+                    Proof
+                  </span>
+                  <DeviceScreenshot
+                    url={job.proof_screenshot}
+                    alt="Proof screenshot"
+                  />
                 </div>
               )}
             </div>
           </div>
         )}
-
-        <div className="flex items-center justify-end pt-1">
-          <JobStatusBadge status={job.status} />
-        </div>
       </div>
     </div>
   );
@@ -171,9 +183,7 @@ export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
 function DetailField({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </span>
+      <span className="text-caption">{label}</span>
       <p className="mt-0.5 text-[11px] leading-relaxed">{value}</p>
     </div>
   );
@@ -188,7 +198,7 @@ function TimelineEntry({
 }) {
   return (
     <div className="flex items-baseline gap-1.5 text-[10px]">
-      <span className="text-muted-foreground">{label}:</span>
+      <span className="text-muted-foreground">{label}</span>
       <span className="tabular-nums">
         {timestamp ? format(new Date(timestamp), "HH:mm:ss") : "—"}
       </span>

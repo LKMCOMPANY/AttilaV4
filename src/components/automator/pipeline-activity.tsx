@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Activity,
@@ -15,6 +14,7 @@ import { getCampaignPosts, getCampaignJobs, purgeQueue } from "@/app/actions/pip
 import { toast } from "sonner";
 import { PipelineJobRow, PipelineJobDetail } from "./pipeline-job-row";
 import { PipelinePostRow } from "./pipeline-post-row";
+import { PostDetailView } from "./post-detail-view";
 import type { Campaign, CampaignPost, CampaignJobWithAvatar } from "@/types";
 
 interface PipelineActivityProps {
@@ -26,6 +26,7 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
   const [jobs, setJobs] = useState<CampaignJobWithAvatar[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedPostIndex, setSelectedPostIndex] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -43,6 +44,11 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
     const interval = setInterval(refresh, 15000);
     return () => clearInterval(interval);
   }, [refresh]);
+
+  useEffect(() => {
+    setSelectedPostIndex(null);
+    setSelectedJobId(null);
+  }, [campaign.id]);
 
   const handlePurge = async () => {
     const count = await purgeQueue(campaign.id);
@@ -67,35 +73,55 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
   const toggleJob = (id: string) =>
     setSelectedJobId((prev) => (prev === id ? null : id));
 
+  const handleSelectPost = useCallback(
+    (postId: string) => {
+      const idx = posts.findIndex((p) => p.id === postId);
+      if (idx !== -1) setSelectedPostIndex(idx);
+    },
+    [posts]
+  );
+
+  const handleNavigatePost = useCallback(
+    (delta: -1 | 1) => {
+      setSelectedPostIndex((prev) => {
+        if (prev === null) return null;
+        const next = prev + delta;
+        if (next < 0 || next >= posts.length) return prev;
+        return next;
+      });
+    },
+    [posts.length]
+  );
+
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       <Tabs defaultValue="posts" className="flex min-h-0 flex-1 flex-col">
         {/* Tab bar */}
-        <div className="flex shrink-0 items-center justify-between border-b px-3">
+        <div className="flex shrink-0 items-center overflow-x-auto border-b px-3 scrollbar-hide">
           <TabsList variant="line">
             <TabsTrigger value="posts" className="gap-1.5 text-[11px]">
               <MessageSquare className="h-3 w-3" />
               Posts
-              <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px] tabular-nums">
+              <span className="text-[10px] tabular-nums text-muted-foreground">
                 {posts.length}
-              </Badge>
+              </span>
             </TabsTrigger>
             <TabsTrigger value="queue" className="gap-1.5 text-[11px]">
               <Clock className="h-3 w-3" />
               Queue
               {queuedJobs.length > 0 && (
-                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px] tabular-nums">
+                <span className="text-[10px] tabular-nums text-muted-foreground">
                   {queuedJobs.length}
-                </Badge>
+                </span>
               )}
             </TabsTrigger>
             <TabsTrigger value="activity" className="gap-1.5 text-[11px]">
               <Activity className="h-3 w-3" />
               Activity
               {completedJobs.length > 0 && (
-                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px] tabular-nums">
+                <span className="text-[10px] tabular-nums text-muted-foreground">
                   {completedJobs.length}
-                </Badge>
+                </span>
               )}
             </TabsTrigger>
           </TabsList>
@@ -103,9 +129,9 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
           {queuedJobs.length > 0 && (
             <button
               onClick={handlePurge}
-              className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
             >
-              <Trash2 className="h-3 w-3" />
+              <Trash2 className="h-2.5 w-2.5" />
               Purge
             </button>
           )}
@@ -115,7 +141,7 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
         <div className="min-h-0 flex-1">
           <TabsContent value="posts" className="h-full p-0">
             <ScrollArea className="h-full">
-              <div className="space-y-1.5 p-2">
+              <div className="space-y-px p-2">
                 {loading && posts.length === 0 && <LoadingState />}
                 {!loading && posts.length === 0 && (
                   <EmptyState message="No posts processed yet" />
@@ -125,6 +151,7 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
                     key={post.id}
                     post={post}
                     responses={jobsByPostId.get(post.id) ?? []}
+                    onSelect={() => handleSelectPost(post.id)}
                   />
                 ))}
               </div>
@@ -176,6 +203,17 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
         <PipelineJobDetail
           job={selectedJob}
           onClose={() => setSelectedJobId(null)}
+        />
+      )}
+
+      {/* Post detail overlay — covers the entire panel */}
+      {selectedPostIndex !== null && posts[selectedPostIndex] && (
+        <PostDetailView
+          posts={posts}
+          currentIndex={selectedPostIndex}
+          jobsByPostId={jobsByPostId}
+          onClose={() => setSelectedPostIndex(null)}
+          onNavigate={handleNavigatePost}
         />
       )}
     </div>

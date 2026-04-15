@@ -14,7 +14,6 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   ArrowLeft,
-  Crosshair,
   Shield,
   Users,
   Loader2,
@@ -83,14 +82,14 @@ export function CampaignSettingsPanel({
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
-        <h2 className="min-w-0 flex-1 truncate text-xs font-semibold tracking-widest uppercase text-muted-foreground">
-          Settings
+        <h2 className="min-w-0 flex-1 truncate text-xs font-semibold">
+          {campaign.name}
         </h2>
+        <StatusSelect campaign={campaign} onSave={save} />
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-5 p-3">
-          <StatusSection campaign={campaign} onSave={save} />
+      <ScrollArea className="min-h-0 flex-1" dir="rtl">
+        <div className="space-y-5 p-3" dir="ltr">
           <CapacityEstimator
             accountId={accountId}
             zoneId={campaign.gorgone_zone_id}
@@ -99,7 +98,6 @@ export function CampaignSettingsPanel({
             armyIds={campaign.army_ids}
             capacityParams={campaign.capacity_params}
             onParamsChange={(capacity_params) => save({ capacity_params })}
-            compact
           />
           <FiltersSection campaign={campaign} onSave={save} />
           <ArmySection
@@ -122,17 +120,20 @@ export function CampaignSettingsPanel({
 function Section({
   title,
   icon: Icon,
+  action,
   children,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div>
       <div className="mb-2.5 flex items-center gap-2">
         <Icon className="h-3.5 w-3.5 text-muted-foreground/60" />
-        <h3 className="text-[13px] font-semibold">{title}</h3>
+        <h3 className="flex-1 text-[13px] font-semibold">{title}</h3>
+        {action}
       </div>
       {children}
     </div>
@@ -188,10 +189,10 @@ function NetworksSection({
 }
 
 // ---------------------------------------------------------------------------
-// Status
+// Status (header-inlined)
 // ---------------------------------------------------------------------------
 
-function StatusSection({
+function StatusSelect({
   campaign,
   onSave,
 }: {
@@ -202,26 +203,24 @@ function StatusSection({
   const entries = Object.entries(CAMPAIGN_STATUS_CONFIG) as [CampaignStatus, typeof current][];
 
   return (
-    <Section title="Status" icon={Crosshair}>
-      <div className="flex items-center gap-2">
-        <span className={cn("h-2 w-2 shrink-0 rounded-full", current.dot)} />
-        <Select
-          value={campaign.status}
-          onValueChange={(v) => onSave({ status: v as CampaignStatus })}
-        >
-          <SelectTrigger className="h-7 w-auto gap-1.5 text-[11px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {entries.map(([value, config]) => (
-              <SelectItem key={value} value={value}>
-                {config.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-    </Section>
+    <div className="flex shrink-0 items-center gap-1.5">
+      <span className={cn("h-1.5 w-1.5 rounded-full", current.dot)} />
+      <Select
+        value={campaign.status}
+        onValueChange={(v) => onSave({ status: v as CampaignStatus })}
+      >
+        <SelectTrigger className="h-6 w-auto gap-1 border-0 bg-transparent px-1 text-[10px] shadow-none">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {entries.map(([value, config]) => (
+            <SelectItem key={value} value={value}>
+              {config.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 

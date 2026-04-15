@@ -35,19 +35,16 @@ export function CampaignFiltersSection({
   };
 
   return (
-    <div className="space-y-5">
-      {/* ----------------------------------------------------------------- */}
-      {/* Common filters                                                    */}
-      {/* ----------------------------------------------------------------- */}
+    <div className="space-y-3">
+      {/* Common filters */}
       <FilterGroup
-        icon={<Users className="h-3.5 w-3.5" />}
-        label="Common Filters"
-        description="Applied to all selected platforms"
+        icon={<Users className="h-3 w-3" />}
+        label="Common"
       >
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-1.5">
           <NumericField
             id="min-followers"
-            label="Min author followers"
+            label="Min followers"
             placeholder="e.g. 100"
             value={filters.min_author_followers}
             onChange={(v) => update({ min_author_followers: v })}
@@ -62,14 +59,14 @@ export function CampaignFiltersSection({
         </div>
 
         <SwitchRow
-          label="Verified authors only"
+          label="Verified only"
           checked={filters.verified_only ?? false}
           onChange={(v) => update({ verified_only: v })}
         />
 
-        <div className="space-y-1">
-          <Label htmlFor="languages" className="text-xs">
-            <Globe className="mr-1 inline h-3 w-3" />
+        <div className="space-y-0.5">
+          <Label htmlFor="languages" className="text-[10px] text-muted-foreground">
+            <Globe className="mr-1 inline h-2.5 w-2.5" />
             Languages (comma-separated)
           </Label>
           <Input
@@ -79,38 +76,45 @@ export function CampaignFiltersSection({
             onChange={(e) => {
               const val = e.target.value;
               const langs = val
-                ? val.split(",").map((l) => l.trim()).filter(Boolean)
+                ? val
+                    .split(",")
+                    .map((l) => l.trim())
+                    .filter(Boolean)
                 : undefined;
               update({ languages: langs });
             }}
+            className="h-7 text-xs"
           />
         </div>
       </FilterGroup>
 
-      {/* ----------------------------------------------------------------- */}
-      {/* X (Twitter) filters                                               */}
-      {/* ----------------------------------------------------------------- */}
+      {/* X (Twitter) filters */}
       {hasTwitter && (
         <FilterGroup
-          icon={<XIcon className="h-3.5 w-3.5" />}
-          label="X (Twitter) Filters"
+          icon={<XIcon className="h-3 w-3" />}
+          label="X (Twitter)"
         >
-          {/* Post types */}
-          <div className="space-y-1.5">
-            <Label className="text-xs">Post Types</Label>
-            <div className="flex flex-wrap gap-1.5">
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">
+              Post Types
+            </Label>
+            <div className="flex flex-wrap gap-1">
               {(["post", "reply", "retweet"] as const).map((type) => {
                 const isSelected = filters.post_types?.includes(type);
-                const labels = { post: "Original", reply: "Reply", retweet: "Retweet" };
+                const labels = {
+                  post: "Original",
+                  reply: "Reply",
+                  retweet: "Retweet",
+                };
                 return (
                   <button
                     key={type}
                     type="button"
                     onClick={() => togglePostType(type)}
                     className={cn(
-                      "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors",
+                      "rounded-md border px-2 py-1 text-[11px] font-medium transition-colors",
                       isSelected
-                        ? "border-primary bg-primary/10 text-primary"
+                        ? "border-primary bg-primary/5 text-foreground"
                         : "border-border text-muted-foreground hover:bg-muted"
                     )}
                   >
@@ -119,47 +123,41 @@ export function CampaignFiltersSection({
                 );
               })}
             </div>
-            <p className="text-[10px] text-muted-foreground/60">
-              No selection = all types included
+            <p className="text-[9px] text-muted-foreground/60">
+              No selection = all types
             </p>
           </div>
 
-          {/* Engagement thresholds */}
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-2 gap-1.5">
             <NumericField
               id="tw-min-likes"
               label="Min likes"
-              placeholder="like_count"
               value={filters.min_like_count}
               onChange={(v) => update({ min_like_count: v })}
             />
             <NumericField
               id="tw-min-views"
               label="Min views"
-              placeholder="view_count"
               value={filters.min_view_count}
               onChange={(v) => update({ min_view_count: v })}
             />
           </div>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-3 gap-1.5">
             <NumericField
               id="tw-min-replies"
               label="Min replies"
-              placeholder="reply_count"
               value={filters.min_reply_count}
               onChange={(v) => update({ min_reply_count: v })}
             />
             <NumericField
               id="tw-min-quotes"
               label="Min quotes"
-              placeholder="quote_count"
               value={filters.min_quote_count}
               onChange={(v) => update({ min_quote_count: v })}
             />
             <NumericField
               id="tw-min-retweets"
-              label="Min retweets"
-              placeholder="retweet_count"
+              label="Min RTs"
               value={filters.min_retweet_count}
               onChange={(v) => update({ min_retweet_count: v })}
             />
@@ -167,64 +165,53 @@ export function CampaignFiltersSection({
         </FilterGroup>
       )}
 
-      {/* ----------------------------------------------------------------- */}
-      {/* TikTok filters                                                    */}
-      {/* ----------------------------------------------------------------- */}
+      {/* TikTok filters */}
       {hasTiktok && (
         <FilterGroup
-          icon={<TikTokIcon className="h-3.5 w-3.5" />}
-          label="TikTok Filters"
+          icon={<TikTokIcon className="h-3 w-3" />}
+          label="TikTok"
         >
-          {/* Exclusions */}
           <SwitchRow
             label="Exclude ads"
-            description="Skip promoted content"
             checked={filters.exclude_ads ?? false}
             onChange={(v) => update({ exclude_ads: v })}
           />
           <SwitchRow
-            label="Exclude private accounts"
-            description="Can't comment on private profiles"
+            label="Exclude private"
             checked={filters.exclude_private ?? false}
             onChange={(v) => update({ exclude_private: v })}
           />
 
-          {/* Engagement thresholds */}
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-2 gap-1.5">
             <NumericField
               id="tt-min-plays"
               label="Min plays"
-              placeholder="play_count"
               value={filters.min_play_count}
               onChange={(v) => update({ min_play_count: v })}
             />
             <NumericField
               id="tt-min-comments"
               label="Min comments"
-              placeholder="comment_count"
               value={filters.min_comment_count}
               onChange={(v) => update({ min_comment_count: v })}
             />
           </div>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-3 gap-1.5">
             <NumericField
               id="tt-min-diggs"
               label="Min likes"
-              placeholder="digg_count"
               value={filters.min_digg_count}
               onChange={(v) => update({ min_digg_count: v })}
             />
             <NumericField
               id="tt-min-shares"
               label="Min shares"
-              placeholder="share_count"
               value={filters.min_share_count}
               onChange={(v) => update({ min_share_count: v })}
             />
             <NumericField
               id="tt-min-collects"
               label="Min saves"
-              placeholder="collect_count"
               value={filters.min_collect_count}
               onChange={(v) => update({ min_collect_count: v })}
             />
@@ -236,36 +223,23 @@ export function CampaignFiltersSection({
 }
 
 // ---------------------------------------------------------------------------
-// Reusable sub-components (file-private)
+// Sub-components
 // ---------------------------------------------------------------------------
 
 function FilterGroup({
   icon,
   label,
-  description,
   children,
 }: {
   icon: React.ReactNode;
   label: string;
-  description?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-3 rounded-lg border bg-card p-3">
-      <div>
-        <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded bg-muted">
-            {icon}
-          </div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-foreground">
-            {label}
-          </p>
-        </div>
-        {description && (
-          <p className="mt-0.5 pl-8 text-[10px] text-muted-foreground">
-            {description}
-          </p>
-        )}
+    <div className="space-y-2 rounded-md border p-2.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground">{icon}</span>
+        <span className="text-[11px] font-medium">{label}</span>
       </div>
       {children}
     </div>
@@ -286,8 +260,8 @@ function NumericField({
   onChange: (value: number | undefined) => void;
 }) {
   return (
-    <div className="space-y-1">
-      <Label htmlFor={id} className="text-[11px]">
+    <div className="space-y-0.5">
+      <Label htmlFor={id} className="text-[10px] text-muted-foreground">
         {label}
       </Label>
       <Input
@@ -296,8 +270,10 @@ function NumericField({
         min={0}
         placeholder={placeholder}
         value={value ?? ""}
-        onChange={(e) => onChange(e.target.value ? parseInt(e.target.value) : undefined)}
-        className="h-8 text-xs"
+        onChange={(e) =>
+          onChange(e.target.value ? parseInt(e.target.value) : undefined)
+        }
+        className="h-7 text-xs"
       />
     </div>
   );
@@ -305,23 +281,16 @@ function NumericField({
 
 function SwitchRow({
   label,
-  description,
   checked,
   onChange,
 }: {
   label: string;
-  description?: string;
   checked: boolean;
   onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border px-3 py-2">
-      <div>
-        <span className="text-sm">{label}</span>
-        {description && (
-          <p className="text-[10px] text-muted-foreground">{description}</p>
-        )}
-      </div>
+    <div className="flex items-center justify-between rounded-md border px-2.5 py-1.5">
+      <span className="text-xs">{label}</span>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );

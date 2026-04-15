@@ -7,6 +7,7 @@ import { Crosshair, BookOpen, Target, MessageSquare } from "lucide-react";
 import { EmptyPanel } from "@/components/ui/empty";
 import { toast } from "sonner";
 import { updateCampaign } from "@/app/actions/campaigns";
+import { CampaignNetworkMap } from "./network";
 import type { Campaign } from "@/types";
 
 interface CampaignCenterPanelProps {
@@ -30,19 +31,9 @@ export function CampaignCenterPanel({
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Top half — 3D cartography placeholder */}
-      <div className="flex flex-1 items-center justify-center border-b">
-        <div className="text-center">
-          <div className="mx-auto rounded-full bg-muted p-3">
-            <Crosshair className="h-5 w-5 text-muted-foreground/40" />
-          </div>
-          <p className="mt-3 text-sm font-medium text-muted-foreground">
-            Cartography
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground/60">
-            3D visualization — coming soon
-          </p>
-        </div>
+      {/* Top half — 3D campaign cartography */}
+      <div className="flex-1 border-b">
+        <CampaignNetworkMap campaignId={campaign.id} />
       </div>
 
       {/* Bottom half — Guidelines in tabs */}
