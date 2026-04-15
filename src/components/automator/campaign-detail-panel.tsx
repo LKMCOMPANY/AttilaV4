@@ -2,6 +2,7 @@
 
 import { Crosshair } from "lucide-react";
 import { EmptyPanel } from "@/components/ui/empty";
+import { PipelineActivity } from "./pipeline-activity";
 import type { Campaign } from "@/types";
 
 interface CampaignDetailPanelProps {
@@ -19,11 +20,5 @@ export function CampaignDetailPanel({ campaign }: CampaignDetailPanelProps) {
     );
   }
 
-  return (
-    <EmptyPanel
-      icon={Crosshair}
-      title="Campaign Details — Coming soon"
-      description="Configuration, stats and management will appear here"
-    />
-  );
+  return <PipelineActivity campaign={campaign} />;
 }

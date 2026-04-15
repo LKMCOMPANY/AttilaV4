@@ -775,7 +775,7 @@ Organisation : `{account_id}/{timestamp}_{filename}`.
 | `avatar_accounts` | Comptes réseaux sociaux par avatar (platform, username, credentials chiffrés) |
 | `armies` | Groupes d'avatars |
 | `content_items` | Bibliothèque de contenu (vidéos, images) par avatar, avec push vers device |
-| `campaigns` | Campagnes d'automation (rules, guidelines, stats) |
+| `campaigns` | Campagnes d'automation (rules, guidelines, capacity_params JSONB par réseau, stats) |
 | `campaign_posts` | Posts sources à traiter |
 | `campaign_jobs` | Jobs individuels (avatar, device, contenu, scheduled_at, status, result) |
 | `audit_log` | Trace de chaque action |

@@ -1,7 +1,7 @@
 # Gorgone Ingestion Module
 
 > Module d'ingestion des données Twitter et TikTok depuis Gorgone vers Attila V4.
-> Implémenté et testé le 15 avril 2026.
+> Implémenté et testé le 15 avril 2026. Capacity Estimator mis à jour le 15 avril 2026.
 
 ---
 
@@ -209,36 +209,47 @@ Toutes les données nécessaires au filtrage sont déjà ingérées. Aucune quer
 | Min engagement | `total_engagement >= N` | `>= 100` |
 | Min comments | `comment_count >= N` | Vidéos commentées |
 
-### Capacity Estimator (`lib/gorgone/capacity-estimator.ts`)
+### Capacity Estimator
 
-Module de calcul pur qui estime le volume de posts d'une zone, applique les filtres de campagne, et calcule le besoin en avatars vs la capacité disponible.
+Module intégré dans l'automator qui estime le volume de posts d'une zone, applique les filtres de campagne, et calcule le besoin en avatars vs la capacité disponible — **par réseau** (Twitter et TikTok séparément).
 
-**4 fonctions composables :**
+**Architecture :**
 
-1. `estimateZoneVolume(zoneId, platform)` — query Gorgone pour le volume brut sur 24h avec breakdown par type de post, langues, stats auteurs
-2. `applyFilters(volume, filters)` — calcul pur : applique les filtres et retourne le taux de passage et le volume filtré/heure
-3. `estimateCapacity(filtered, avatarParams)` — calcul pur : compare le besoin en réponses avec la capacité disponible des avatars
-4. `estimateCampaignCapacity(params)` — orchestrateur : combine les 3 en un seul appel
+```
+lib/gorgone/capacity-estimator.ts    — moteur de calcul pur (3 fonctions composables)
+app/actions/capacity.ts              — server action (auth, filtrage avatars par réseau, orchestration)
+components/campaigns/capacity-estimator.tsx — composant UI par plateforme
+```
 
-**Usage futur (campagne) :**
+**3 fonctions composables (moteur) :**
+
+1. `estimateZoneVolume(zoneId, platform)` — query Gorgone pour le volume brut sur les dernières 24h de données disponibles (fenêtre adaptative, pas NOW()) avec breakdown par type de post, langues, stats auteurs
+2. `applyFilters(volume, filters)` — calcul pur : applique les filtres de campagne et retourne le taux de passage et le volume filtré/heure
+3. `estimateCapacity(filtered, avatarParams)` — calcul pur : double contrainte horaire/journalière, calcule avatars nécessaires, manquants, bottleneck
+
+**Server action `getCapacityEstimate` :**
+
+- Reçoit les `capacity_params` par réseau depuis la table `campaigns` (JSONB)
+- Pour chaque plateforme : filtre les avatars par `twitter_enabled` / `tiktok_enabled`, calcule le volume, applique les filtres, estime la capacité avec les params spécifiques au réseau
+- Retourne un résultat par plateforme (volume, filtré, capacité, avatars nécessaires)
+
+**Paramètres par réseau (stockés en DB, colonne `capacity_params` JSONB) :**
 
 ```typescript
-const result = await estimateCampaignCapacity({
-  zone_id: "xxx",
-  platform: "twitter",
-  filters: { post_types: ["post"], min_author_followers: 100, languages: ["en"] },
-  avatars: {
-    total_avatars: 50,
-    max_responses_per_avatar_per_hour: 5,
-    max_responses_per_avatar_per_day: 50,
-    avg_avatars_per_post: 2,
-    blocked_rate: 0.10,
-  },
-});
-// result.volume    → 4338 posts/h brut
-// result.filtered  → 395 posts/h après filtres (pass rate 9.1%)
-// result.capacity  → 113 avatars manquants
+capacity_params: {
+  twitter: { max_responses_per_hour: 5, max_responses_per_day: 50, min_avatars_per_post: 1, max_avatars_per_post: 3 },
+  tiktok:  { max_responses_per_hour: 3, max_responses_per_day: 30, min_avatars_per_post: 1, max_avatars_per_post: 2 },
+}
 ```
+
+**Calcul de capacité (par réseau) :**
+
+- `avg_avatars_per_post = (min + max) / 2`
+- `blocked_rate` calculé automatiquement depuis le status des avatars (pas un input manuel)
+- `avatars_needed = max(ceil(need_hourly / max_per_hour), ceil(need_daily / max_per_day))` — le bottleneck le plus contraint gagne
+- `avatars_missing = max(0, avatars_needed - available_avatars)`
+
+**UI :** intégrée dans le settings panel de l'automator et dans le wizard de création de campagne. Un bloc par réseau actif avec les métriques (volume brut, filtré, réponses/h) et les 4 paramètres éditables.
 
 ### Prochaines étapes (pipeline automator)
 

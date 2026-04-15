@@ -42,6 +42,7 @@ export interface Box {
   status: BoxStatus;
   uptime_seconds: number | null;
   container_count: number;
+  max_concurrent_containers: number;
   last_heartbeat: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
@@ -286,13 +287,16 @@ export interface PlatformCapacityParams {
   max_responses_per_day: number;
   min_avatars_per_post: number;
   max_avatars_per_post: number;
+  delay_min_seconds?: number;
+  delay_max_seconds?: number;
+  queue_max_age_minutes?: number;
 }
 
 export type CapacityParams = Record<CampaignPlatform, PlatformCapacityParams>;
 
 export const DEFAULT_CAPACITY_PARAMS: CapacityParams = {
-  twitter: { max_responses_per_hour: 5, max_responses_per_day: 50, min_avatars_per_post: 1, max_avatars_per_post: 3 },
-  tiktok: { max_responses_per_hour: 3, max_responses_per_day: 30, min_avatars_per_post: 1, max_avatars_per_post: 2 },
+  twitter: { max_responses_per_hour: 5, max_responses_per_day: 50, min_avatars_per_post: 1, max_avatars_per_post: 3, delay_min_seconds: 30, delay_max_seconds: 120, queue_max_age_minutes: 120 },
+  tiktok: { max_responses_per_hour: 3, max_responses_per_day: 30, min_avatars_per_post: 1, max_avatars_per_post: 2, delay_min_seconds: 60, delay_max_seconds: 180, queue_max_age_minutes: 180 },
 };
 
 export interface Campaign {
@@ -317,5 +321,66 @@ export interface Campaign {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Campaign Pipeline
+// ---------------------------------------------------------------------------
+
+export const CAMPAIGN_POST_STATUSES = ["pending", "processing", "responded", "filtered_out", "error"] as const;
+export const CAMPAIGN_JOB_STATUSES = ["ready", "executing", "done", "failed", "cancelled", "expired"] as const;
+
+export type CampaignPostStatus = (typeof CAMPAIGN_POST_STATUSES)[number];
+export type CampaignJobStatus = (typeof CAMPAIGN_JOB_STATUSES)[number];
+
+export interface CampaignPost {
+  id: string;
+  campaign_id: string;
+  account_id: string;
+  source_table: "gorgone_tweets" | "gorgone_tiktok_videos";
+  source_id: string;
+  platform: CampaignPlatform;
+  post_url: string | null;
+  post_text: string;
+  post_author: string | null;
+  post_metrics: Record<string, unknown>;
+  ai_decision: AnalystDecision | null;
+  status: CampaignPostStatus;
+  processed_at: string | null;
+  created_at: string;
+}
+
+export interface CampaignJob {
+  id: string;
+  campaign_id: string;
+  campaign_post_id: string;
+  account_id: string;
+  avatar_id: string;
+  device_id: string;
+  box_id: string;
+  platform: CampaignPlatform;
+  post_url: string;
+  comment_text: string;
+  status: CampaignJobStatus;
+  error_message: string | null;
+  source_screenshot: string | null;
+  proof_screenshot: string | null;
+  scheduled_at: string;
+  queued_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+export interface CampaignJobWithRelations extends CampaignJob {
+  avatar?: Avatar;
+  campaign_post?: CampaignPost;
+}
+
+export interface AnalystDecision {
+  relevant: boolean;
+  reason: string;
+  suggested_avatar_count: number;
 }
 
