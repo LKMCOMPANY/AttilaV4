@@ -23,6 +23,7 @@ import { StreamCanvas } from "./stream-canvas";
 import { ScreenshotViewer } from "./screenshot-viewer";
 import { StreamStatusBar } from "./stream-status";
 import { NavBar } from "./nav-bar";
+import { PhoneFrame } from "./phone-frame";
 import {
   toggleScreenWake,
   startContainer,
@@ -139,136 +140,42 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
     );
   }, [device]);
 
+  const frameStatus = !device ? "empty" : isRunning ? "active" : "inactive";
+
   return (
     <div className="@container/device flex h-full flex-col bg-background">
       {/* Toolbar */}
-      <div className="flex h-10 shrink-0 items-center justify-between border-b px-2">
-        <div className="flex gap-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 px-2 text-[11px] @[280px]/device:px-2.5"
-                  disabled={!device || !isRunning || actionLoading === "wake"}
-                  onClick={handleWake}
-                />
-              }
-            >
-              {actionLoading === "wake" ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              ) : (
-                <Sun className="h-3.5 w-3.5 shrink-0" />
-              )}
-              <span className="hidden @[280px]/device:inline">
-                Sleep / Awake
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>Sleep / Awake</TooltipContent>
-          </Tooltip>
+      <DeviceToolbar
+        device={device}
+        isRunning={isRunning}
+        actionLoading={actionLoading}
+        onWake={handleWake}
+        onPower={handlePower}
+        onDetach={handleDetach}
+      />
 
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={cn(
-                    "h-7 gap-1.5 px-2 text-[11px] @[280px]/device:px-2.5",
-                    isRunning &&
-                      "hover:border-destructive/40 hover:text-destructive"
-                  )}
-                  disabled={!device || actionLoading === "power"}
-                  onClick={handlePower}
-                />
-              }
-            >
-              {actionLoading === "power" ? (
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-              ) : (
-                <Power className="h-3.5 w-3.5 shrink-0" />
-              )}
-              <span className="hidden @[280px]/device:inline">
-                {isRunning ? "Stop" : "Start"}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>{isRunning ? "Stop device" : "Start device"}</TooltipContent>
-          </Tooltip>
-        </div>
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2 text-[11px]"
-                disabled={!device || !isRunning}
-                onClick={handleDetach}
-              />
-            }
-          >
-            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-            <span className="hidden @[280px]/device:inline">Detach</span>
-          </TooltipTrigger>
-          <TooltipContent>Open in new window</TooltipContent>
-        </Tooltip>
-      </div>
-
-      {/* Device mockup */}
-      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden p-4">
-        <div
-          className="pointer-events-none absolute inset-0 z-0 opacity-[0.35] dark:opacity-[0.18]"
-          style={{
-            backgroundImage: "radial-gradient(circle at 50% 50%, var(--foreground) 1px, transparent 1px)",
-            backgroundSize: "32px 32px",
-            maskImage: "radial-gradient(ellipse 80% 70% at 50% 50%, black 20%, transparent 100%)",
-            WebkitMaskImage: "radial-gradient(ellipse 80% 70% at 50% 50%, black 20%, transparent 100%)",
-          }}
-          aria-hidden="true"
-        />
-        <div className="w-full max-w-[320px]">
-          <div
-            className={cn(
-              "relative flex aspect-[9/19] w-full flex-col overflow-hidden rounded-[2rem] border-[3px]",
-              "bg-white dark:bg-card",
-              "shadow-[0_8px_30px_-4px_rgba(0,0,0,0.25),0_2px_8px_-2px_rgba(0,0,0,0.15)]",
-              "dark:shadow-[0_4px_30px_0px_rgba(255,255,255,0.08),0_0_15px_0px_rgba(255,255,255,0.05)]",
-              device && isRunning
-                ? "border-border dark:border-foreground/15"
-                : device
-                  ? "border-border dark:border-muted-foreground/15"
-                  : "border-border/60 dark:border-muted-foreground/10"
-            )}
-          >
-            {/* Notch */}
-            <div className="absolute left-1/2 top-[6px] z-10 h-[14px] w-[60px] -translate-x-1/2 rounded-full bg-foreground/8" />
-
-            {/* Screen area */}
-            <div className="flex flex-1 flex-col overflow-hidden bg-black pt-6">
-              <DeviceScreen
-                device={device}
-                avatar={avatar}
-                isRunning={isRunning}
-                mode={mode}
-                webCodecs={webCodecs}
-                canvasRef={canvasRef}
-                streamStatus={status}
-                handlers={handlers}
-                actionLoading={actionLoading}
-                onStart={handlePower}
-              />
-            </div>
-
-            {/* Nav bar */}
-            <NavBar isStreaming={status === "streaming"} sendKeycode={sendKeycode} />
-          </div>
-        </div>
+      {/* Device viewport */}
+      <div className="device-viewport relative flex flex-1 flex-col items-center justify-center overflow-hidden">
+        <PhoneFrame status={frameStatus} navBar={
+          <NavBar isStreaming={status === "streaming"} sendKeycode={sendKeycode} />
+        }>
+          <DeviceScreen
+            device={device}
+            avatar={avatar}
+            isRunning={isRunning}
+            mode={mode}
+            webCodecs={webCodecs}
+            canvasRef={canvasRef}
+            streamStatus={status}
+            handlers={handlers}
+            actionLoading={actionLoading}
+            onStart={handlePower}
+          />
+        </PhoneFrame>
 
         {/* Status bar below mockup */}
         {device && isRunning && (
-          <div className="mt-2 w-full max-w-[320px]">
+          <div className="mt-3 w-full max-w-[320px]">
             <StreamStatusBar
               status={status}
               error={error}
@@ -282,7 +189,7 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
           </div>
         )}
 
-        {/* Empty state text */}
+        {/* Empty state */}
         {!device && (
           <div className="mt-6 text-center">
             <p className="text-sm font-medium text-muted-foreground">
@@ -296,6 +203,102 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar — extracted for readability
+// ---------------------------------------------------------------------------
+
+function DeviceToolbar({
+  device,
+  isRunning,
+  actionLoading,
+  onWake,
+  onPower,
+  onDetach,
+}: {
+  device: AvatarWithRelations["device"];
+  isRunning: boolean;
+  actionLoading: string | null;
+  onWake: () => void;
+  onPower: () => void;
+  onDetach: () => void;
+}) {
+  return (
+    <div className="flex h-10 shrink-0 items-center justify-between border-b px-2">
+      <div className="flex gap-1">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 px-2 text-[11px] @[280px]/device:px-2.5"
+                disabled={!device || !isRunning || actionLoading === "wake"}
+                onClick={onWake}
+              />
+            }
+          >
+            {actionLoading === "wake" ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <Sun className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="hidden @[280px]/device:inline">
+              Sleep / Awake
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Sleep / Awake</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn(
+                  "h-7 gap-1.5 px-2 text-[11px] @[280px]/device:px-2.5",
+                  isRunning &&
+                    "hover:border-destructive/40 hover:text-destructive"
+                )}
+                disabled={!device || actionLoading === "power"}
+                onClick={onPower}
+              />
+            }
+          >
+            {actionLoading === "power" ? (
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            ) : (
+              <Power className="h-3.5 w-3.5 shrink-0" />
+            )}
+            <span className="hidden @[280px]/device:inline">
+              {isRunning ? "Stop" : "Start"}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{isRunning ? "Stop device" : "Start device"}</TooltipContent>
+        </Tooltip>
+      </div>
+
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 px-2 text-[11px]"
+              disabled={!device || !isRunning}
+              onClick={onDetach}
+            />
+          }
+        >
+          <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+          <span className="hidden @[280px]/device:inline">Detach</span>
+        </TooltipTrigger>
+        <TooltipContent>Open in new window</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
@@ -389,4 +392,3 @@ function DeviceScreen({
     />
   );
 }
-

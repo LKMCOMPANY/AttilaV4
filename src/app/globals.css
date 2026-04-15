@@ -573,4 +573,74 @@
     -webkit-mask-composite: xor;
     mask-composite: exclude;
   }
+
+  /* Device viewport — soft vignette that recedes behind the phone */
+  .device-viewport {
+    background:
+      radial-gradient(
+        ellipse 55% 45% at 50% 46%,
+        oklch(0.96 0 0) 0%,
+        var(--background) 100%
+      );
+  }
+
+  .dark .device-viewport {
+    background:
+      radial-gradient(
+        ellipse 55% 45% at 50% 46%,
+        oklch(0.16 0 0) 0%,
+        var(--background) 100%
+      );
+  }
+
+  /* Phone body — bezel background + shadow system */
+  .phone-body {
+    background: oklch(0.14 0 0);
+  }
+
+  .dark .phone-body {
+    background: oklch(0.10 0 0);
+  }
+
+  /* Light mode — dramatic depth with layered dark shadows */
+  .phone-body--active {
+    box-shadow:
+      0 25px 60px -10px rgba(0, 0, 0, 0.35),
+      0 12px 28px -6px rgba(0, 0, 0, 0.2),
+      0 4px 10px -2px rgba(0, 0, 0, 0.12),
+      0 0 0 0.5px rgba(0, 0, 0, 0.1);
+  }
+
+  .phone-body--inactive {
+    box-shadow:
+      0 16px 40px -8px rgba(0, 0, 0, 0.2),
+      0 6px 16px -4px rgba(0, 0, 0, 0.12),
+      0 2px 6px -1px rgba(0, 0, 0, 0.08);
+  }
+
+  .phone-body--empty {
+    box-shadow:
+      0 8px 20px -4px rgba(0, 0, 0, 0.1),
+      0 2px 8px -2px rgba(0, 0, 0, 0.06);
+  }
+
+  /* Dark mode — ambient glow + subtle rim light to lift from surface */
+  .dark .phone-body--active {
+    box-shadow:
+      0 0 80px -20px rgba(255, 255, 255, 0.07),
+      0 0 30px -5px rgba(255, 255, 255, 0.04),
+      0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  }
+
+  .dark .phone-body--inactive {
+    box-shadow:
+      0 0 50px -15px rgba(255, 255, 255, 0.04),
+      0 0 0 0.5px rgba(255, 255, 255, 0.06);
+  }
+
+  .dark .phone-body--empty {
+    box-shadow:
+      0 0 30px -10px rgba(255, 255, 255, 0.03),
+      0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  }
 }
