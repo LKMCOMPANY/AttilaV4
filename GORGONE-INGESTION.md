@@ -209,6 +209,37 @@ Toutes les données nécessaires au filtrage sont déjà ingérées. Aucune quer
 | Min engagement | `total_engagement >= N` | `>= 100` |
 | Min comments | `comment_count >= N` | Vidéos commentées |
 
+### Capacity Estimator (`lib/gorgone/capacity-estimator.ts`)
+
+Module de calcul pur qui estime le volume de posts d'une zone, applique les filtres de campagne, et calcule le besoin en avatars vs la capacité disponible.
+
+**4 fonctions composables :**
+
+1. `estimateZoneVolume(zoneId, platform)` — query Gorgone pour le volume brut sur 24h avec breakdown par type de post, langues, stats auteurs
+2. `applyFilters(volume, filters)` — calcul pur : applique les filtres et retourne le taux de passage et le volume filtré/heure
+3. `estimateCapacity(filtered, avatarParams)` — calcul pur : compare le besoin en réponses avec la capacité disponible des avatars
+4. `estimateCampaignCapacity(params)` — orchestrateur : combine les 3 en un seul appel
+
+**Usage futur (campagne) :**
+
+```typescript
+const result = await estimateCampaignCapacity({
+  zone_id: "xxx",
+  platform: "twitter",
+  filters: { post_types: ["post"], min_author_followers: 100, languages: ["en"] },
+  avatars: {
+    total_avatars: 50,
+    max_responses_per_avatar_per_hour: 5,
+    max_responses_per_avatar_per_day: 50,
+    avg_avatars_per_post: 2,
+    blocked_rate: 0.10,
+  },
+});
+// result.volume    → 4338 posts/h brut
+// result.filtered  → 395 posts/h après filtres (pass rate 9.1%)
+// result.capacity  → 113 avatars manquants
+```
+
 ### Prochaines étapes (pipeline automator)
 
 ```
