@@ -238,5 +238,62 @@ app.prepare().then(() => {
   server.listen(port, () => {
     console.log(`> Ready on http://localhost:${port}`);
     console.log(`> WS proxy path: /ws/stream/{boxId}/{containerId}/{type}`);
+    startPipelineWorkers(port);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 3. Pipeline workers — continuous loops calling the API routes internally.
+//    Replaces the external Render cron jobs (Option A → Option B).
+//    Concurrency is safe: claim uses FOR UPDATE SKIP LOCKED, execute uses
+//    status guard. Multiple workers never collide on the same post/job.
+// ---------------------------------------------------------------------------
+
+const PROCESS_CONCURRENCY = parseInt(process.env.PIPELINE_PROCESS_CONCURRENCY || "3", 10);
+const EXECUTE_CONCURRENCY = parseInt(process.env.PIPELINE_EXECUTE_CONCURRENCY || "2", 10);
+const IDLE_MS = parseInt(process.env.PIPELINE_IDLE_MS || "5000", 10);
+const CRON_SECRET = process.env.CRON_SECRET;
+
+async function workerLoop(name, port, path) {
+  const url = `http://localhost:${port}${path}`;
+  const headers = {
+    "Authorization": `Bearer ${CRON_SECRET}`,
+    "Content-Type": "application/json",
+  };
+
+  while (true) {
+    try {
+      const res = await fetch(url, { method: "POST", headers });
+      const data = await res.json();
+
+      const isIdle = data.action === "idle";
+      if (!isIdle) {
+        console.log(`[${name}]`, JSON.stringify(data));
+      }
+
+      if (isIdle) {
+        await new Promise((r) => setTimeout(r, IDLE_MS));
+      }
+    } catch (err) {
+      console.error(`[${name}] Error: ${err.message}`);
+      await new Promise((r) => setTimeout(r, IDLE_MS));
+    }
+  }
+}
+
+function startPipelineWorkers(port) {
+  if (!CRON_SECRET) {
+    console.warn("[Pipeline] CRON_SECRET not set — workers disabled");
+    return;
+  }
+
+  for (let i = 0; i < PROCESS_CONCURRENCY; i++) {
+    workerLoop(`Worker-Process-${i}`, port, "/api/pipeline/process");
+  }
+  console.log(`> Pipeline process workers: ${PROCESS_CONCURRENCY}`);
+
+  for (let i = 0; i < EXECUTE_CONCURRENCY; i++) {
+    workerLoop(`Worker-Execute-${i}`, port, "/api/pipeline/execute");
+  }
+  console.log(`> Pipeline execute workers: ${EXECUTE_CONCURRENCY}`);
+}

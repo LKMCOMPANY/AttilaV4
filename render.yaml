@@ -1,5 +1,8 @@
 services:
   # ── Main Web Service ──────────────────────────────────────────────────
+  # Pipeline workers (process + execute) run as continuous loops inside
+  # server.mjs — no external cron needed. Concurrency is configured via
+  # PIPELINE_PROCESS_CONCURRENCY and PIPELINE_EXECUTE_CONCURRENCY env vars.
   - type: web
     name: attila-v4
     runtime: node
@@ -36,44 +39,12 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
-
-  # ── Cron: Pipeline Process (every 60s) ────────────────────────────────
-  - type: cron
-    name: attila-cron-pipeline-process
-    runtime: node
-    region: frankfurt
-    plan: starter
-    branch: main
-    schedule: "* * * * *"
-    buildCommand: echo "no build needed"
-    startCommand: |
-      curl -s -X POST "${ATTILA_APP_URL}/api/pipeline/process" \
-        -H "Authorization: Bearer ${CRON_SECRET}" \
-        -H "Content-Type: application/json"
-    envVars:
-      - key: ATTILA_APP_URL
-        sync: false
-      - key: CRON_SECRET
-        sync: false
-
-  # ── Cron: Pipeline Execute (every 60s) ────────────────────────────────
-  - type: cron
-    name: attila-cron-pipeline-execute
-    runtime: node
-    region: frankfurt
-    plan: starter
-    branch: main
-    schedule: "* * * * *"
-    buildCommand: echo "no build needed"
-    startCommand: |
-      curl -s -X POST "${ATTILA_APP_URL}/api/pipeline/execute" \
-        -H "Authorization: Bearer ${CRON_SECRET}" \
-        -H "Content-Type: application/json"
-    envVars:
-      - key: ATTILA_APP_URL
-        sync: false
-      - key: CRON_SECRET
-        sync: false
+      - key: PIPELINE_PROCESS_CONCURRENCY
+        value: "3"
+      - key: PIPELINE_EXECUTE_CONCURRENCY
+        value: "2"
+      - key: PIPELINE_IDLE_MS
+        value: "5000"
 
   # ── Cron: Gorgone Sync (every 5 min) ─────────────────────────────────
   - type: cron
