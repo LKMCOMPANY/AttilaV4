@@ -21,9 +21,21 @@ export const metadata: Metadata = {
     default: "ATTILA",
     template: "%s | ATTILA",
   },
-  description: "Avatar management and automation platform",
+  description: "Social network management for brands",
   icons: {
     icon: "/logo.svg",
+    apple: "/logo.svg",
+  },
+  openGraph: {
+    title: "ATTILA",
+    description: "Social network management for brands",
+    siteName: "ATTILA",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "ATTILA",
+    description: "Social network management for brands",
   },
 };
 
