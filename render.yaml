@@ -1,0 +1,95 @@
+services:
+  # ── Main Web Service ──────────────────────────────────────────────────
+  - type: web
+    name: attila-v4
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: CF_ACCESS_CLIENT_ID
+        sync: false
+      - key: CF_ACCESS_CLIENT_SECRET
+        sync: false
+      - key: GORGONE_SUPABASE_URL
+        sync: false
+      - key: GORGONE_SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ALERIA_API_KEY
+        sync: false
+      - key: ALERIA_BASE_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+
+  # ── Cron: Pipeline Process (every 60s) ────────────────────────────────
+  - type: cron
+    name: attila-cron-pipeline-process
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: main
+    schedule: "* * * * *"
+    buildCommand: echo "no build needed"
+    startCommand: |
+      curl -s -X POST "${ATTILA_APP_URL}/api/pipeline/process" \
+        -H "Authorization: Bearer ${CRON_SECRET}" \
+        -H "Content-Type: application/json"
+    envVars:
+      - key: ATTILA_APP_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+
+  # ── Cron: Pipeline Execute (every 60s) ────────────────────────────────
+  - type: cron
+    name: attila-cron-pipeline-execute
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: main
+    schedule: "* * * * *"
+    buildCommand: echo "no build needed"
+    startCommand: |
+      curl -s -X POST "${ATTILA_APP_URL}/api/pipeline/execute" \
+        -H "Authorization: Bearer ${CRON_SECRET}" \
+        -H "Content-Type: application/json"
+    envVars:
+      - key: ATTILA_APP_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
+
+  # ── Cron: Gorgone Sync (every 5 min) ─────────────────────────────────
+  - type: cron
+    name: attila-cron-gorgone-sync
+    runtime: node
+    region: frankfurt
+    plan: starter
+    branch: main
+    schedule: "*/5 * * * *"
+    buildCommand: echo "no build needed"
+    startCommand: |
+      curl -s -X POST "${ATTILA_APP_URL}/api/gorgone/sync" \
+        -H "Authorization: Bearer ${CRON_SECRET}" \
+        -H "Content-Type: application/json"
+    envVars:
+      - key: ATTILA_APP_URL
+        sync: false
+      - key: CRON_SECRET
+        sync: false
