@@ -2,7 +2,10 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireSession, requireAdmin } from "@/lib/auth/session";
-import type { CampaignPost, CampaignJob, CampaignJobWithAvatar } from "@/types";
+import { selectAvatars } from "@/lib/pipeline/avatar-selector";
+import { writeComment } from "@/lib/pipeline/writer";
+import type { CampaignPost, CampaignJob, CampaignJobWithAvatar, Campaign } from "@/types";
+import type { PipelinePost } from "@/lib/pipeline/types";
 
 // ---------------------------------------------------------------------------
 // Read — Campaign posts and jobs (session-scoped)
@@ -159,6 +162,153 @@ export async function purgeBoxQueue(boxId: string): Promise<number> {
     .update({ status: "cancelled", completed_at: new Date().toISOString() })
     .eq("box_id", boxId)
     .eq("status", "ready")
+    .select("id");
+
+  return data?.length ?? 0;
+}
+
+// ---------------------------------------------------------------------------
+// Awaiting avatars — retry and purge
+// ---------------------------------------------------------------------------
+
+export async function retryAwaitingPost(
+  postId: string,
+): Promise<{ success: boolean; message: string; jobsCreated: number }> {
+  await requireAdmin();
+  const supabase = createAdminClient();
+
+  const { data: post } = await supabase
+    .from("campaign_posts")
+    .select("*, campaign:campaigns(*)")
+    .eq("id", postId)
+    .eq("status", "awaiting_avatars")
+    .single();
+
+  if (!post) {
+    return { success: false, message: "Post not found or not awaiting", jobsCreated: 0 };
+  }
+
+  const campaign = post.campaign as Campaign;
+  const platform = post.platform as "twitter" | "tiktok";
+  const platformParams = campaign.capacity_params[platform];
+
+  const selected = await selectAvatars({
+    armyIds: campaign.army_ids,
+    platform,
+    capacityParams: platformParams,
+    requestedCount: post.ai_decision?.suggested_avatar_count ?? 2,
+    accountId: campaign.account_id,
+  });
+
+  if (selected.length === 0) {
+    return { success: false, message: "Still no avatars available", jobsCreated: 0 };
+  }
+
+  const pipelinePost: PipelinePost = {
+    id: post.source_id,
+    zone_id: campaign.gorgone_zone_id,
+    account_id: campaign.account_id,
+    platform,
+    post_url: post.post_url,
+    post_text: post.post_text,
+    post_author: post.post_author,
+    author_followers: 0,
+    author_verified: false,
+    total_engagement: 0,
+    language: null,
+    collected_at: post.created_at,
+    raw_metrics: post.post_metrics ?? {},
+  };
+
+  const guideline = {
+    operational_context: campaign.operational_context,
+    strategy: campaign.strategy,
+    key_messages: campaign.key_messages,
+  };
+
+  const generatedComments: { avatarId: string; commentText: string; deviceId: string; boxId: string }[] = [];
+
+  for (const sel of selected) {
+    const recentComments = await getRecentAvatarComments(supabase, sel.avatar.id, 5);
+    const writerResult = await writeComment({
+      post: pipelinePost,
+      avatar: sel.avatar,
+      platform,
+      guideline,
+      previousCommentsOnPost: generatedComments.map((c) => c.commentText),
+      recentAvatarComments: recentComments,
+    });
+    generatedComments.push({
+      avatarId: writerResult.avatarId,
+      commentText: writerResult.commentText,
+      deviceId: sel.device_id,
+      boxId: sel.box_id,
+    });
+  }
+
+  const delayMin = platformParams.delay_min_seconds ?? 30;
+  const delayMax = Math.max(platformParams.delay_max_seconds ?? 120, delayMin);
+  let cumulativeDelay = 0;
+
+  const jobs = generatedComments.map((comment) => {
+    cumulativeDelay += Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+    return {
+      campaign_id: campaign.id,
+      campaign_post_id: post.id,
+      account_id: campaign.account_id,
+      avatar_id: comment.avatarId,
+      device_id: comment.deviceId,
+      box_id: comment.boxId,
+      platform,
+      post_url: post.post_url ?? "",
+      comment_text: comment.commentText,
+      status: "ready" as const,
+      scheduled_at: new Date(Date.now() + cumulativeDelay * 1000).toISOString(),
+      queued_at: new Date().toISOString(),
+    };
+  });
+
+  const { error: jobsError } = await supabase.from("campaign_jobs").insert(jobs);
+  if (jobsError) {
+    return { success: false, message: `Failed to create jobs: ${jobsError.message}`, jobsCreated: 0 };
+  }
+
+  await supabase
+    .from("campaign_posts")
+    .update({ status: "responded", processed_at: new Date().toISOString() })
+    .eq("id", post.id);
+
+  await supabase.rpc("increment_campaign_counter", {
+    p_campaign_id: campaign.id,
+    p_counter: "total_posts_ingested",
+  });
+
+  return { success: true, message: `Created ${jobs.length} jobs`, jobsCreated: jobs.length };
+}
+
+async function getRecentAvatarComments(
+  supabase: ReturnType<typeof createAdminClient>,
+  avatarId: string,
+  limit: number,
+): Promise<string[]> {
+  const { data } = await supabase
+    .from("campaign_jobs")
+    .select("comment_text")
+    .eq("avatar_id", avatarId)
+    .in("status", ["ready", "executing", "done"])
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  return (data ?? []).map((j) => j.comment_text);
+}
+
+export async function purgeAwaitingPosts(campaignId: string): Promise<number> {
+  await requireAdmin();
+  const supabase = createAdminClient();
+  const { data } = await supabase
+    .from("campaign_posts")
+    .update({ status: "filtered_out" })
+    .eq("campaign_id", campaignId)
+    .eq("status", "awaiting_avatars")
     .select("id");
 
   return data?.length ?? 0;

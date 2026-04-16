@@ -6,10 +6,18 @@ import {
   Loader2,
   Ban,
   Timer,
+  AlertCircle,
+  UserX,
+  Filter,
+  MessageSquare,
 } from "lucide-react";
-import type { CampaignJobStatus } from "@/types";
+import type { CampaignJobStatus, CampaignPostStatus } from "@/types";
 
-const STATUS_CONFIG: Record<
+// ---------------------------------------------------------------------------
+// Job statuses
+// ---------------------------------------------------------------------------
+
+const JOB_STATUS_CONFIG: Record<
   CampaignJobStatus,
   { icon: typeof Clock; color: string; iconExtra?: string; label: string }
 > = {
@@ -28,7 +36,7 @@ export function JobStatusIcon({
   status: CampaignJobStatus;
   className?: string;
 }) {
-  const config = STATUS_CONFIG[status];
+  const config = JOB_STATUS_CONFIG[status];
   const Icon = config.icon;
   return (
     <Icon
@@ -42,10 +50,50 @@ export function JobStatusLabel({ status }: { status: CampaignJobStatus }) {
     <span
       className={cn(
         "text-[10px] font-medium",
-        STATUS_CONFIG[status].color
+        JOB_STATUS_CONFIG[status].color
       )}
     >
-      {STATUS_CONFIG[status].label}
+      {JOB_STATUS_CONFIG[status].label}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Post statuses
+// ---------------------------------------------------------------------------
+
+const POST_STATUS_CONFIG: Record<
+  CampaignPostStatus,
+  { icon: typeof Clock; color: string; bgColor: string; iconExtra?: string; label: string }
+> = {
+  responded: { icon: MessageSquare, color: "text-success", bgColor: "bg-success/10", label: "Responded" },
+  awaiting_avatars: { icon: UserX, color: "text-warning", bgColor: "bg-warning/10", label: "Awaiting avatars" },
+  filtered_out: { icon: Filter, color: "text-muted-foreground/60", bgColor: "bg-muted/30", label: "Filtered" },
+  error: { icon: AlertCircle, color: "text-destructive", bgColor: "bg-destructive/10", label: "Error" },
+  pending: { icon: Clock, color: "text-muted-foreground", bgColor: "bg-muted/30", label: "Pending" },
+  processing: { icon: Loader2, color: "text-primary", bgColor: "bg-primary/10", iconExtra: "animate-spin", label: "Processing" },
+};
+
+export function PostStatusBadge({
+  status,
+  className,
+}: {
+  status: CampaignPostStatus;
+  className?: string;
+}) {
+  const config = POST_STATUS_CONFIG[status];
+  const Icon = config.icon;
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+        config.color,
+        config.bgColor,
+        className
+      )}
+    >
+      <Icon className={cn("h-2.5 w-2.5", config.iconExtra)} />
+      {config.label}
     </span>
   );
 }

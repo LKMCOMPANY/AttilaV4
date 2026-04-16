@@ -17,6 +17,7 @@ import {
   Share2,
   Bookmark,
   Reply,
+  UserX,
 } from "lucide-react";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { formatDistanceToNow } from "date-fns";
@@ -168,6 +169,7 @@ const POST_STATUS_CONFIG: Record<
   { icon: typeof Clock; color: string; iconExtra?: string; label: string }
 > = {
   responded: { icon: CheckCircle2, color: "text-success", label: "Responded" },
+  awaiting_avatars: { icon: UserX, color: "text-warning", label: "Awaiting avatars" },
   filtered_out: { icon: Ban, color: "text-muted-foreground/50", label: "Filtered" },
   error: { icon: AlertTriangle, color: "text-destructive", label: "Error" },
   processing: { icon: Loader2, color: "text-primary", iconExtra: "animate-spin", label: "Processing" },

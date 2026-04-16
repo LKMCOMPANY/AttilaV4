@@ -22,6 +22,11 @@ export async function processNext(): Promise<PipelineResult | null> {
   const supabase = createAdminClient();
 
   // -------------------------------------------------------------------------
+  // Phase: CLEANUP — expire old awaiting_avatars posts (> queue_max_age)
+  // -------------------------------------------------------------------------
+  await expireAwaitingPosts(supabase);
+
+  // -------------------------------------------------------------------------
   // Phase: CLAIM — find and lock a pending post
   // -------------------------------------------------------------------------
   const claimed = await claimNextPost(supabase);
@@ -92,8 +97,24 @@ export async function processNext(): Promise<PipelineResult | null> {
     timing.selectorMs = Date.now() - selectorStart;
 
     if (selected.length === 0) {
-      pipelineLog("selector", post.id, "No avatars available");
-      await markPostStatus(supabase, post, platform, "pending");
+      pipelineLog("selector", post.id, "No avatars available — saving as awaiting_avatars");
+
+      await supabase.from("campaign_posts").insert({
+        campaign_id: campaign.id,
+        account_id: campaign.account_id,
+        source_table: platform === "twitter" ? "gorgone_tweets" : "gorgone_tiktok_videos",
+        source_id: post.id,
+        platform,
+        post_url: post.post_url,
+        post_text: post.post_text,
+        post_author: post.post_author,
+        post_metrics: post.raw_metrics,
+        ai_decision: decision,
+        status: "awaiting_avatars",
+        processed_at: new Date().toISOString(),
+      });
+
+      await markPostStatus(supabase, post, platform, "processed");
       return result("no_avatars", post.id, campaign.id, 0, timing, totalStart);
     }
 
@@ -403,4 +424,26 @@ function getPhaseFromTiming(timing: PipelineTiming): "claim" | "match" | "filter
   if (timing.analystMs != null) return "analyst";
   if (timing.filterMs != null) return "filter";
   return "match";
+}
+
+// ---------------------------------------------------------------------------
+// Expire old awaiting_avatars posts (default 2 hours)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_AWAIT_TTL_MINUTES = 120;
+
+async function expireAwaitingPosts(
+  supabase: ReturnType<typeof createAdminClient>,
+) {
+  const cutoff = new Date(Date.now() - DEFAULT_AWAIT_TTL_MINUTES * 60 * 1000).toISOString();
+  const { data } = await supabase
+    .from("campaign_posts")
+    .update({ status: "filtered_out" })
+    .eq("status", "awaiting_avatars")
+    .lt("created_at", cutoff)
+    .select("id");
+
+  if (data && data.length > 0) {
+    pipelineLog("cleanup", null, `Expired ${data.length} awaiting_avatars posts older than ${DEFAULT_AWAIT_TTL_MINUTES}min`);
+  }
 }

@@ -327,7 +327,7 @@ export interface Campaign {
 // Campaign Pipeline
 // ---------------------------------------------------------------------------
 
-export const CAMPAIGN_POST_STATUSES = ["pending", "processing", "responded", "filtered_out", "error"] as const;
+export const CAMPAIGN_POST_STATUSES = ["pending", "processing", "responded", "awaiting_avatars", "filtered_out", "error"] as const;
 export const CAMPAIGN_JOB_STATUSES = ["ready", "executing", "done", "failed", "cancelled", "expired"] as const;
 
 export type CampaignPostStatus = (typeof CAMPAIGN_POST_STATUSES)[number];

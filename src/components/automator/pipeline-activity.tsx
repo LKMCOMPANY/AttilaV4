@@ -9,8 +9,16 @@ import {
   Loader2,
   MessageSquare,
   Trash2,
+  UserX,
+  RotateCcw,
 } from "lucide-react";
-import { getCampaignPosts, getCampaignJobs, purgeQueue } from "@/app/actions/pipeline";
+import {
+  getCampaignPosts,
+  getCampaignJobs,
+  purgeQueue,
+  purgeAwaitingPosts,
+  retryAwaitingPost,
+} from "@/app/actions/pipeline";
 import { toast } from "sonner";
 import { PipelineJobRow, PipelineJobDetail } from "./pipeline-job-row";
 import { PipelinePostRow } from "./pipeline-post-row";
@@ -56,8 +64,25 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
     refresh();
   };
 
+  const handlePurgeAwaiting = async () => {
+    const count = await purgeAwaitingPosts(campaign.id);
+    toast.success(`${count} awaiting post${count !== 1 ? "s" : ""} purged`);
+    refresh();
+  };
+
+  const handleRetryPost = async (postId: string) => {
+    const result = await retryAwaitingPost(postId);
+    if (result.success) {
+      toast.success(result.message);
+    } else {
+      toast.error(result.message);
+    }
+    refresh();
+  };
+
   const queuedJobs = jobs.filter((j) => j.status === "ready" || j.status === "executing");
   const completedJobs = jobs.filter((j) => j.status === "done" || j.status === "failed");
+  const awaitingPosts = posts.filter((p) => p.status === "awaiting_avatars");
   const selectedJob = selectedJobId ? jobs.find((j) => j.id === selectedJobId) : null;
 
   const jobsByPostId = useMemo(() => {
@@ -115,6 +140,15 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
                 </span>
               )}
             </TabsTrigger>
+            <TabsTrigger value="awaiting" className="gap-1.5 text-[11px]">
+              <UserX className="h-3 w-3" />
+              Awaiting
+              {awaitingPosts.length > 0 && (
+                <span className="text-[10px] tabular-nums text-warning">
+                  {awaitingPosts.length}
+                </span>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="activity" className="gap-1.5 text-[11px]">
               <Activity className="h-3 w-3" />
               Activity
@@ -126,15 +160,26 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
             </TabsTrigger>
           </TabsList>
 
-          {queuedJobs.length > 0 && (
-            <button
-              onClick={handlePurge}
-              className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-            >
-              <Trash2 className="h-2.5 w-2.5" />
-              Purge
-            </button>
-          )}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            {awaitingPosts.length > 0 && (
+              <button
+                onClick={handlePurgeAwaiting}
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+                Purge awaiting
+              </button>
+            )}
+            {queuedJobs.length > 0 && (
+              <button
+                onClick={handlePurge}
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+                Purge queue
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tab content */}
@@ -172,6 +217,36 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
                     selected={job.id === selectedJobId}
                     onSelect={() => toggleJob(job.id)}
                   />
+                ))}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
+          <TabsContent value="awaiting" className="h-full p-0">
+            <ScrollArea className="h-full">
+              <div className="space-y-px p-2">
+                {loading && awaitingPosts.length === 0 && <LoadingState />}
+                {!loading && awaitingPosts.length === 0 && (
+                  <EmptyState message="No posts awaiting avatars" />
+                )}
+                {awaitingPosts.map((post) => (
+                  <div key={post.id} className="group relative">
+                    <PipelinePostRow
+                      post={post}
+                      responses={jobsByPostId.get(post.id) ?? []}
+                      onSelect={() => handleSelectPost(post.id)}
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRetryPost(post.id);
+                      }}
+                      className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning opacity-0 transition-opacity hover:bg-warning/20 group-hover:opacity-100"
+                    >
+                      <RotateCcw className="h-2.5 w-2.5" />
+                      Retry
+                    </button>
+                  </div>
                 ))}
               </div>
             </ScrollArea>
