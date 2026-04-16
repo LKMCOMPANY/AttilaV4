@@ -198,10 +198,9 @@ export async function stopContainerIfIdle(
   tunnelHostname: string,
   dbId: string,
   deviceId: string,
-  supabase: { from: (table: string) => unknown },
+  supabase: ReturnType<typeof import("@/lib/supabase/admin").createAdminClient>,
 ): Promise<void> {
-  const sb = supabase as ReturnType<typeof import("@supabase/supabase-js").createClient>;
-  const { count } = await sb
+  const { count } = await supabase
     .from("campaign_jobs")
     .select("*", { count: "exact", head: true })
     .eq("device_id", deviceId)
