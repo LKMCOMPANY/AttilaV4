@@ -560,3 +560,36 @@ export async function getAvatarAutomatorStatuses(
 
   return map;
 }
+
+// ---------------------------------------------------------------------------
+// Device → Avatar assignment map (shared by avatar wizard + admin infra)
+// ---------------------------------------------------------------------------
+
+export interface DeviceAvatarAssignment {
+  avatarId: string;
+  avatarName: string;
+}
+
+export async function getDeviceAvatarMap(): Promise<
+  Record<string, DeviceAvatarAssignment>
+> {
+  await requireSession();
+  const supabase = await createClient();
+
+  const { data } = await supabase
+    .from("avatars")
+    .select("id, first_name, last_name, device_id")
+    .not("device_id", "is", null);
+
+  const map: Record<string, DeviceAvatarAssignment> = {};
+  for (const row of data ?? []) {
+    if (row.device_id) {
+      map[row.device_id] = {
+        avatarId: row.id,
+        avatarName: `${row.first_name} ${row.last_name}`.trim(),
+      };
+    }
+  }
+
+  return map;
+}

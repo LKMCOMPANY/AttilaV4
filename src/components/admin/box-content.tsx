@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { DeviceItem } from "@/components/admin/device-item";
+import type { DeviceAvatarAssignment } from "@/app/actions/avatars";
 import {
   RefreshCw,
   Loader2,
@@ -44,6 +45,7 @@ interface BoxContentProps {
   box: BoxWithRelations;
   devices: Device[];
   allAccounts: Account[];
+  avatarMap?: Record<string, DeviceAvatarAssignment>;
   onUpdated: () => void;
 }
 
@@ -51,6 +53,7 @@ export function BoxContent({
   box,
   devices,
   allAccounts,
+  avatarMap,
   onUpdated,
 }: BoxContentProps) {
   const [isSyncing, startSyncTransition] = useTransition();
@@ -302,6 +305,7 @@ export function BoxContent({
               device={device}
               accounts={activeAccounts}
               onUpdated={onUpdated}
+              avatarAssignment={avatarMap?.[device.id]}
             />
           ))}
         </div>

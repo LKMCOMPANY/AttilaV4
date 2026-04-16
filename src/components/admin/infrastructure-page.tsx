@@ -14,6 +14,8 @@ import { BoxCreateDialog } from "@/components/admin/box-create-dialog";
 import { getBoxes } from "@/app/actions/boxes";
 import { getDevicesByBox } from "@/app/actions/devices";
 import { getAccounts } from "@/app/actions/accounts";
+import { getDeviceAvatarMap } from "@/app/actions/avatars";
+import type { DeviceAvatarAssignment } from "@/app/actions/avatars";
 import { cn } from "@/lib/utils";
 import { Search, Server, Smartphone, Clock } from "lucide-react";
 import type { Account, BoxWithRelations, Device } from "@/types";
@@ -39,6 +41,7 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
   // Lazy-loaded data per box
   const [devicesByBox, setDevicesByBox] = useState<Record<string, Device[]>>({});
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [avatarMap, setAvatarMap] = useState<Record<string, DeviceAvatarAssignment>>({});
   const [loadedBoxIds, setLoadedBoxIds] = useState<Set<string>>(new Set());
 
   const filteredBoxes = useMemo(() => {
@@ -60,26 +63,31 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
       if (!box || loadedBoxIds.has(box.id)) return;
 
       startTransition(async () => {
-        const [devs, accs] = await Promise.all([
+        const needsAccounts = accounts.length === 0;
+        const [devs, accs, avMap] = await Promise.all([
           getDevicesByBox(box.id),
-          accounts.length > 0 ? Promise.resolve(accounts) : getAccounts(),
+          needsAccounts ? getAccounts() : Promise.resolve(accounts),
+          Object.keys(avatarMap).length === 0 ? getDeviceAvatarMap() : Promise.resolve(avatarMap),
         ]);
         setDevicesByBox((prev) => ({ ...prev, [box.id]: devs }));
         setAccounts(accs);
+        setAvatarMap(avMap);
         setLoadedBoxIds((prev) => new Set(prev).add(box.id));
       });
     },
-    [filteredBoxes, loadedBoxIds, accounts, startTransition]
+    [filteredBoxes, loadedBoxIds, accounts, avatarMap, startTransition]
   );
 
   const refreshAll = useCallback(() => {
     startTransition(async () => {
-      const [freshBoxes, freshAccounts] = await Promise.all([
+      const [freshBoxes, freshAccounts, freshAvatarMap] = await Promise.all([
         getBoxes(),
         getAccounts(),
+        getDeviceAvatarMap(),
       ]);
       setBoxes(freshBoxes);
       setAccounts(freshAccounts);
+      setAvatarMap(freshAvatarMap);
 
       const freshDevices: Record<string, Device[]> = {};
       await Promise.all(
@@ -223,6 +231,7 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
                       box={box}
                       devices={devices}
                       allAccounts={accounts}
+                      avatarMap={avatarMap}
                       onUpdated={refreshAll}
                     />
                   ) : (

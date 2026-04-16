@@ -12,7 +12,7 @@ import {
   WifiOff,
   Search,
 } from "lucide-react";
-import { getAccountDevices } from "@/app/actions/avatars";
+import { getAccountDevices, getDeviceAvatarMap } from "@/app/actions/avatars";
 import type { Device } from "@/types";
 import type { StepProps } from "../types";
 
@@ -22,22 +22,31 @@ interface StepDeviceProps extends StepProps {
 
 export function StepDevice({ data, onChange, accountId }: StepDeviceProps) {
   const [devices, setDevices] = useState<Device[]>([]);
+  const [assignedDeviceIds, setAssignedDeviceIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
     if (!accountId) return;
     setLoading(true);
-    getAccountDevices(accountId)
-      .then(setDevices)
+    Promise.all([getAccountDevices(accountId), getDeviceAvatarMap()])
+      .then(([devs, avatarMap]) => {
+        setDevices(devs);
+        setAssignedDeviceIds(new Set(Object.keys(avatarMap)));
+      })
       .catch(() => setDevices([]))
       .finally(() => setLoading(false));
   }, [accountId]);
 
+  const availableDevices = useMemo(
+    () => devices.filter((d) => !assignedDeviceIds.has(d.id)),
+    [devices, assignedDeviceIds],
+  );
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return devices;
+    if (!search.trim()) return availableDevices;
     const q = search.toLowerCase();
-    return devices.filter((d) => {
+    return availableDevices.filter((d) => {
       const tags = Array.isArray(d.tags) ? d.tags : [];
       return (
         d.user_name?.toLowerCase().includes(q) ||
@@ -47,9 +56,9 @@ export function StepDevice({ data, onChange, accountId }: StepDeviceProps) {
         tags.some((t) => String(t).toLowerCase().includes(q))
       );
     });
-  }, [devices, search]);
+  }, [availableDevices, search]);
 
-  const selectedDevice = devices.find((d) => d.id === data.device_id);
+  const selectedDevice = availableDevices.find((d) => d.id === data.device_id);
 
   return (
     <div className="space-y-4">
@@ -66,7 +75,7 @@ export function StepDevice({ data, onChange, accountId }: StepDeviceProps) {
             <Skeleton key={i} className="h-14 w-full rounded-lg" />
           ))}
         </div>
-      ) : devices.length === 0 ? (
+      ) : availableDevices.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-12 text-center">
           <MonitorSmartphone className="mb-3 h-10 w-10 text-muted-foreground/50" />
           <p className="text-sm font-medium">No devices available</p>
@@ -77,7 +86,7 @@ export function StepDevice({ data, onChange, accountId }: StepDeviceProps) {
       ) : (
         <>
           {/* Search */}
-          {devices.length > 6 && (
+          {availableDevices.length > 6 && (
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -93,7 +102,12 @@ export function StepDevice({ data, onChange, accountId }: StepDeviceProps) {
             <Label className="text-label">
               {search.trim()
                 ? `${filtered.length} result${filtered.length !== 1 ? "s" : ""}`
-                : `${devices.length} devices available`}
+                : `${availableDevices.length} available`}
+              {assignedDeviceIds.size > 0 && !search.trim() && (
+                <span className="ml-1 text-muted-foreground font-normal">
+                  · {assignedDeviceIds.size} assigned
+                </span>
+              )}
             </Label>
             {selectedDevice && (
               <Badge variant="secondary" className="gap-1.5 text-xs">

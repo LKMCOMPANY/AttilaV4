@@ -39,6 +39,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import type { DeviceAvatarAssignment } from "@/app/actions/avatars";
 import type { Account, Device } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -107,9 +108,10 @@ interface DeviceItemProps {
   device: Device;
   accounts: Account[];
   onUpdated: () => void;
+  avatarAssignment?: DeviceAvatarAssignment;
 }
 
-export function DeviceItem({ device, accounts, onUpdated }: DeviceItemProps) {
+export function DeviceItem({ device, accounts, onUpdated, avatarAssignment }: DeviceItemProps) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [tagInput, setTagInput] = useState("");
@@ -247,11 +249,16 @@ export function DeviceItem({ device, accounts, onUpdated }: DeviceItemProps) {
             </div>
           )}
 
-          {device.account_id && (
-            <span title="Assigned to account">
-              <User className="h-3 w-3 shrink-0 text-primary/60" />
+          {avatarAssignment ? (
+            <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
+              <User className="h-2.5 w-2.5" />
+              <span className="max-w-[80px] truncate">{avatarAssignment.avatarName}</span>
+            </Badge>
+          ) : device.account_id ? (
+            <span title="Assigned to account (no avatar)">
+              <User className="h-3 w-3 shrink-0 text-muted-foreground/40" />
             </span>
-          )}
+          ) : null}
 
           {device.resolution && (
             <span className="hidden text-xs text-muted-foreground font-mono sm:inline">
