@@ -149,4 +149,78 @@ export async function fetchProxyConfig(
   return res.data.proxy_config;
 }
 
+// ---------------------------------------------------------------------------
+// Container lifecycle (used by pipeline execute)
+// ---------------------------------------------------------------------------
+
+const CONTAINER_START_POLL_MS = 2000;
+const CONTAINER_START_TIMEOUT_MS = 30_000;
+
+/**
+ * Ensure a container is running. If stopped, start it and poll until ready.
+ * Returns true if running, false if start timed out.
+ */
+export async function ensureContainerRunning(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<{ running: boolean; wasStarted: boolean }> {
+  const detail = await fetchContainerDetail(tunnelHostname, dbId);
+
+  if (detail?.status === "running") {
+    console.log(`[Container] ${dbId} already running`);
+    return { running: true, wasStarted: false };
+  }
+
+  console.log(`[Container] ${dbId} is ${detail?.status ?? "unknown"} — starting`);
+  await boxFetch(tunnelHostname, "/container_api/v1/run", {
+    method: "POST",
+    body: JSON.stringify({ db_ids: [dbId] }),
+  });
+
+  const deadline = Date.now() + CONTAINER_START_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, CONTAINER_START_POLL_MS));
+    const check = await fetchContainerDetail(tunnelHostname, dbId);
+    if (check?.status === "running") {
+      console.log(`[Container] ${dbId} started OK`);
+      return { running: true, wasStarted: true };
+    }
+  }
+
+  console.error(`[Container] ${dbId} start timeout after ${CONTAINER_START_TIMEOUT_MS}ms`);
+  return { running: false, wasStarted: true };
+}
+
+/**
+ * Stop a container if no other ready jobs target this device.
+ */
+export async function stopContainerIfIdle(
+  tunnelHostname: string,
+  dbId: string,
+  deviceId: string,
+  supabase: { from: (table: string) => unknown },
+): Promise<void> {
+  const sb = supabase as ReturnType<typeof import("@supabase/supabase-js").createClient>;
+  const { count } = await sb
+    .from("campaign_jobs")
+    .select("*", { count: "exact", head: true })
+    .eq("device_id", deviceId)
+    .in("status", ["ready", "executing"]);
+
+  if (count && count > 0) {
+    console.log(`[Container] ${dbId} kept running — ${count} pending jobs on this device`);
+    return;
+  }
+
+  console.log(`[Container] ${dbId} stopping — no pending jobs`);
+  try {
+    await boxFetch(tunnelHostname, "/container_api/v1/stop", {
+      method: "POST",
+      body: JSON.stringify({ db_ids: [dbId] }),
+    });
+  } catch (err) {
+    console.error(`[Container] ${dbId} stop failed:`, err instanceof Error ? err.message : err);
+  }
+}
+
 export { boxFetch, getCfHeaders };
