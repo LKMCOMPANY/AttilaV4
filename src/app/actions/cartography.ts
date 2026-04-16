@@ -9,11 +9,12 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
-import type {
-  CartographyData,
-  ConstellationNode,
-  ConstellationAvatarSnapshot,
-  ClusterDimension,
+import {
+  CLUSTER_DIMENSIONS,
+  type CartographyData,
+  type ConstellationNode,
+  type ConstellationAvatarSnapshot,
+  type ClusterDimension,
 } from "@/types/cartography";
 
 // ---------------------------------------------------------------------------
@@ -200,9 +201,12 @@ export async function getCartographyData(
       }
     );
 
+    const availableDimensions = computeAvailableDimensions(nodes);
+
     return {
       data: {
         nodes,
+        availableDimensions,
         totalAvatars: nodes.length,
         totalArmies: armyResult.count ?? 0,
         totalCampaigns: (campaignResult.data ?? []).length,
@@ -271,4 +275,19 @@ function buildClusterKeys(
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// ---------------------------------------------------------------------------
+// Available dimension filter — only dimensions with 2+ distinct clusters
+// ---------------------------------------------------------------------------
+
+function computeAvailableDimensions(
+  nodes: ConstellationNode[]
+): ClusterDimension[] {
+  if (nodes.length === 0) return [];
+
+  return CLUSTER_DIMENSIONS.filter((dim) => {
+    const distinct = new Set(nodes.map((n) => n.clusters[dim]));
+    return distinct.size >= 2;
+  });
 }

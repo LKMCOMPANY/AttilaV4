@@ -1,7 +1,9 @@
 "use client";
 
 /**
- * ClusterToolbar — Dimension selector for the constellation map.
+ * ClusterToolbar — Dimension selector for the cartography bubble chart.
+ *
+ * Only shows dimensions that have meaningful data (>= 2 distinct clusters).
  */
 
 import { memo } from "react";
@@ -12,7 +14,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { DIMENSION_CONFIGS, type ClusterDimension } from "@/types/cartography";
+import {
+  DIMENSION_CONFIGS,
+  type ClusterDimension,
+} from "@/types/cartography";
 import { DIMENSION_ICONS } from "./constants";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +26,7 @@ import { DIMENSION_ICONS } from "./constants";
 
 interface ClusterToolbarProps {
   active: ClusterDimension;
+  availableDimensions: ClusterDimension[];
   onChange: (dimension: ClusterDimension) => void;
   className?: string;
 }
@@ -31,9 +37,16 @@ interface ClusterToolbarProps {
 
 export const ClusterToolbar = memo(function ClusterToolbar({
   active,
+  availableDimensions,
   onChange,
   className,
 }: ClusterToolbarProps) {
+  const visibleDims = DIMENSION_CONFIGS.filter((d) =>
+    availableDimensions.includes(d.id)
+  );
+
+  if (visibleDims.length === 0) return null;
+
   return (
     <div
       className={cn(
@@ -41,7 +54,7 @@ export const ClusterToolbar = memo(function ClusterToolbar({
         className
       )}
     >
-      {DIMENSION_CONFIGS.map((dim) => {
+      {visibleDims.map((dim) => {
         const Icon = DIMENSION_ICONS[dim.id];
         const isActive = active === dim.id;
 

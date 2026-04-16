@@ -1,7 +1,7 @@
 /**
  * Cartography Types
  *
- * Data structures for the 2D constellation map that visualises
+ * Data structures for the packed bubble chart that visualises
  * the avatar fleet across multiple clustering dimensions.
  */
 
@@ -40,7 +40,7 @@ export const DIMENSION_CONFIGS: ClusterDimensionConfig[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Constellation node (one per avatar)
+// Avatar node (one per avatar, used across all dimensions)
 // ---------------------------------------------------------------------------
 
 export interface ConstellationNode {
@@ -48,10 +48,8 @@ export interface ConstellationNode {
   label: string;
   profileImageUrl: string | null;
 
-  // Cluster keys per dimension (precomputed server-side)
   clusters: Record<ClusterDimension, string>;
 
-  // Metrics for sizing / detail
   automatorJobs: number;
   automatorSuccessRate: number;
   operatorCount: number;
@@ -59,16 +57,7 @@ export interface ConstellationNode {
   platformCount: number;
   armyCount: number;
 
-  // Avatar snapshot for the detail panel
   avatar: ConstellationAvatarSnapshot;
-
-  // Simulation coordinates (set by d3-force)
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
-  fx?: number | null;
-  fy?: number | null;
 }
 
 export interface ConstellationAvatarSnapshot {
@@ -106,8 +95,32 @@ export interface ClusterGroup {
   label: string;
   color: string;
   nodeCount: number;
-  centroidX?: number;
-  centroidY?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Packed bubble hierarchy types
+// ---------------------------------------------------------------------------
+
+export interface BubbleHierarchyNode {
+  id: string;
+  type: "root" | "cluster" | "avatar";
+  label: string;
+  color: string;
+  value: number;
+  node?: ConstellationNode;
+  children?: BubbleHierarchyNode[];
+}
+
+export interface PackedBubble {
+  id: string;
+  type: "cluster" | "avatar";
+  label: string;
+  color: string;
+  x: number;
+  y: number;
+  r: number;
+  node?: ConstellationNode;
+  clusterKey: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +129,7 @@ export interface ClusterGroup {
 
 export interface CartographyData {
   nodes: ConstellationNode[];
+  availableDimensions: ClusterDimension[];
   totalAvatars: number;
   totalArmies: number;
   totalCampaigns: number;

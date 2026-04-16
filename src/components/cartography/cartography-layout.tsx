@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * CartographyLayout — Full-page layout for the avatar constellation map.
+ * CartographyLayout — Full-page layout for the avatar packed bubble chart.
  *
- * Composes the toolbar, canvas, legend, tooltip, and detail panel.
+ * Composes the toolbar, bubble chart, stats panel, tooltip, and detail panel.
  */
 
 import { useState, useCallback, useEffect, memo } from "react";
@@ -16,11 +16,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { ConstellationCanvas } from "./constellation-canvas";
+import { PackedBubbleChart } from "./packed-bubble-chart";
 import { ClusterToolbar } from "./cluster-toolbar";
+import { ClusterStatsPanel } from "./cluster-stats-panel";
 import { AvatarTooltip } from "./avatar-tooltip";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
-import { ClusterLegend } from "./cluster-legend";
 import type {
   CartographyData,
   ConstellationNode,
@@ -43,12 +43,30 @@ interface CartographyLayoutProps {
 export const CartographyLayout = memo(function CartographyLayout({
   data,
 }: CartographyLayoutProps) {
-  const [dimension, setDimension] = useState<ClusterDimension>("army");
+  const [dimension, setDimension] = useState<ClusterDimension>(
+    data.availableDimensions[0] ?? "identity"
+  );
   const [hoveredNode, setHoveredNode] = useState<ConstellationNode | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [selectedNode, setSelectedNode] = useState<ConstellationNode | null>(null);
   const [clusters, setClusters] = useState<ClusterGroup[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [focusedCluster, setFocusedCluster] = useState<string | null>(null);
+
+  // Reset focused cluster when dimension changes
+  useEffect(() => {
+    setFocusedCluster(null);
+  }, [dimension]);
+
+  // If current dimension becomes unavailable, fallback
+  useEffect(() => {
+    if (
+      data.availableDimensions.length > 0 &&
+      !data.availableDimensions.includes(dimension)
+    ) {
+      setDimension(data.availableDimensions[0]);
+    }
+  }, [data.availableDimensions, dimension]);
 
   const handleNodeHover = useCallback(
     (node: ConstellationNode | null, x: number, y: number) => {
@@ -84,7 +102,6 @@ export const CartographyLayout = memo(function CartographyLayout({
     }
   }, []);
 
-  // Sync fullscreen state when user presses Escape
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", handler);
@@ -132,7 +149,11 @@ export const CartographyLayout = memo(function CartographyLayout({
         </div>
 
         <div className="flex items-center gap-2">
-          <ClusterToolbar active={dimension} onChange={setDimension} />
+          <ClusterToolbar
+            active={dimension}
+            availableDimensions={data.availableDimensions}
+            onChange={setDimension}
+          />
 
           <span className="h-5 w-px bg-border" />
 
@@ -160,22 +181,28 @@ export const CartographyLayout = memo(function CartographyLayout({
         </div>
       </div>
 
-      {/* Canvas */}
-      <div className="flex-1 pt-[45px] pb-[34px]">
-        <ConstellationCanvas
-          nodes={data.nodes}
-          dimension={dimension}
-          onNodeHover={handleNodeHover}
-          onNodeClick={handleNodeClick}
-          onClustersReady={handleClustersReady}
-        />
-      </div>
+      {/* Main content: chart + stats sidebar */}
+      <div className="flex flex-1 pt-[45px]">
+        {/* Bubble chart */}
+        <div className="flex-1">
+          <PackedBubbleChart
+            nodes={data.nodes}
+            dimension={dimension}
+            onNodeHover={handleNodeHover}
+            onNodeClick={handleNodeClick}
+            onClustersReady={handleClustersReady}
+            focusedCluster={focusedCluster}
+          />
+        </div>
 
-      {/* Bottom legend */}
-      <div className="absolute inset-x-0 bottom-0 z-10 border-t border-border/40 px-4 py-1.5 glass-effect">
-        <ClusterLegend
+        {/* Stats panel */}
+        <ClusterStatsPanel
           clusters={clusters}
-          totalNodes={data.totalAvatars}
+          totalAvatars={data.totalAvatars}
+          totalArmies={data.totalArmies}
+          totalCampaigns={data.totalCampaigns}
+          focusedCluster={focusedCluster}
+          onClusterFocus={setFocusedCluster}
         />
       </div>
 

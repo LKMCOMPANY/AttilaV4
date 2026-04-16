@@ -2,7 +2,7 @@
 
 /**
  * AvatarDetailPanel — Slide-in panel showing full avatar details
- * when a constellation node is clicked.
+ * when a bubble chart node is clicked.
  */
 
 import { memo } from "react";

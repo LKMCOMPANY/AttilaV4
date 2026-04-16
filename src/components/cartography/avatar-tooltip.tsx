@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * AvatarTooltip — Floating tooltip shown on hover over a constellation node.
+ * AvatarTooltip — Floating tooltip shown on hover over a bubble chart node.
  */
 
 import { memo } from "react";
