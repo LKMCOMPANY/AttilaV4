@@ -128,34 +128,33 @@ Si les coordonnées ne marchent pas, recalibrer avec `pointer_location`.
 | `TEXT` | `This blockade is historic, we are watching history unfold` |
 | `BOX_HOST` | `box-1.attila.army` |
 
-### Les 14 étapes
+### Les 13 étapes (consolidé V4.1, 16 avril 2026)
 
 ```
 ÉTAPE   COMMANDE                                                    DURÉE     NOTE
 ─────   ────────                                                    ─────     ────
- 1      input keyevent KEYCODE_WAKEUP                               ~500ms
+ 1      wakeDevice (WAKEUP + MENU + verify, retry swipe)            ~2s
  2      am start -d "{VIDEO_URL}"                                   ~500ms    ouvre dans l'app TikTok
- 3      sleep 8                                                     8s        chargement vidéo (plus lent que Twitter)
+ 3      sleep 8                                                     8s        chargement vidéo
  4      GET /screenshots/{DB_ID}                      📸 SOURCE     ~500ms
  5      input tap 985 1425                                          ~500ms    ouvre panneau commentaires
  6      sleep 3                                                     3s        panneau slide up
  7      input tap 200 2290                                          ~500ms    focus champ "Add comment..."
- 8      sleep 1                                                     1s        clavier apparaît
- 9      ime set com.android.adbkeyboard/.AdbIME                     ~500ms    switch clavier
+ 8      sleep 1.5                                                   1.5s      clavier apparaît
+ 9      ensureAdbKeyboard (enable + set + verify)                   ~1.5s     active le clavier ADB
 10      input tap 200 2290                                          ~500ms    re-focus après switch IME
-11      sleep 1                                                     1s
-12      am broadcast -a ADB_INPUT_TEXT --es msg "{TEXT}"             ~500ms    saisie du texte
-13      input tap 970 1515                                          ~500ms    tap bouton send
-14      sleep 4 → GET /screenshots/{DB_ID}            📸 PREUVE     ~5s
+11      typeText (broadcast + verify)                               ~500ms    saisie du texte
+12      input tap 970 1515                                          ~500ms    tap bouton send
+13      sleep 5 → GET /screenshots/{DB_ID}            📸 PREUVE     ~6s
 
-TOTAL : ~22 secondes par commentaire
+TOTAL : ~25 secondes par commentaire
 ```
 
 ### Séquence IME — Point d'attention
 
 TikTok perd le focus du champ quand on switch l'IME. Le flow doit :
 1. Tap le champ "Add comment..." → le clavier Gboard apparaît
-2. Switch vers ADBKeyboard → le clavier change, le champ peut perdre le focus
+2. `ensureAdbKeyboard()` : `ime enable` + `ime set` + verify → le clavier change
 3. Re-tap le champ → refocus avec ADBKeyboard actif
 4. Broadcast le texte
 

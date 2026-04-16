@@ -449,7 +449,7 @@ UPDATE boxes SET max_concurrent_containers = 50 WHERE tunnel_hostname = 'box-2.a
               total_responses_sent = total_responses_sent + 1  (ou total_responses_failed)
 ```
 
-### Scripts ADB (code partage)
+### Scripts ADB (code partage — consolide V4.1, 16 avril 2026)
 
 La logique ADB est dans `src/lib/automation/` (source unique de verite).
 Les scripts CLI dans `scripts/` sont des wrappers fins qui importent de la.
@@ -457,13 +457,27 @@ L'executor du pipeline (`src/lib/pipeline/executor.ts`) importe aussi de la.
 
 ```
 src/lib/automation/
-  adb-helpers.ts       Helpers partages (shell, screenshot, sleep, IME, wake)
+  adb-helpers.ts       Helpers partages :
+                         shell() — retourne { code, message, ok } (verifie code VMOS 200)
+                         screenshot() — capture ecran en Buffer
+                         wakeDevice() — WAKEUP + MENU + verify + retry swipe
+                         ensureAdbKeyboard() — enable + set + verify (3 etapes)
+                         typeText() — broadcast + verification "Broadcast completed"
+                         restoreGboard() — best-effort restore du clavier standard
+                         escapeShellText() — echappe \, ", $, ` pour le shell
   x-reply.ts           postReply() — Twitter app vs Chrome auto-detect
   tiktok-reply.ts      postTikTokComment() — TikTok app native
 ```
 
-**Twitter/X** : auto-detection app native vs Chrome. Deep link → ADBKeyboard → post.
-**TikTok** : app native obligatoire. `ime enable` avant `ime set`, re-tap apres switch IME.
+**Twitter/X** : auto-detection app native vs Chrome. Deep link → ensureAdbKeyboard →
+typeText → post. Re-tap du champ reply apres switch IME.
+**TikTok** : app native obligatoire. Meme pattern ensureAdbKeyboard + typeText.
+
+### Filet de securite screenshots (V4.1)
+
+L'executor compare la taille en bytes des screenshots source et proof.
+Si identiques → le post n'a probablement pas ete publie → `success: false`.
+Cela empeche de marquer `done` des jobs qui n'ont en realite rien poste.
 
 ### Expiration
 

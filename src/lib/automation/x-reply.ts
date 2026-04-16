@@ -9,14 +9,14 @@
  */
 
 import {
-  ADBKEYBOARD_IME,
-  GBOARD_IME,
   shell,
   screenshot,
   sleep,
-  escapeShellText,
   extractTweetId,
   wakeDevice,
+  ensureAdbKeyboard,
+  typeText,
+  restoreGboard,
 } from "./adb-helpers";
 
 const COORDS = {
@@ -28,6 +28,14 @@ const COORDS = {
     replyField: { x: 300, y: 1000 },
     replyButton: { x: 920, y: 285 },
   },
+};
+
+const TIMING = {
+  pageLoad: 6000,
+  afterTapField: 1500,
+  afterType: 1000,
+  afterPost: 6000,
+  proofReload: 6000,
 };
 
 export interface ReplyResult {
@@ -51,74 +59,117 @@ async function hasTwitterApp(boxHost: string, dbId: string): Promise<boolean> {
 }
 
 async function postReplyViaApp(
-  boxHost: string, dbId: string, tweetUrl: string, text: string,
+  boxHost: string,
+  dbId: string,
+  tweetUrl: string,
+  text: string,
 ): Promise<{ source: Buffer; proof: Buffer }> {
   const c = COORDS.app;
 
-  xLog(dbId, "APP FLOW — step 1: open tweet via deep link", { url: tweetUrl });
+  // --- Step 1: Open tweet via deep link ---
+  xLog(dbId, "APP — open tweet via deep link", { url: tweetUrl });
   await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(5000);
+  await sleep(TIMING.pageLoad);
 
-  xLog(dbId, "APP FLOW — step 2: screenshot source");
+  // --- Step 2: Screenshot source (tweet loaded) ---
+  xLog(dbId, "APP — screenshot source");
   const source = await screenshot(boxHost, dbId);
 
-  xLog(dbId, "APP FLOW — step 3: tap reply field", { coords: c.replyField });
+  // --- Step 3: Tap reply field ---
+  xLog(dbId, "APP — tap reply field", { coords: c.replyField });
   await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
-  await sleep(1000);
+  await sleep(TIMING.afterTapField);
 
-  xLog(dbId, "APP FLOW — step 4: set ADBKeyboard + type text", { textLength: text.length });
-  await shell(boxHost, dbId, `ime set ${ADBKEYBOARD_IME}`);
-  await shell(boxHost, dbId, `am broadcast -a ADB_INPUT_TEXT --es msg "${escapeShellText(text)}"`);
-  await sleep(1000);
+  // --- Step 4: Activate ADBKeyboard + re-tap field for focus ---
+  xLog(dbId, "APP — activate ADBKeyboard");
+  const kbReady = await ensureAdbKeyboard(boxHost, dbId);
+  if (!kbReady) throw new Error("ADBKeyboard activation failed");
 
-  xLog(dbId, "APP FLOW — step 5: tap reply button", { coords: c.replyButton });
+  xLog(dbId, "APP — re-tap reply field after IME switch");
+  await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
+  await sleep(500);
+
+  // --- Step 5: Type text ---
+  xLog(dbId, "APP — type text", { textLength: text.length });
+  const typed = await typeText(boxHost, dbId, text);
+  if (!typed) throw new Error("Text broadcast failed");
+  await sleep(TIMING.afterType);
+
+  // --- Step 6: Tap reply/post button ---
+  xLog(dbId, "APP — tap reply button", { coords: c.replyButton });
   await shell(boxHost, dbId, `input tap ${c.replyButton.x} ${c.replyButton.y}`);
-  await sleep(5000);
+  await sleep(TIMING.afterPost);
 
-  xLog(dbId, "APP FLOW — step 6: reopen tweet for proof screenshot");
+  // --- Step 7: Reopen tweet + wait for reply to appear ---
+  xLog(dbId, "APP — reopen tweet for proof screenshot");
   await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(5000);
-  const proof = await screenshot(boxHost, dbId);
+  await sleep(TIMING.proofReload);
 
-  xLog(dbId, "APP FLOW — complete", { sourceBytes: source.length, proofBytes: proof.length });
+  // --- Step 8: Screenshot proof ---
+  const proof = await screenshot(boxHost, dbId);
+  xLog(dbId, "APP — complete", { sourceBytes: source.length, proofBytes: proof.length });
+
   return { source, proof };
 }
 
 async function postReplyViaChrome(
-  boxHost: string, dbId: string, tweetUrl: string, tweetId: string, text: string,
+  boxHost: string,
+  dbId: string,
+  tweetUrl: string,
+  tweetId: string,
+  text: string,
 ): Promise<{ source: Buffer; proof: Buffer }> {
   const c = COORDS.chrome;
 
-  xLog(dbId, "CHROME FLOW — step 1: open tweet in browser", { url: tweetUrl });
+  // --- Step 1: Open tweet in browser ---
+  xLog(dbId, "CHROME — open tweet in browser", { url: tweetUrl });
   await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(5000);
+  await sleep(TIMING.pageLoad);
 
-  xLog(dbId, "CHROME FLOW — step 2: screenshot source");
+  // --- Step 2: Screenshot source ---
+  xLog(dbId, "CHROME — screenshot source");
   const source = await screenshot(boxHost, dbId);
 
-  xLog(dbId, "CHROME FLOW — step 3: open reply intent", { tweetId });
-  await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d https://x.com/intent/post?in_reply_to=${tweetId}`);
-  await sleep(5000);
+  // --- Step 3: Open reply intent page ---
+  xLog(dbId, "CHROME — open reply intent", { tweetId });
+  const intentUrl = `https://x.com/intent/post?in_reply_to=${tweetId}`;
+  await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${intentUrl}`);
+  await sleep(TIMING.pageLoad);
 
-  xLog(dbId, "CHROME FLOW — step 4: tap reply field", { coords: c.replyField });
+  // --- Step 4: Tap reply field ---
+  xLog(dbId, "CHROME — tap reply field", { coords: c.replyField });
   await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
-  await sleep(1000);
+  await sleep(TIMING.afterTapField);
 
-  xLog(dbId, "CHROME FLOW — step 5: set ADBKeyboard + type text", { textLength: text.length });
-  await shell(boxHost, dbId, `ime set ${ADBKEYBOARD_IME}`);
-  await shell(boxHost, dbId, `am broadcast -a ADB_INPUT_TEXT --es msg "${escapeShellText(text)}"`);
-  await sleep(1000);
+  // --- Step 5: Activate ADBKeyboard + re-tap field ---
+  xLog(dbId, "CHROME — activate ADBKeyboard");
+  const kbReady = await ensureAdbKeyboard(boxHost, dbId);
+  if (!kbReady) throw new Error("ADBKeyboard activation failed");
 
-  xLog(dbId, "CHROME FLOW — step 6: tap reply button", { coords: c.replyButton });
+  xLog(dbId, "CHROME — re-tap reply field after IME switch");
+  await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
+  await sleep(500);
+
+  // --- Step 6: Type text ---
+  xLog(dbId, "CHROME — type text", { textLength: text.length });
+  const typed = await typeText(boxHost, dbId, text);
+  if (!typed) throw new Error("Text broadcast failed");
+  await sleep(TIMING.afterType);
+
+  // --- Step 7: Tap reply button ---
+  xLog(dbId, "CHROME — tap reply button", { coords: c.replyButton });
   await shell(boxHost, dbId, `input tap ${c.replyButton.x} ${c.replyButton.y}`);
-  await sleep(5000);
+  await sleep(TIMING.afterPost);
 
-  xLog(dbId, "CHROME FLOW — step 7: reopen tweet for proof screenshot");
+  // --- Step 8: Reopen tweet for proof ---
+  xLog(dbId, "CHROME — reopen tweet for proof screenshot");
   await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(5000);
-  const proof = await screenshot(boxHost, dbId);
+  await sleep(TIMING.proofReload);
 
-  xLog(dbId, "CHROME FLOW — complete", { sourceBytes: source.length, proofBytes: proof.length });
+  // --- Step 9: Screenshot proof ---
+  const proof = await screenshot(boxHost, dbId);
+  xLog(dbId, "CHROME — complete", { sourceBytes: source.length, proofBytes: proof.length });
+
   return { source, proof };
 }
 
@@ -144,12 +195,17 @@ export async function postReply(
       ? await postReplyViaApp(boxHost, dbId, tweetUrl, text)
       : await postReplyViaChrome(boxHost, dbId, tweetUrl, tweetId, text);
 
-    await shell(boxHost, dbId, `ime set ${GBOARD_IME}`);
+    await restoreGboard(boxHost, dbId);
 
-    xLog(dbId, "postReply SUCCESS", { mode, durationMs: Date.now() - start, sourceBytes: source.length, proofBytes: proof.length });
+    xLog(dbId, "postReply SUCCESS", {
+      mode,
+      durationMs: Date.now() - start,
+      sourceBytes: source.length,
+      proofBytes: proof.length,
+    });
     return { success: true, mode, source, proof, durationMs: Date.now() - start };
   } catch (err) {
-    await shell(boxHost, dbId, `ime set ${GBOARD_IME}`).catch(() => {});
+    await restoreGboard(boxHost, dbId);
     const error = err instanceof Error ? err.message : String(err);
     xLog(dbId, "postReply FAILED", { error, durationMs: Date.now() - start });
     return {

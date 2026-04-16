@@ -85,24 +85,35 @@ pm list packages | grep twitter
 | Champ "Post your reply" | `input tap 540 2277` | `[0,2214][1080,2340]` |
 | Bouton "Reply" (poster) | `input tap 947 2220` | `[843,2172][1050,2268]` |
 
-### Les 10 étapes
+### Les 12 étapes (consolidé V4.1, 16 avril 2026)
 
 ```
 ÉTAPE   COMMANDE                                                    DURÉE
 ─────   ────────                                                    ─────
- 1      input keyevent KEYCODE_WAKEUP                               ~500ms
+ 1      wakeDevice (WAKEUP + MENU + verify, retry swipe)            ~2s
  2      am start -d "{TWEET_URL}"                                   ~500ms
- 3      sleep 5                                                     5s
+ 3      sleep 6                                                     6s
  4      GET /screenshots/{DB_ID}                      📸 SOURCE     ~500ms
- 5      input tap 540 2277                                          ~500ms
- 6      sleep 1                                                     1s
- 7      ime set com.android.adbkeyboard/.AdbIME                     ~500ms
- 8      am broadcast -a ADB_INPUT_TEXT --es msg "{TEXT}"             ~500ms
- 9      input tap 947 2220                                          ~500ms
-10      sleep 5 → am start -d "{TWEET_URL}" → screenshot 📸 PREUVE ~11s
+ 5      input tap 540 2277  (reply field)                            ~500ms
+ 6      sleep 1.5                                                   1.5s
+ 7      ensureAdbKeyboard (enable + set + verify)                    ~1.5s
+ 8      input tap 540 2277  (re-tap après IME switch)                ~500ms
+ 9      typeText (broadcast + verify)                                ~500ms
+10      sleep 1                                                     1s
+11      input tap 947 2220  (bouton Reply)                           ~500ms
+12      sleep 6 → am start -d "{TWEET_URL}" → sleep 6 → 📸 PREUVE  ~13s
 
-TOTAL : ~21 secondes par commentaire
+TOTAL : ~28 secondes par commentaire
 ```
+
+### Points critiques (bugs corrigés V4.1)
+
+- **`ime enable` AVANT `ime set`** : sans enable, le device retourne code 201
+  "Unknown input method" et le texte ne s'injecte jamais
+- **Re-tap du champ** après switch IME : le focus se perd au changement de clavier
+- **Vérification broadcast** : `typeText()` vérifie "Broadcast completed" dans la réponse
+- **Vérification IME active** : `ensureAdbKeyboard()` vérifie via
+  `settings get secure default_input_method` que le switch a bien pris effet
 
 ---
 
@@ -141,25 +152,27 @@ Ouvre directement la page de composition de réponse dans Chrome :
 | "Replying to @user" | y=700-900, x=80-400 | Ouvre le sélecteur (page `compose/reply_to`) |
 | Barre d'adresse Chrome | y=70-240 | Perd le contexte |
 
-### Les 12 étapes
+### Les 14 étapes (consolidé V4.1, 16 avril 2026)
 
 ```
 ÉTAPE   COMMANDE                                                          DURÉE
 ─────   ────────                                                          ─────
- 1      input keyevent KEYCODE_WAKEUP                                     ~500ms
- 2      am start -d "{TWEET_URL}"                                         ~500ms
- 3      sleep 5                                                           5s
- 4      GET /screenshots/{DB_ID}                            📸 SOURCE     ~500ms
- 5      am start -d "https://x.com/intent/post?in_reply_to={TWEET_ID}"   ~500ms
- 6      sleep 5                                                           5s
- 7      input tap 300 1000                                                ~500ms
- 8      ime set com.android.adbkeyboard/.AdbIME                           ~500ms
- 9      am broadcast -a ADB_INPUT_TEXT --es msg "{TEXT}"                   ~500ms
-10      input tap 920 285                                                 ~500ms
-11      sleep 5                                                           5s
-12      am start -d "{TWEET_URL}" → GET /screenshots/{DB_ID} 📸 PREUVE   ~6s
+ 1      wakeDevice (WAKEUP + MENU + verify, retry swipe)                   ~2s
+ 2      am start -d "{TWEET_URL}"                                          ~500ms
+ 3      sleep 6                                                            6s
+ 4      GET /screenshots/{DB_ID}                             📸 SOURCE     ~500ms
+ 5      am start -d "https://x.com/intent/post?in_reply_to={TWEET_ID}"    ~500ms
+ 6      sleep 6                                                            6s
+ 7      input tap 300 1000  (reply field)                                   ~500ms
+ 8      sleep 1.5                                                          1.5s
+ 9      ensureAdbKeyboard (enable + set + verify)                           ~1.5s
+10      input tap 300 1000  (re-tap après IME switch)                       ~500ms
+11      typeText (broadcast + verify)                                       ~500ms
+12      sleep 1                                                            1s
+13      input tap 920 285  (bouton Reply)                                   ~500ms
+14      sleep 6 → am start -d "{TWEET_URL}" → sleep 6 → 📸 PREUVE         ~13s
 
-TOTAL : ~25 secondes par commentaire
+TOTAL : ~34 secondes par commentaire
 ```
 
 ---
