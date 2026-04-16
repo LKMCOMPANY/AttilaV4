@@ -8,9 +8,13 @@ import type { Campaign } from "@/types";
 
 interface CampaignDetailPanelProps {
   campaign: Campaign | null;
+  pipelineVersion?: number;
 }
 
-export function CampaignDetailPanel({ campaign }: CampaignDetailPanelProps) {
+export function CampaignDetailPanel({
+  campaign,
+  pipelineVersion,
+}: CampaignDetailPanelProps) {
   if (!campaign) {
     return (
       <EmptyPanel
@@ -25,7 +29,10 @@ export function CampaignDetailPanel({ campaign }: CampaignDetailPanelProps) {
     <div className="flex h-full flex-col bg-background">
       <PipelineStats campaign={campaign} />
       <div className="min-h-0 flex-1">
-        <PipelineActivity campaign={campaign} />
+        <PipelineActivity
+          campaign={campaign}
+          pipelineVersion={pipelineVersion}
+        />
       </div>
     </div>
   );

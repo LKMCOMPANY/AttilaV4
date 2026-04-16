@@ -72,6 +72,7 @@ const ForceGraph3D = dynamic(
 
 interface CampaignNetworkMapProps {
   campaignId: string;
+  pipelineVersion?: number;
   className?: string;
 }
 
@@ -79,7 +80,7 @@ interface CampaignNetworkMapProps {
 // Constants
 // ---------------------------------------------------------------------------
 
-const POLL_INTERVAL = 30_000;
+const FALLBACK_POLL_INTERVAL = 120_000;
 const CAMERA_DISTANCE = 350;
 const ROTATION_SPEED = 0.0002;
 
@@ -125,6 +126,7 @@ const THEME_COLORS = {
 
 export const CampaignNetworkMap = memo(function CampaignNetworkMap({
   campaignId,
+  pipelineVersion,
   className,
 }: CampaignNetworkMapProps) {
   const { resolvedTheme } = useTheme();
@@ -159,7 +161,7 @@ export const CampaignNetworkMap = memo(function CampaignNetworkMap({
     pending: true,
   });
 
-  // ---------- Data fetching with polling ---------------------------------
+  // ---------- Data fetching (realtime-triggered + fallback poll) ----------
 
   const fetchData = useCallback(
     async (initial = false) => {
@@ -181,9 +183,19 @@ export const CampaignNetworkMap = memo(function CampaignNetworkMap({
     [campaignId]
   );
 
+  // Initial load
   useEffect(() => {
     fetchData(true);
-    const interval = setInterval(() => fetchData(false), POLL_INTERVAL);
+  }, [fetchData]);
+
+  // Realtime-triggered refresh
+  useEffect(() => {
+    if (pipelineVersion && pipelineVersion > 0) fetchData(false);
+  }, [pipelineVersion, fetchData]);
+
+  // Long-interval fallback poll (safety net)
+  useEffect(() => {
+    const interval = setInterval(() => fetchData(false), FALLBACK_POLL_INTERVAL);
     return () => clearInterval(interval);
   }, [fetchData]);
 

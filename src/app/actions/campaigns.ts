@@ -32,6 +32,30 @@ export async function getCampaigns(accountId: string): Promise<Campaign[]> {
   return (data ?? []) as Campaign[];
 }
 
+export async function getCampaign(
+  campaignId: string,
+): Promise<Campaign | null> {
+  const session = await requireSession();
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("campaigns")
+    .select("*")
+    .eq("id", campaignId)
+    .single();
+
+  if (error || !data) return null;
+
+  if (
+    session.profile.role !== "admin" &&
+    data.account_id !== session.profile.account_id
+  ) {
+    return null;
+  }
+
+  return data as Campaign;
+}
+
 // ---------------------------------------------------------------------------
 // Zones — fetch available Gorgone zones for an account
 // ---------------------------------------------------------------------------

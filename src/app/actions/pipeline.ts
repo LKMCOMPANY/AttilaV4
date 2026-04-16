@@ -1,6 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { broadcastCampaignEvent } from "@/lib/supabase/realtime";
 import { requireSession, requireAdmin } from "@/lib/auth/session";
 import { selectAvatars } from "@/lib/pipeline/avatar-selector";
 import { generateComments, buildJobRows } from "@/lib/pipeline/job-builder";
@@ -151,7 +152,11 @@ export async function purgeQueue(campaignId: string): Promise<number> {
     .eq("status", "ready")
     .select("id");
 
-  return data?.length ?? 0;
+  const count = data?.length ?? 0;
+  if (count > 0) {
+    broadcastCampaignEvent(campaignId, "pipeline", { action: "jobs_purged", count });
+  }
+  return count;
 }
 
 export async function purgeBoxQueue(boxId: string): Promise<number> {
@@ -255,6 +260,9 @@ export async function retryAwaitingPost(
     p_counter: "total_posts_ingested",
   });
 
+  broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_retried", jobsCreated: jobs.length });
+  broadcastCampaignEvent(campaign.id, "counters", { action: "ingested" });
+
   return { success: true, message: `Created ${jobs.length} jobs`, jobsCreated: jobs.length };
 }
 
@@ -268,5 +276,9 @@ export async function purgeAwaitingPosts(campaignId: string): Promise<number> {
     .eq("status", "awaiting_avatars")
     .select("id");
 
-  return data?.length ?? 0;
+  const count = data?.length ?? 0;
+  if (count > 0) {
+    broadcastCampaignEvent(campaignId, "pipeline", { action: "posts_purged", count });
+  }
+  return count;
 }

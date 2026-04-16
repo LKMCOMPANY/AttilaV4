@@ -25,11 +25,17 @@ import { PipelinePostRow } from "./pipeline-post-row";
 import { PostDetailView } from "./post-detail-view";
 import type { Campaign, CampaignPost, CampaignJobWithAvatar } from "@/types";
 
+const FALLBACK_POLL_INTERVAL = 120_000;
+
 interface PipelineActivityProps {
   campaign: Campaign;
+  pipelineVersion?: number;
 }
 
-export function PipelineActivity({ campaign }: PipelineActivityProps) {
+export function PipelineActivity({
+  campaign,
+  pipelineVersion,
+}: PipelineActivityProps) {
   const [posts, setPosts] = useState<CampaignPost[]>([]);
   const [jobs, setJobs] = useState<CampaignJobWithAvatar[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,9 +53,19 @@ export function PipelineActivity({ campaign }: PipelineActivityProps) {
     setLoading(false);
   }, [campaign.id]);
 
+  // Initial load
   useEffect(() => {
     refresh();
-    const interval = setInterval(refresh, 15000);
+  }, [refresh]);
+
+  // Realtime-triggered refresh
+  useEffect(() => {
+    if (pipelineVersion && pipelineVersion > 0) refresh();
+  }, [pipelineVersion, refresh]);
+
+  // Long-interval fallback poll
+  useEffect(() => {
+    const interval = setInterval(refresh, FALLBACK_POLL_INTERVAL);
     return () => clearInterval(interval);
   }, [refresh]);
 

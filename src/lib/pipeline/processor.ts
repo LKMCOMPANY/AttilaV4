@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { broadcastCampaignEvent } from "@/lib/supabase/realtime";
 import type { Campaign, CampaignPlatform } from "@/types";
 import type { PipelinePost, PipelineResult, PipelineTiming } from "./types";
 import { pipelineLog, pipelineError } from "./types";
@@ -61,6 +62,7 @@ export async function processNext(): Promise<PipelineResult | null> {
       pipelineLog("filter", post.id, `Filtered out: ${filterResult.reason}`);
       await markPostStatus(supabase, post, platform, "filtered_out");
       await incrementCampaignCounter(supabase, campaign.id, "total_posts_filtered");
+      broadcastCampaignEvent(campaign.id, "counters", { action: "filtered" });
       return result("filtered_rules", post.id, campaign.id, 0, timing, totalStart);
     }
 
@@ -79,6 +81,7 @@ export async function processNext(): Promise<PipelineResult | null> {
       pipelineLog("analyst", post.id, `AI filtered: ${decision.reason}`);
       await markPostStatus(supabase, post, platform, "filtered_out");
       await incrementCampaignCounter(supabase, campaign.id, "total_posts_filtered");
+      broadcastCampaignEvent(campaign.id, "counters", { action: "filtered" });
       return result("filtered_ai", post.id, campaign.id, 0, timing, totalStart);
     }
 
@@ -115,6 +118,7 @@ export async function processNext(): Promise<PipelineResult | null> {
       });
 
       await markPostStatus(supabase, post, platform, "processed");
+      broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_awaiting" });
       return result("no_avatars", post.id, campaign.id, 0, timing, totalStart);
     }
 
@@ -177,6 +181,9 @@ export async function processNext(): Promise<PipelineResult | null> {
     // Mark source post as responded
     await markPostStatus(supabase, post, platform, "processed");
     await incrementCampaignCounter(supabase, campaign.id, "total_posts_ingested");
+
+    broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_created", jobsCreated: jobs.length });
+    broadcastCampaignEvent(campaign.id, "counters", { action: "ingested" });
 
     pipelineLog("insert", post.id, "Pipeline complete", {
       campaignId: campaign.id,

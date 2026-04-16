@@ -3,10 +3,13 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Group, Panel } from "react-resizable-panels";
 import { ResizableHandle } from "@/components/ui/resizable";
+import { useRealtimeCampaign } from "@/hooks/use-realtime-campaign";
+import { getCampaign } from "@/app/actions/campaigns";
 import { CampaignListPanel } from "./campaign-list-panel";
 import { CampaignSettingsPanel } from "./campaign-settings-panel";
 import { CampaignCenterPanel } from "./campaign-center-panel";
 import { CampaignDetailPanel } from "./campaign-detail-panel";
+import { RealtimeIndicator } from "./realtime-indicator";
 import type { Campaign } from "@/types";
 
 export type CampaignSortField = "created" | "alphabetical" | "status";
@@ -27,6 +30,9 @@ export function AutomatorLayout({
   const [sortField, setSortField] = useState<CampaignSortField>("created");
   const [localCampaigns, setLocalCampaigns] = useState(campaigns);
 
+  const { pipelineVersion, countersVersion, status: realtimeStatus } =
+    useRealtimeCampaign(selectedCampaignId);
+
   useEffect(() => {
     setLocalCampaigns(campaigns);
   }, [campaigns]);
@@ -40,6 +46,18 @@ export function AutomatorLayout({
       setSelectedCampaignId(null);
     }
   }, [localCampaigns, selectedCampaignId]);
+
+  // Refetch campaign counters when realtime signals a change
+  useEffect(() => {
+    if (!selectedCampaignId || countersVersion === 0) return;
+    getCampaign(selectedCampaignId).then((fresh) => {
+      if (fresh) {
+        setLocalCampaigns((prev) =>
+          prev.map((c) => (c.id === fresh.id ? fresh : c)),
+        );
+      }
+    });
+  }, [countersVersion, selectedCampaignId]);
 
   const sortedCampaigns = useMemo(() => {
     const list = [...localCampaigns];
@@ -104,6 +122,7 @@ export function AutomatorLayout({
       <Panel id="center" minSize="15%" maxSize="50%" style={panelStyle}>
         <CampaignCenterPanel
           campaign={selectedCampaign}
+          pipelineVersion={pipelineVersion}
           onCampaignUpdated={handleCampaignUpdated}
         />
       </Panel>
@@ -111,7 +130,15 @@ export function AutomatorLayout({
       <ResizableHandle withHandle />
 
       <Panel id="details" minSize="20%" style={panelStyle}>
-        <CampaignDetailPanel campaign={selectedCampaign} />
+        <div className="relative h-full">
+          <CampaignDetailPanel
+            campaign={selectedCampaign}
+            pipelineVersion={pipelineVersion}
+          />
+          {selectedCampaign && (
+            <RealtimeIndicator status={realtimeStatus} />
+          )}
+        </div>
       </Panel>
     </Group>
   );

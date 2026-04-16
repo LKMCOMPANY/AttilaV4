@@ -12,11 +12,13 @@ import type { Campaign } from "@/types";
 
 interface CampaignCenterPanelProps {
   campaign: Campaign | null;
+  pipelineVersion?: number;
   onCampaignUpdated: (updated: Campaign) => void;
 }
 
 export function CampaignCenterPanel({
   campaign,
+  pipelineVersion,
   onCampaignUpdated,
 }: CampaignCenterPanelProps) {
   if (!campaign) {
@@ -33,7 +35,10 @@ export function CampaignCenterPanel({
     <div className="flex h-full flex-col bg-background">
       {/* Top half — 3D campaign cartography */}
       <div className="flex-1 border-b">
-        <CampaignNetworkMap campaignId={campaign.id} />
+        <CampaignNetworkMap
+          campaignId={campaign.id}
+          pipelineVersion={pipelineVersion}
+        />
       </div>
 
       {/* Bottom half — Guidelines in tabs */}
