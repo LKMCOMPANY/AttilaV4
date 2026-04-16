@@ -116,16 +116,16 @@ export function useRealtimeAccount({
     };
   }, [accountId]);
 
-  // Track presence — update when selected avatar changes
+  // Track presence — cleanup untracks before new track runs
   useEffect(() => {
     const channel = channelRef.current;
-    if (!channel) return;
+    if (!channel || !presence) return;
 
-    if (presence) {
-      channel.track(presence);
-    } else {
+    channel.track(presence);
+
+    return () => {
       channel.untrack();
-    }
+    };
   }, [presenceKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return useMemo(
