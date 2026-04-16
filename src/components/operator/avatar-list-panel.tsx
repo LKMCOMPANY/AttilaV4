@@ -133,9 +133,10 @@ export function AvatarListPanel({
         </div>
       )}
 
-      {/* List */}
-      <ScrollArea className="flex-1">
-        <div role="listbox" aria-label="Avatars" className="p-1.5">
+      {/* List — dir=rtl positions scrollbar on left edge, content restored to ltr */}
+      <div className="min-h-0 flex-1" dir="rtl">
+        <ScrollArea className="h-full">
+          <div dir="ltr" role="listbox" aria-label="Avatars" className="p-1.5">
           {avatars.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-20 text-center">
               <div className="rounded-full bg-muted p-3">
@@ -172,8 +173,9 @@ export function AvatarListPanel({
               ))}
             </div>
           )}
-        </div>
-      </ScrollArea>
+          </div>
+        </ScrollArea>
+      </div>
 
       <CreateAvatarDialog
         accountId={accountId}
