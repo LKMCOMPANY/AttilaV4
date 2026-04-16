@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { executeJob } from "@/lib/pipeline";
+import { executeJob, uploadProofScreenshot } from "@/lib/pipeline";
 
 /**
  * POST /api/pipeline/execute
@@ -111,6 +111,12 @@ export async function POST(req: NextRequest) {
     mode: result.mode,
   }));
 
+  // Upload screenshots to Supabase Storage (non-blocking)
+  const [sourceUrl, proofUrl] = await Promise.all([
+    uploadProofScreenshot(result.sourceScreenshot, job.campaign_id, job.id, "source"),
+    uploadProofScreenshot(result.proofScreenshot, job.campaign_id, job.id, "proof"),
+  ]);
+
   if (result.success) {
     await supabase
       .from("campaign_jobs")
@@ -118,6 +124,8 @@ export async function POST(req: NextRequest) {
         status: "done",
         completed_at: now,
         duration_ms: result.durationMs,
+        source_screenshot: sourceUrl,
+        proof_screenshot: proofUrl,
       })
       .eq("id", job.id);
 
@@ -133,6 +141,8 @@ export async function POST(req: NextRequest) {
         error_message: result.error,
         completed_at: now,
         duration_ms: result.durationMs,
+        source_screenshot: sourceUrl,
+        proof_screenshot: proofUrl,
       })
       .eq("id", job.id);
 

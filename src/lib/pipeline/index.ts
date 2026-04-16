@@ -4,6 +4,7 @@ export { analyzePost } from "./analyst";
 export { writeComment } from "./writer";
 export { selectAvatars } from "./avatar-selector";
 export { executeJob } from "./executor";
+export { uploadProofScreenshot } from "./storage";
 export type {
   PipelinePost,
   PipelineResult,
