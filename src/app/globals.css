@@ -577,21 +577,28 @@
     mask-composite: exclude;
   }
 
-  /* Device viewport — soft vignette that recedes behind the phone */
+  /* Device viewport — soft vignette that recedes behind the phone.
+     Extra color stops + noise layer prevent 8-bit color banding. */
   .device-viewport {
     background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
       radial-gradient(
         ellipse 55% 45% at 50% 46%,
         #faf9f7 0%,
+        #f7f5f2 25%,
+        #f4f2ed 50%,
         #f0eee9 100%
       );
   }
 
   .dark .device-viewport {
     background:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"),
       radial-gradient(
         ellipse 55% 45% at 50% 46%,
         #1f1d19 0%,
+        #1b1914 25%,
+        #181611 50%,
         #15140f 100%
       );
   }
