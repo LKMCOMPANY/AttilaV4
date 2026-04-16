@@ -217,6 +217,10 @@ export async function stopContainerIfIdle(
       method: "POST",
       body: JSON.stringify({ db_ids: [dbId] }),
     });
+    await supabase
+      .from("devices")
+      .update({ state: "stopped", last_seen: new Date().toISOString() })
+      .eq("id", deviceId);
   } catch (err) {
     console.error(`[Container] ${dbId} stop failed:`, err instanceof Error ? err.message : err);
   }

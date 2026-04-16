@@ -4,12 +4,12 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { Group, Panel } from "react-resizable-panels";
 import { ResizableHandle } from "@/components/ui/resizable";
 import { useRealtimeAccount } from "@/hooks/use-realtime-account";
-import { getAvatarAutomatorStatuses } from "@/app/actions/avatars";
+import { getAvatarAutomatorStatuses, getDeviceStates } from "@/app/actions/avatars";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import { AvatarListPanel } from "./avatar-list-panel";
 import { DevicePanel } from "./device-panel";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
-import type { AvatarWithRelations } from "@/types";
+import type { AvatarWithRelations, DeviceState } from "@/types";
 
 export type AvatarSortField =
   | "last_used"
@@ -22,6 +22,7 @@ interface OperatorLayoutProps {
   accountId: string;
   avatars: AvatarWithRelations[];
   deviceCount: number;
+  displayName: string;
 }
 
 function stableSort(
@@ -37,7 +38,12 @@ const panelStyle = { overflow: "hidden" as const, height: "100%" as const };
 
 const defaultLayout = { avatars: 33, device: 34, details: 33 };
 
-export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayoutProps) {
+export function OperatorLayout({
+  accountId,
+  avatars,
+  deviceCount,
+  displayName,
+}: OperatorLayoutProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(
     avatars[0]?.id ?? null
   );
@@ -46,8 +52,20 @@ export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayo
 
   const [localAvatars, setLocalAvatars] = useState(avatars);
   const [automatorStatuses, setAutomatorStatuses] = useState<Record<string, AvatarAutomatorInfo>>({});
+  const [deviceStates, setDeviceStates] = useState<Record<string, string>>({});
 
-  const { jobsVersion } = useRealtimeAccount(accountId);
+  const presenceState = useMemo(
+    () =>
+      selectedAvatarId
+        ? { avatarId: selectedAvatarId, displayName }
+        : null,
+    [selectedAvatarId, displayName],
+  );
+
+  const { jobsVersion, devicesVersion, presenceMap } = useRealtimeAccount({
+    accountId,
+    presence: presenceState,
+  });
 
   useEffect(() => {
     setLocalAvatars(avatars);
@@ -58,16 +76,32 @@ export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayo
     getAvatarAutomatorStatuses(accountId).then(setAutomatorStatuses);
   }, [accountId, jobsVersion]);
 
+  // Fetch device states on mount + on realtime events
   useEffect(() => {
-    if (localAvatars.length === 0) {
+    getDeviceStates(accountId).then(setDeviceStates);
+  }, [accountId, devicesVersion]);
+
+  // Merge live device states into local avatars
+  const avatarsWithLiveState = useMemo(() => {
+    if (Object.keys(deviceStates).length === 0) return localAvatars;
+    return localAvatars.map((a) => {
+      if (!a.device?.id || !deviceStates[a.device.id]) return a;
+      const liveState = deviceStates[a.device.id] as DeviceState;
+      if (liveState === a.device.state) return a;
+      return { ...a, device: { ...a.device, state: liveState } };
+    });
+  }, [localAvatars, deviceStates]);
+
+  useEffect(() => {
+    if (avatarsWithLiveState.length === 0) {
       setSelectedAvatarId(null);
       return;
     }
-    const stillExists = localAvatars.some((a) => a.id === selectedAvatarId);
+    const stillExists = avatarsWithLiveState.some((a) => a.id === selectedAvatarId);
     if (!stillExists) {
-      setSelectedAvatarId(localAvatars[0].id);
+      setSelectedAvatarId(avatarsWithLiveState[0].id);
     }
-  }, [localAvatars, selectedAvatarId]);
+  }, [avatarsWithLiveState, selectedAvatarId]);
 
   const handleAvatarUpdated = useCallback(
     (updated: AvatarWithRelations) => {
@@ -79,26 +113,26 @@ export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayo
   );
 
   const selectedAvatar = useMemo(
-    () => localAvatars.find((a) => a.id === selectedAvatarId) ?? null,
-    [localAvatars, selectedAvatarId]
+    () => avatarsWithLiveState.find((a) => a.id === selectedAvatarId) ?? null,
+    [avatarsWithLiveState, selectedAvatarId]
   );
 
   const armies = useMemo(() => {
     const map = new Map<string, string>();
-    for (const a of localAvatars) {
+    for (const a of avatarsWithLiveState) {
       for (const army of a.armies ?? []) {
         map.set(army.id, army.name);
       }
     }
     return [...map.entries()].map(([id, name]) => ({ id, name }));
-  }, [localAvatars]);
+  }, [avatarsWithLiveState]);
 
   const filteredAvatars = useMemo(() => {
-    if (!filterArmyId) return localAvatars;
-    return localAvatars.filter((a) =>
+    if (!filterArmyId) return avatarsWithLiveState;
+    return avatarsWithLiveState.filter((a) =>
       a.armies?.some((army) => army.id === filterArmyId)
     );
-  }, [localAvatars, filterArmyId]);
+  }, [avatarsWithLiveState, filterArmyId]);
 
   const sortedAvatars = useMemo(() => {
     switch (sortField) {
@@ -150,6 +184,7 @@ export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayo
           deviceCount={deviceCount}
           accountId={accountId}
           automatorStatuses={automatorStatuses}
+          presenceMap={presenceMap}
         />
       </Panel>
 

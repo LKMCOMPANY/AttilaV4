@@ -121,7 +121,15 @@ export async function POST(req: NextRequest) {
   // -----------------------------------------------------------------------
   // 5. Ensure container is running (start if stopped)
   // -----------------------------------------------------------------------
-  const { running } = await ensureContainerRunning(tunnelHostname, device.db_id);
+  const { running, wasStarted } = await ensureContainerRunning(tunnelHostname, device.db_id);
+
+  if (wasStarted && running) {
+    await supabase
+      .from("devices")
+      .update({ state: "running", last_seen: new Date().toISOString() })
+      .eq("id", job.device_id);
+    broadcastAccountEvent(job.account_id, "devices", { action: "state_changed" });
+  }
 
   if (!running) {
     await supabase
@@ -194,6 +202,7 @@ export async function POST(req: NextRequest) {
   // 9. Stop container if no more jobs waiting for this device
   // -----------------------------------------------------------------------
   await stopContainerIfIdle(tunnelHostname, device.db_id, job.device_id, supabase);
+  broadcastAccountEvent(job.account_id, "devices", { action: "state_changed" });
 
   return NextResponse.json({
     jobId: job.id,

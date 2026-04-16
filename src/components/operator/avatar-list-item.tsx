@@ -6,10 +6,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn, countryCodeToFlag } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { Loader2, Clock } from "lucide-react";
+import { Loader2, Clock, Eye } from "lucide-react";
 import { PLATFORM_LIST, STATUS_CONFIG } from "@/lib/constants/avatar";
 import { SocialIcon } from "@/components/icons/social-icons";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
+import type { OperatorPresence } from "@/hooks/use-realtime-account";
 import type { AvatarWithRelations } from "@/types";
 
 interface AvatarListItemProps {
@@ -17,6 +18,7 @@ interface AvatarListItemProps {
   isSelected: boolean;
   onSelect: () => void;
   automatorInfo?: AvatarAutomatorInfo;
+  operators?: OperatorPresence[];
 }
 
 export function AvatarListItem({
@@ -24,12 +26,15 @@ export function AvatarListItem({
   isSelected,
   onSelect,
   automatorInfo,
+  operators,
 }: AvatarListItemProps) {
   const fullName = `${avatar.first_name} ${avatar.last_name}`;
   const flag = countryCodeToFlag(avatar.country_code);
   const enabledPlatforms = PLATFORM_LIST.filter(
     (p) => avatar[p.enabledKey]
   );
+  const deviceState = avatar.device?.state ?? null;
+  const hasIndicators = !!(automatorInfo || operators?.length || deviceState);
 
   return (
     <button
@@ -43,7 +48,6 @@ export function AvatarListItem({
           : "hover:bg-muted/50 active:bg-muted/70"
       )}
     >
-      {/* Active indicator */}
       {isSelected && (
         <div className="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r-full bg-primary" />
       )}
@@ -127,14 +131,69 @@ export function AvatarListItem({
           </div>
         </div>
 
-        {automatorInfo && <AutomatorBadge info={automatorInfo} />}
+        {/* Right column — live indicators */}
+        {hasIndicators && (
+          <div className="flex shrink-0 flex-col items-end gap-1 self-center">
+            {deviceState && <DeviceStateDot state={deviceState} />}
+            {operators && operators.length > 0 && (
+              <OperatorBadge operators={operators} />
+            )}
+            {automatorInfo && <AutomatorBadge info={automatorInfo} />}
+          </div>
+        )}
       </div>
     </button>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Automator status badge — shown when avatar has active pipeline jobs
+// Device state dot
+// ---------------------------------------------------------------------------
+
+function DeviceStateDot({ state }: { state: string }) {
+  const isRunning = state === "running";
+  return (
+    <div className="flex items-center gap-1">
+      <span
+        className={cn(
+          "h-1.5 w-1.5 rounded-full",
+          isRunning ? "bg-success" : "bg-muted-foreground/40",
+        )}
+      />
+      <span
+        className={cn(
+          "text-[9px] tabular-nums",
+          isRunning ? "text-success" : "text-muted-foreground/60",
+        )}
+      >
+        {isRunning ? "On" : "Off"}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Operator presence badge
+// ---------------------------------------------------------------------------
+
+function OperatorBadge({ operators }: { operators: OperatorPresence[] }) {
+  const label =
+    operators.length === 1
+      ? operators[0].displayName
+      : `${operators.length} operators`;
+
+  return (
+    <div className="flex items-center gap-1 rounded-full bg-secondary px-1.5 py-0.5">
+      <Eye className="h-2.5 w-2.5 text-secondary-foreground/70" />
+      <span className="max-w-[72px] truncate text-[9px] font-medium text-secondary-foreground">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Automator status badge
 // ---------------------------------------------------------------------------
 
 function AutomatorBadge({ info }: { info: AvatarAutomatorInfo }) {
@@ -144,7 +203,7 @@ function AutomatorBadge({ info }: { info: AvatarAutomatorInfo }) {
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center gap-1 self-center rounded-full px-1.5 py-0.5",
+        "flex items-center gap-1 rounded-full px-1.5 py-0.5",
         isExecuting
           ? "bg-primary/10 text-primary"
           : "bg-muted text-muted-foreground"

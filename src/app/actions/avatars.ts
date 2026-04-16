@@ -593,3 +593,46 @@ export async function getDeviceAvatarMap(): Promise<
 
   return map;
 }
+
+// ---------------------------------------------------------------------------
+// Device states — lightweight query for live updates (Operator page)
+// ---------------------------------------------------------------------------
+
+export async function getDeviceStates(
+  accountId: string,
+): Promise<Record<string, string>> {
+  const session = await requireSession();
+
+  if (
+    session.profile.role !== "admin" &&
+    accountId !== session.profile.account_id
+  ) {
+    return {};
+  }
+
+  const supabase = await createClient();
+
+  const { data: boxLinks } = await supabase
+    .from("account_boxes")
+    .select("box_id")
+    .eq("account_id", accountId);
+
+  const boxIds = (boxLinks ?? []).map((b) => b.box_id);
+
+  let query = supabase.from("devices").select("id, state");
+  if (boxIds.length > 0) {
+    query = query.or(
+      `account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`,
+    );
+  } else {
+    query = query.eq("account_id", accountId);
+  }
+
+  const { data } = await query;
+
+  const map: Record<string, string> = {};
+  for (const row of data ?? []) {
+    map[row.id] = row.state;
+  }
+  return map;
+}

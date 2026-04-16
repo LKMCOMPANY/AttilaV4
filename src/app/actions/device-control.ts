@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
+import { broadcastAccountEvent } from "@/lib/supabase/realtime";
 import { boxFetch } from "@/lib/box-api";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -13,6 +14,7 @@ import { z } from "zod";
 interface DeviceAccess {
   deviceId: string;
   dbId: string;
+  accountId: string | null;
   tunnelHostname: string;
 }
 
@@ -43,6 +45,7 @@ async function requireDeviceAccess(deviceId: string): Promise<DeviceAccess> {
   return {
     deviceId: device.id,
     dbId: device.db_id,
+    accountId: device.account_id as string | null,
     tunnelHostname: box.tunnel_hostname,
   };
 }
@@ -90,7 +93,7 @@ export async function startContainer(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
 
     await boxFetch(tunnelHostname, "/container_api/v1/run", {
       method: "POST",
@@ -103,6 +106,7 @@ export async function startContainer(
       .update({ state: "running", last_seen: new Date().toISOString() })
       .eq("id", deviceId);
 
+    if (accountId) broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
     revalidatePath("/dashboard/operator");
     return { error: null };
   } catch (err) {
@@ -118,7 +122,7 @@ export async function stopContainer(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
 
     await boxFetch(tunnelHostname, "/container_api/v1/stop", {
       method: "POST",
@@ -131,6 +135,7 @@ export async function stopContainer(
       .update({ state: "stopped", last_seen: new Date().toISOString() })
       .eq("id", deviceId);
 
+    if (accountId) broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
     revalidatePath("/dashboard/operator");
     return { error: null };
   } catch (err) {

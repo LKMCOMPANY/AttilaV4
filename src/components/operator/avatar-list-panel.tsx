@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
 import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
+import type { OperatorPresence } from "@/hooks/use-realtime-account";
 import type { AvatarWithRelations, Army } from "@/types";
 import type { AvatarSortField } from "./operator-layout";
 
@@ -31,6 +32,7 @@ interface AvatarListPanelProps {
   deviceCount: number;
   accountId: string;
   automatorStatuses?: Record<string, AvatarAutomatorInfo>;
+  presenceMap?: Record<string, OperatorPresence[]>;
 }
 
 export function AvatarListPanel({
@@ -45,6 +47,7 @@ export function AvatarListPanel({
   deviceCount,
   accountId,
   automatorStatuses,
+  presenceMap,
 }: AvatarListPanelProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -169,6 +172,7 @@ export function AvatarListPanel({
                   isSelected={avatar.id === selectedId}
                   onSelect={() => onSelect(avatar.id)}
                   automatorInfo={automatorStatuses?.[avatar.id]}
+                  operators={presenceMap?.[avatar.id]}
                 />
               ))}
             </div>

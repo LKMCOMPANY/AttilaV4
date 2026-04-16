@@ -17,7 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 // ---------------------------------------------------------------------------
 
 export type CampaignEventType = "pipeline" | "counters";
-export type AccountEventType = "jobs";
+export type AccountEventType = "jobs" | "devices";
 
 export interface BroadcastPayload {
   action?: string;

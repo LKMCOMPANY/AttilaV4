@@ -44,6 +44,7 @@ export default async function OperatorPage({
       accountId={accountId}
       avatars={avatars}
       deviceCount={deviceCount ?? 0}
+      displayName={session.profile.display_name ?? session.profile.email}
     />
   );
 }
