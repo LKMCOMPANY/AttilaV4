@@ -577,33 +577,24 @@
     mask-composite: exclude;
   }
 
-  /* Device viewport — soft vignette that recedes behind the phone.
-     Extra color stops + noise layer prevent 8-bit color banding. */
+  /* Device viewport — uses oklch interpolation for smooth gradients */
   .device-viewport {
-    background:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E"),
-      radial-gradient(
-        ellipse 55% 45% at 50% 46%,
-        #faf9f7 0%,
-        #f7f5f2 25%,
-        #f4f2ed 50%,
-        #f0eee9 100%
-      );
+    background: radial-gradient(
+      ellipse 55% 45% at 50% 46% in oklch,
+      oklch(0.98 0.005 80) 0%,
+      oklch(0.95 0.008 80) 100%
+    );
   }
 
   .dark .device-viewport {
-    background:
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"),
-      radial-gradient(
-        ellipse 55% 45% at 50% 46%,
-        #1f1d19 0%,
-        #1b1914 25%,
-        #181611 50%,
-        #15140f 100%
-      );
+    background: radial-gradient(
+      ellipse 55% 45% at 50% 46% in oklch,
+      oklch(0.18 0.01 80) 0%,
+      oklch(0.13 0.01 80) 100%
+    );
   }
 
-  /* Phone body — bezel background + shadow system */
+  /* Phone body — bezel */
   .phone-body {
     background: oklch(0.14 0 0);
   }
@@ -612,45 +603,41 @@
     background: oklch(0.10 0 0);
   }
 
-  /* Light mode — dramatic depth with layered dark shadows */
+  /* Light — tight contact shadow + medium lift shadow */
   .phone-body--active {
     box-shadow:
-      0 25px 60px -10px rgba(0, 0, 0, 0.35),
-      0 12px 28px -6px rgba(0, 0, 0, 0.2),
-      0 4px 10px -2px rgba(0, 0, 0, 0.12),
-      0 0 0 0.5px rgba(0, 0, 0, 0.1);
+      0 2px 4px 0 rgba(0, 0, 0, 0.08),
+      0 8px 24px -4px rgba(0, 0, 0, 0.28);
   }
 
   .phone-body--inactive {
     box-shadow:
-      0 16px 40px -8px rgba(0, 0, 0, 0.2),
-      0 6px 16px -4px rgba(0, 0, 0, 0.12),
-      0 2px 6px -1px rgba(0, 0, 0, 0.08);
+      0 2px 4px 0 rgba(0, 0, 0, 0.06),
+      0 6px 18px -4px rgba(0, 0, 0, 0.18);
   }
 
   .phone-body--empty {
     box-shadow:
-      0 8px 20px -4px rgba(0, 0, 0, 0.1),
-      0 2px 8px -2px rgba(0, 0, 0, 0.06);
+      0 2px 4px 0 rgba(0, 0, 0, 0.04),
+      0 4px 12px -2px rgba(0, 0, 0, 0.10);
   }
 
-  /* Dark mode — ambient glow + subtle rim light to lift from surface */
+  /* Dark — subtle rim + concentrated lift */
   .dark .phone-body--active {
     box-shadow:
-      0 0 80px -20px rgba(255, 255, 255, 0.07),
-      0 0 30px -5px rgba(255, 255, 255, 0.04),
-      0 0 0 0.5px rgba(255, 255, 255, 0.08);
+      0 0 0 0.5px rgba(255, 255, 255, 0.08),
+      0 8px 24px -4px rgba(0, 0, 0, 0.6);
   }
 
   .dark .phone-body--inactive {
     box-shadow:
-      0 0 50px -15px rgba(255, 255, 255, 0.04),
-      0 0 0 0.5px rgba(255, 255, 255, 0.06);
+      0 0 0 0.5px rgba(255, 255, 255, 0.06),
+      0 6px 18px -4px rgba(0, 0, 0, 0.5);
   }
 
   .dark .phone-body--empty {
     box-shadow:
-      0 0 30px -10px rgba(255, 255, 255, 0.03),
-      0 0 0 0.5px rgba(255, 255, 255, 0.04);
+      0 0 0 0.5px rgba(255, 255, 255, 0.04),
+      0 4px 12px -2px rgba(0, 0, 0, 0.4);
   }
 }
