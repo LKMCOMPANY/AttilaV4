@@ -3,6 +3,9 @@
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Group, Panel } from "react-resizable-panels";
 import { ResizableHandle } from "@/components/ui/resizable";
+import { useRealtimeAccount } from "@/hooks/use-realtime-account";
+import { getAvatarAutomatorStatuses } from "@/app/actions/avatars";
+import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import { AvatarListPanel } from "./avatar-list-panel";
 import { DevicePanel } from "./device-panel";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
@@ -42,10 +45,18 @@ export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayo
   const [filterArmyId, setFilterArmyId] = useState<string | null>(null);
 
   const [localAvatars, setLocalAvatars] = useState(avatars);
+  const [automatorStatuses, setAutomatorStatuses] = useState<Record<string, AvatarAutomatorInfo>>({});
+
+  const { jobsVersion } = useRealtimeAccount(accountId);
 
   useEffect(() => {
     setLocalAvatars(avatars);
   }, [avatars]);
+
+  // Fetch automator statuses on mount + on realtime events
+  useEffect(() => {
+    getAvatarAutomatorStatuses(accountId).then(setAutomatorStatuses);
+  }, [accountId, jobsVersion]);
 
   useEffect(() => {
     if (localAvatars.length === 0) {
@@ -138,6 +149,7 @@ export function OperatorLayout({ accountId, avatars, deviceCount }: OperatorLayo
           onFilterArmyChange={setFilterArmyId}
           deviceCount={deviceCount}
           accountId={accountId}
+          automatorStatuses={automatorStatuses}
         />
       </Panel>
 

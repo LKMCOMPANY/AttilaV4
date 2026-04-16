@@ -1,7 +1,7 @@
 "use server";
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { broadcastCampaignEvent } from "@/lib/supabase/realtime";
+import { broadcastCampaignEvent, broadcastAccountEvent } from "@/lib/supabase/realtime";
 import { requireSession, requireAdmin } from "@/lib/auth/session";
 import { selectAvatars } from "@/lib/pipeline/avatar-selector";
 import { generateComments, buildJobRows } from "@/lib/pipeline/job-builder";
@@ -150,11 +150,13 @@ export async function purgeQueue(campaignId: string): Promise<number> {
     .update({ status: "cancelled", completed_at: new Date().toISOString() })
     .eq("campaign_id", campaignId)
     .eq("status", "ready")
-    .select("id");
+    .select("id, account_id");
 
   const count = data?.length ?? 0;
   if (count > 0) {
     broadcastCampaignEvent(campaignId, "pipeline", { action: "jobs_purged", count });
+    const accountId = data?.[0]?.account_id;
+    if (accountId) broadcastAccountEvent(accountId, "jobs", { action: "jobs_purged" });
   }
   return count;
 }
@@ -262,6 +264,7 @@ export async function retryAwaitingPost(
 
   broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_retried", jobsCreated: jobs.length });
   broadcastCampaignEvent(campaign.id, "counters", { action: "ingested" });
+  broadcastAccountEvent(campaign.account_id, "jobs", { action: "jobs_created" });
 
   return { success: true, message: `Created ${jobs.length} jobs`, jobsCreated: jobs.length };
 }

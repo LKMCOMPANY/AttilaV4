@@ -521,3 +521,42 @@ export async function setAvatarOperators(
   revalidatePath("/dashboard/operator");
   return { error: null };
 }
+
+// ---------------------------------------------------------------------------
+// Automator status — active jobs per avatar (for Operator page)
+// ---------------------------------------------------------------------------
+
+export interface AvatarAutomatorInfo {
+  executing: number;
+  queued: number;
+}
+
+export async function getAvatarAutomatorStatuses(
+  accountId: string,
+): Promise<Record<string, AvatarAutomatorInfo>> {
+  const session = await requireSession();
+
+  if (
+    session.profile.role !== "admin" &&
+    accountId !== session.profile.account_id
+  ) {
+    return {};
+  }
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("campaign_jobs")
+    .select("avatar_id, status")
+    .eq("account_id", accountId)
+    .in("status", ["ready", "executing"]);
+
+  const map: Record<string, AvatarAutomatorInfo> = {};
+  for (const row of data ?? []) {
+    const entry = map[row.avatar_id] ?? { executing: 0, queued: 0 };
+    if (row.status === "executing") entry.executing++;
+    else entry.queued++;
+    map[row.avatar_id] = entry;
+  }
+
+  return map;
+}

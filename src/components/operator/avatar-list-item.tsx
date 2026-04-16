@@ -6,20 +6,24 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn, countryCodeToFlag } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
+import { Loader2, Clock } from "lucide-react";
 import { PLATFORM_LIST, STATUS_CONFIG } from "@/lib/constants/avatar";
 import { SocialIcon } from "@/components/icons/social-icons";
+import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { AvatarWithRelations } from "@/types";
 
 interface AvatarListItemProps {
   avatar: AvatarWithRelations;
   isSelected: boolean;
   onSelect: () => void;
+  automatorInfo?: AvatarAutomatorInfo;
 }
 
 export function AvatarListItem({
   avatar,
   isSelected,
   onSelect,
+  automatorInfo,
 }: AvatarListItemProps) {
   const fullName = `${avatar.first_name} ${avatar.last_name}`;
   const flag = countryCodeToFlag(avatar.country_code);
@@ -122,7 +126,38 @@ export function AvatarListItem({
             )}
           </div>
         </div>
+
+        {automatorInfo && <AutomatorBadge info={automatorInfo} />}
       </div>
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Automator status badge — shown when avatar has active pipeline jobs
+// ---------------------------------------------------------------------------
+
+function AutomatorBadge({ info }: { info: AvatarAutomatorInfo }) {
+  const isExecuting = info.executing > 0;
+  const total = info.executing + info.queued;
+
+  return (
+    <div
+      className={cn(
+        "flex shrink-0 items-center gap-1 self-center rounded-full px-1.5 py-0.5",
+        isExecuting
+          ? "bg-primary/10 text-primary"
+          : "bg-muted text-muted-foreground"
+      )}
+    >
+      {isExecuting ? (
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+      ) : (
+        <Clock className="h-2.5 w-2.5" />
+      )}
+      <span className="text-[9px] font-medium tabular-nums">
+        {total}
+      </span>
+    </div>
   );
 }

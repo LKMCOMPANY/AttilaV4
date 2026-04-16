@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { broadcastCampaignEvent } from "@/lib/supabase/realtime";
+import { broadcastCampaignEvent, broadcastAccountEvent } from "@/lib/supabase/realtime";
 import type { Campaign, CampaignPlatform } from "@/types";
 import type { PipelinePost, PipelineResult, PipelineTiming } from "./types";
 import { pipelineLog, pipelineError } from "./types";
@@ -184,6 +184,7 @@ export async function processNext(): Promise<PipelineResult | null> {
 
     broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_created", jobsCreated: jobs.length });
     broadcastCampaignEvent(campaign.id, "counters", { action: "ingested" });
+    broadcastAccountEvent(campaign.account_id, "jobs", { action: "jobs_created" });
 
     pipelineLog("insert", post.id, "Pipeline complete", {
       campaignId: campaign.id,

@@ -7,7 +7,9 @@ import { createClient } from "@supabase/supabase-js";
  * recommended approach for server-to-client broadcast per Supabase docs.
  * Fire-and-forget — never blocks the caller.
  *
- * Channel naming convention: `campaign:<campaignId>`
+ * Channel conventions:
+ *   `campaign:<campaignId>` — automator page (per-campaign)
+ *   `account:<accountId>`   — operator page (per-account)
  */
 
 // ---------------------------------------------------------------------------
@@ -15,8 +17,9 @@ import { createClient } from "@supabase/supabase-js";
 // ---------------------------------------------------------------------------
 
 export type CampaignEventType = "pipeline" | "counters";
+export type AccountEventType = "jobs";
 
-export interface CampaignBroadcastPayload {
+export interface BroadcastPayload {
   action?: string;
   [key: string]: unknown;
 }
@@ -41,28 +44,40 @@ function getBroadcastClient() {
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Internal send helper
 // ---------------------------------------------------------------------------
 
-/**
- * Broadcast a campaign event to all subscribed clients.
- * Non-blocking: errors are logged, never thrown.
- *
- * Sends WITHOUT subscribing first → uses HTTP REST internally,
- * no WebSocket connection required on the server side.
- */
-export function broadcastCampaignEvent(
-  campaignId: string,
-  event: CampaignEventType,
-  payload: CampaignBroadcastPayload = {},
-): void {
+function broadcast(channelName: string, event: string, payload: BroadcastPayload): void {
   const client = getBroadcastClient();
   if (!client) return;
 
-  const channel = client.channel(`campaign:${campaignId}`);
-
+  const channel = client.channel(channelName);
   channel
     .send({ type: "broadcast", event, payload })
     .then(() => client.removeChannel(channel))
     .catch(() => client.removeChannel(channel));
+}
+
+// ---------------------------------------------------------------------------
+// Public API — Campaign channel (Automator page)
+// ---------------------------------------------------------------------------
+
+export function broadcastCampaignEvent(
+  campaignId: string,
+  event: CampaignEventType,
+  payload: BroadcastPayload = {},
+): void {
+  broadcast(`campaign:${campaignId}`, event, payload);
+}
+
+// ---------------------------------------------------------------------------
+// Public API — Account channel (Operator page)
+// ---------------------------------------------------------------------------
+
+export function broadcastAccountEvent(
+  accountId: string,
+  event: AccountEventType,
+  payload: BroadcastPayload = {},
+): void {
+  broadcast(`account:${accountId}`, event, payload);
 }

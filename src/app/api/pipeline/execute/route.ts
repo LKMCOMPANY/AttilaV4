@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { broadcastCampaignEvent } from "@/lib/supabase/realtime";
+import { broadcastCampaignEvent, broadcastAccountEvent } from "@/lib/supabase/realtime";
 import { executeJob, uploadProofScreenshot } from "@/lib/pipeline";
 import { ensureContainerRunning, stopContainerIfIdle } from "@/lib/box-api";
 
@@ -131,6 +131,7 @@ export async function POST(req: NextRequest) {
     await supabase.rpc("increment_campaign_counter", { p_campaign_id: job.campaign_id, p_counter: "total_responses_failed" });
     broadcastCampaignEvent(job.campaign_id, "pipeline", { action: "job_completed", status: "failed" });
     broadcastCampaignEvent(job.campaign_id, "counters", { action: "failed" });
+    broadcastAccountEvent(job.account_id, "jobs", { action: "job_completed" });
     return NextResponse.json({ jobId: job.id, success: false, status: "failed", error: "Container start timeout" });
   }
 
@@ -187,6 +188,7 @@ export async function POST(req: NextRequest) {
   broadcastCampaignEvent(job.campaign_id, "counters", {
     action: result.success ? "sent" : "failed",
   });
+  broadcastAccountEvent(job.account_id, "jobs", { action: "job_completed" });
 
   // -----------------------------------------------------------------------
   // 9. Stop container if no more jobs waiting for this device

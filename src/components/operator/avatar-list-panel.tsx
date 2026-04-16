@@ -7,6 +7,7 @@ import { UserPlus, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
 import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
+import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { AvatarWithRelations, Army } from "@/types";
 import type { AvatarSortField } from "./operator-layout";
 
@@ -29,6 +30,7 @@ interface AvatarListPanelProps {
   onFilterArmyChange: (armyId: string | null) => void;
   deviceCount: number;
   accountId: string;
+  automatorStatuses?: Record<string, AvatarAutomatorInfo>;
 }
 
 export function AvatarListPanel({
@@ -42,6 +44,7 @@ export function AvatarListPanel({
   onFilterArmyChange,
   deviceCount,
   accountId,
+  automatorStatuses,
 }: AvatarListPanelProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
@@ -164,6 +167,7 @@ export function AvatarListPanel({
                   avatar={avatar}
                   isSelected={avatar.id === selectedId}
                   onSelect={() => onSelect(avatar.id)}
+                  automatorInfo={automatorStatuses?.[avatar.id]}
                 />
               ))}
             </div>
