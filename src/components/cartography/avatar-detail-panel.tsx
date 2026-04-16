@@ -16,11 +16,12 @@ import {
   Share2,
   Smartphone,
   Calendar,
-} from "lucide-react";
+} from "lucide-react"; // All used directly in DetailSection icons
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { ConstellationNode, ClusterDimension } from "@/types/cartography";
+import { DIMENSION_ICONS } from "./constants";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -118,7 +119,7 @@ export const AvatarDetailPanel = memo(function AvatarDetailPanel({
         {/* Current cluster */}
         <DetailSection
           label="Current Cluster"
-          icon={getClusterIcon(dimension)}
+          icon={DIMENSION_ICONS[dimension]}
         >
           <p className="text-body-sm">{node.clusters[dimension]}</p>
         </DetailSection>
@@ -311,18 +312,4 @@ function DataPoint({ label, value }: { label: string; value: string }) {
 
 function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
-function getClusterIcon(dim: ClusterDimension): React.ElementType {
-  const map: Record<ClusterDimension, React.ElementType> = {
-    army: Shield,
-    status: Zap,
-    identity: Globe,
-    personality: Brain,
-    operator_usage: UserCog,
-    automator_usage: Zap,
-    platform: Share2,
-    device: Smartphone,
-  };
-  return map[dim];
 }

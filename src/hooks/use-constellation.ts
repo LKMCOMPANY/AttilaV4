@@ -150,15 +150,6 @@ export function useConstellation({
     }));
   }, [nodes, dimension]);
 
-  // Map cluster key → color
-  const colorMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const cluster of clusters) {
-      map.set(cluster.key, cluster.color);
-    }
-    return map;
-  }, [clusters]);
-
   // Cluster centers
   const clusterCenters = useMemo(() => {
     const keys = clusters.map((c) => c.key);

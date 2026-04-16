@@ -74,6 +74,19 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === "dark";
 
+  // Stable refs for values that the draw callback needs to read
+  // without causing re-creation of the callback itself.
+  const simNodesRef = useRef<ConstellationNode[]>([]);
+  const clustersRef = useRef<ClusterGroup[]>([]);
+  const dimensionRef = useRef<ClusterDimension>(dimension);
+  const isDarkRef = useRef(isDark);
+  const dimsRef = useRef(dimensions);
+  const prevCanvasSize = useRef({ w: 0, h: 0 });
+
+  dimensionRef.current = dimension;
+  isDarkRef.current = isDark;
+  dimsRef.current = dimensions;
+
   // Resize observer
   useEffect(() => {
     const el = containerRef.current;
@@ -92,7 +105,7 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
     return () => ro.disconnect();
   }, []);
 
-  // Draw callback — called on every simulation tick
+  // Draw callback — reads everything from refs so it never goes stale
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -101,18 +114,31 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    const w = dimensions.width;
-    const h = dimensions.height;
+    const w = dimsRef.current.width;
+    const h = dimsRef.current.height;
+    const dark = isDarkRef.current;
+    const dim = dimensionRef.current;
+    const simNodes = simNodesRef.current;
+    const clusterList = clustersRef.current;
 
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
-    canvas.style.width = `${w}px`;
-    canvas.style.height = `${h}px`;
+    if (w === 0 || h === 0) return;
+
+    // Only reset canvas size when dimensions actually change (avoids full clear)
+    const targetW = Math.round(w * dpr);
+    const targetH = Math.round(h * dpr);
+    if (prevCanvasSize.current.w !== targetW || prevCanvasSize.current.h !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      prevCanvasSize.current = { w: targetW, h: targetH };
+    }
+
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Background
     const bgGrad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, Math.max(w, h) * 0.7);
-    if (isDark) {
+    if (dark) {
       bgGrad.addColorStop(0, "#1f1d19");
       bgGrad.addColorStop(1, "#15140f");
     } else {
@@ -122,29 +148,29 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, w, h);
 
-    // Build cluster groups for hull drawing
-    const clusterNodes = new Map<string, ConstellationNode[]>();
-    for (const node of simulationNodes) {
-      const key = node.clusters[dimension];
-      const list = clusterNodes.get(key) ?? [];
-      list.push(node);
-      clusterNodes.set(key, list);
-    }
-
-    // Draw cluster hulls (nebula effect)
+    // Build cluster color lookup
     const clusterColorMap = new Map<string, string>();
-    for (const cluster of clusters) {
+    for (const cluster of clusterList) {
       clusterColorMap.set(cluster.key, cluster.color);
     }
 
-    for (const [key, cnodes] of clusterNodes) {
+    // Group nodes by cluster key for hull drawing
+    const clusterNodeGroups = new Map<string, ConstellationNode[]>();
+    for (const node of simNodes) {
+      const key = node.clusters[dim];
+      const list = clusterNodeGroups.get(key) ?? [];
+      list.push(node);
+      clusterNodeGroups.set(key, list);
+    }
+
+    // Draw cluster hulls (nebula effect)
+    for (const [key, cnodes] of clusterNodeGroups) {
       if (cnodes.length < 2) continue;
 
       const color = clusterColorMap.get(key) ?? CLUSTER_PALETTE[0];
       const cx = cnodes.reduce((s, n) => s + (n.x ?? 0), 0) / cnodes.length;
       const cy = cnodes.reduce((s, n) => s + (n.y ?? 0), 0) / cnodes.length;
 
-      // Compute max distance from centroid
       let maxDist = 0;
       for (const n of cnodes) {
         const dx = (n.x ?? 0) - cx;
@@ -154,8 +180,8 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
 
       const radius = maxDist + 30;
       const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, radius);
-      grad.addColorStop(0, hexToRgba(color, isDark ? 0.08 : 0.06));
-      grad.addColorStop(0.7, hexToRgba(color, isDark ? 0.04 : 0.03));
+      grad.addColorStop(0, hexToRgba(color, dark ? 0.08 : 0.06));
+      grad.addColorStop(0.7, hexToRgba(color, dark ? 0.04 : 0.03));
       grad.addColorStop(1, hexToRgba(color, 0));
 
       ctx.fillStyle = grad;
@@ -164,26 +190,25 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
       ctx.fill();
 
       // Cluster label
-      ctx.fillStyle = hexToRgba(color, isDark ? 0.6 : 0.5);
+      ctx.fillStyle = hexToRgba(color, dark ? 0.6 : 0.5);
       ctx.font = "500 10px var(--font-geist-sans), system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(key.toUpperCase(), cx, cy - maxDist - 12);
     }
 
     // Draw nodes
-    for (const node of simulationNodes) {
+    for (const node of simNodes) {
       const x = node.x ?? 0;
       const y = node.y ?? 0;
-      const key = node.clusters[dimension];
+      const key = node.clusters[dim];
       const color = clusterColorMap.get(key) ?? CLUSTER_PALETTE[0];
       const isHovered = hoveredIdRef.current === node.id;
 
-      // Node radius based on activity
       const activity = Math.log10(Math.max(node.automatorJobs, 1) + 1);
       const baseRadius = MIN_NODE_RADIUS + (activity / 3) * (MAX_NODE_RADIUS - MIN_NODE_RADIUS);
       const radius = isHovered ? baseRadius * 1.5 : baseRadius;
 
-      // Glow
+      // Glow for hovered or highly active nodes
       if (isHovered || node.automatorJobs > 10) {
         const glowRadius = radius * (isHovered ? 4 : 2.5);
         const glow = ctx.createRadialGradient(x, y, 0, x, y, glowRadius);
@@ -207,7 +232,7 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
       ctx.arc(x, y, radius * 0.35, 0, Math.PI * 2);
       ctx.fill();
     }
-  }, [dimensions, isDark, dimension]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // Stable — reads everything from refs
 
   // d3-force simulation
   const { simulationNodes, clusters, reheat } = useConstellation({
@@ -218,7 +243,11 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
     onTick: draw,
   });
 
-  // Report clusters up
+  // Sync refs whenever hook output changes
+  simNodesRef.current = simulationNodes;
+  clustersRef.current = clusters;
+
+  // Report clusters to parent
   useEffect(() => {
     onClustersReady(clusters);
   }, [clusters, onClustersReady]);
@@ -234,7 +263,7 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
       let closest: ConstellationNode | null = null;
       let closestDist = HIT_RADIUS;
 
-      for (const node of simulationNodes) {
+      for (const node of simNodesRef.current) {
         const dx = (node.x ?? 0) - mx;
         const dy = (node.y ?? 0) - my;
         const dist = Math.hypot(dx, dy);
@@ -245,7 +274,7 @@ export const ConstellationCanvas = memo(function ConstellationCanvas({
       }
       return closest;
     },
-    [simulationNodes]
+    []
   );
 
   // Mouse handlers

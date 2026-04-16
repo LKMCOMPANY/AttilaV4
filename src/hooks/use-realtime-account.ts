@@ -82,15 +82,23 @@ export function useRealtimeAccount({
       })
       .on("presence", { event: "sync" }, () => {
         const state = channel.presenceState<PresenceState>();
-        const map: Record<string, OperatorPresence[]> = {};
+
+        // Each user can only be on one avatar — keep latest entry per user.
+        // Entries are ordered oldest→newest, so last wins.
+        const userAvatar = new Map<string, string>();
         for (const entries of Object.values(state)) {
           for (const entry of entries) {
-            const avatarId = entry.avatarId;
-            if (!avatarId) continue;
-            const list = map[avatarId] ?? [];
-            list.push({ displayName: entry.displayName });
-            map[avatarId] = list;
+            if (entry.avatarId && entry.displayName) {
+              userAvatar.set(entry.displayName, entry.avatarId);
+            }
           }
+        }
+
+        const map: Record<string, OperatorPresence[]> = {};
+        for (const [displayName, avatarId] of userAvatar) {
+          const list = map[avatarId] ?? [];
+          list.push({ displayName });
+          map[avatarId] = list;
         }
         setPresenceMap(map);
       })
@@ -116,16 +124,16 @@ export function useRealtimeAccount({
     };
   }, [accountId]);
 
-  // Track presence — cleanup untracks before new track runs
+  // Track presence — track() replaces previous state per client
   useEffect(() => {
     const channel = channelRef.current;
-    if (!channel || !presence) return;
+    if (!channel) return;
 
-    channel.track(presence);
-
-    return () => {
+    if (presence) {
+      channel.track(presence);
+    } else {
       channel.untrack();
-    };
+    }
   }, [presenceKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return useMemo(

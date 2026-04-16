@@ -6,7 +6,7 @@
  * Composes the toolbar, canvas, legend, tooltip, and detail panel.
  */
 
-import { useState, useCallback, memo } from "react";
+import { useState, useCallback, useEffect, memo } from "react";
 import { RotateCw, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +82,13 @@ export const CartographyLayout = memo(function CartographyLayout({
       document.exitFullscreen();
       setIsFullscreen(false);
     }
+  }, []);
+
+  // Sync fullscreen state when user presses Escape
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
   }, []);
 
   if (data.nodes.length === 0) {

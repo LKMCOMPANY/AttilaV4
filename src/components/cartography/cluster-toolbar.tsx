@@ -5,16 +5,6 @@
  */
 
 import { memo } from "react";
-import {
-  Shield,
-  Activity,
-  Globe,
-  Brain,
-  UserCog,
-  Zap,
-  Share2,
-  Smartphone,
-} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -23,21 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { DIMENSION_CONFIGS, type ClusterDimension } from "@/types/cartography";
-
-// ---------------------------------------------------------------------------
-// Icon map
-// ---------------------------------------------------------------------------
-
-const DIMENSION_ICONS: Record<ClusterDimension, React.ElementType> = {
-  army: Shield,
-  status: Activity,
-  identity: Globe,
-  personality: Brain,
-  operator_usage: UserCog,
-  automator_usage: Zap,
-  platform: Share2,
-  device: Smartphone,
-};
+import { DIMENSION_ICONS } from "./constants";
 
 // ---------------------------------------------------------------------------
 // Props
