@@ -18,6 +18,8 @@ export async function executeJob(params: {
 }): Promise<ExecutionResult> {
   const { tunnelHostname, dbId, platform, postUrl, commentText, jobId } = params;
 
+  const start = Date.now();
+
   pipelineLog("execute", jobId, `Executing ${platform} job`, {
     dbId,
     boxHost: tunnelHostname,
@@ -65,6 +67,6 @@ export async function executeJob(params: {
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     pipelineError("execute", jobId, "Execution CRASHED", err);
-    return { success: false, error, durationMs: 0 };
+    return { success: false, error, durationMs: Date.now() - start };
   }
 }

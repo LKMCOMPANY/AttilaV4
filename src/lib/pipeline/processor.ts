@@ -5,7 +5,7 @@ import { pipelineLog, pipelineError } from "./types";
 import { applyFilters } from "./filter";
 import { analyzePost } from "./analyst";
 import { selectAvatars } from "./avatar-selector";
-import { writeComment } from "./writer";
+import { generateComments, buildJobRows } from "./job-builder";
 
 /**
  * Process the next pending post. Returns null if no posts are available.
@@ -128,27 +128,9 @@ export async function processNext(): Promise<PipelineResult | null> {
       key_messages: campaign.key_messages,
     };
 
-    const generatedComments: { avatarId: string; commentText: string; deviceId: string; boxId: string }[] = [];
-
-    for (const sel of selected) {
-      const recentComments = await getRecentAvatarComments(supabase, sel.avatar.id, 5);
-
-      const writerResult = await writeComment({
-        post,
-        avatar: sel.avatar,
-        platform,
-        guideline,
-        previousCommentsOnPost: generatedComments.map((c) => c.commentText),
-        recentAvatarComments: recentComments,
-      });
-
-      generatedComments.push({
-        avatarId: writerResult.avatarId,
-        commentText: writerResult.commentText,
-        deviceId: sel.device_id,
-        boxId: sel.box_id,
-      });
-    }
+    const generatedComments = await generateComments({
+      post, selected, platform, guideline, supabase,
+    });
     timing.writerMs = Date.now() - writerStart;
 
     // -----------------------------------------------------------------------
@@ -177,29 +159,14 @@ export async function processNext(): Promise<PipelineResult | null> {
 
     if (!campaignPost) throw new Error("Failed to insert campaign_post");
 
-    // Calculate staggered scheduled_at — cumulative delays between avatars
-    const delayMin = platformParams.delay_min_seconds ?? 30;
-    const delayMax = Math.max(platformParams.delay_max_seconds ?? 120, delayMin);
-
-    let cumulativeDelay = 0;
-    const jobs = generatedComments.map((comment) => {
-      cumulativeDelay += randomBetween(delayMin, delayMax);
-      const scheduledAt = new Date(Date.now() + cumulativeDelay * 1000).toISOString();
-
-      return {
-        campaign_id: campaign.id,
-        campaign_post_id: campaignPost.id,
-        account_id: campaign.account_id,
-        avatar_id: comment.avatarId,
-        device_id: comment.deviceId,
-        box_id: comment.boxId,
-        platform,
-        post_url: post.post_url ?? "",
-        comment_text: comment.commentText,
-        status: "ready" as const,
-        scheduled_at: scheduledAt,
-        queued_at: new Date().toISOString(),
-      };
+    const jobs = buildJobRows({
+      comments: generatedComments,
+      campaignId: campaign.id,
+      campaignPostId: campaignPost.id,
+      accountId: campaign.account_id,
+      platform,
+      postUrl: post.post_url ?? "",
+      capacityParams: platformParams,
     });
 
     const { error: jobsError } = await supabase.from("campaign_jobs").insert(jobs);
@@ -350,26 +317,6 @@ async function findCampaignForPost(
 }
 
 // ---------------------------------------------------------------------------
-// Recent avatar comments (for anti-repetition)
-// ---------------------------------------------------------------------------
-
-async function getRecentAvatarComments(
-  supabase: ReturnType<typeof createAdminClient>,
-  avatarId: string,
-  limit: number,
-): Promise<string[]> {
-  const { data } = await supabase
-    .from("campaign_jobs")
-    .select("comment_text")
-    .eq("avatar_id", avatarId)
-    .in("status", ["ready", "executing", "done"])
-    .order("created_at", { ascending: false })
-    .limit(limit);
-
-  return (data ?? []).map((j) => j.comment_text);
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -393,10 +340,6 @@ async function incrementCampaignCounter(
     p_campaign_id: campaignId,
     p_counter: counter,
   });
-}
-
-function randomBetween(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function result(

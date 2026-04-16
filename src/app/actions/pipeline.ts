@@ -3,7 +3,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireSession, requireAdmin } from "@/lib/auth/session";
 import { selectAvatars } from "@/lib/pipeline/avatar-selector";
-import { writeComment } from "@/lib/pipeline/writer";
+import { generateComments, buildJobRows } from "@/lib/pipeline/job-builder";
 import type { CampaignPost, CampaignJob, CampaignJobWithAvatar, Campaign } from "@/types";
 import type { PipelinePost } from "@/lib/pipeline/types";
 
@@ -226,46 +226,18 @@ export async function retryAwaitingPost(
     key_messages: campaign.key_messages,
   };
 
-  const generatedComments: { avatarId: string; commentText: string; deviceId: string; boxId: string }[] = [];
+  const generatedComments = await generateComments({
+    post: pipelinePost, selected, platform, guideline, supabase,
+  });
 
-  for (const sel of selected) {
-    const recentComments = await getRecentAvatarComments(supabase, sel.avatar.id, 5);
-    const writerResult = await writeComment({
-      post: pipelinePost,
-      avatar: sel.avatar,
-      platform,
-      guideline,
-      previousCommentsOnPost: generatedComments.map((c) => c.commentText),
-      recentAvatarComments: recentComments,
-    });
-    generatedComments.push({
-      avatarId: writerResult.avatarId,
-      commentText: writerResult.commentText,
-      deviceId: sel.device_id,
-      boxId: sel.box_id,
-    });
-  }
-
-  const delayMin = platformParams.delay_min_seconds ?? 30;
-  const delayMax = Math.max(platformParams.delay_max_seconds ?? 120, delayMin);
-  let cumulativeDelay = 0;
-
-  const jobs = generatedComments.map((comment) => {
-    cumulativeDelay += Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
-    return {
-      campaign_id: campaign.id,
-      campaign_post_id: post.id,
-      account_id: campaign.account_id,
-      avatar_id: comment.avatarId,
-      device_id: comment.deviceId,
-      box_id: comment.boxId,
-      platform,
-      post_url: post.post_url ?? "",
-      comment_text: comment.commentText,
-      status: "ready" as const,
-      scheduled_at: new Date(Date.now() + cumulativeDelay * 1000).toISOString(),
-      queued_at: new Date().toISOString(),
-    };
+  const jobs = buildJobRows({
+    comments: generatedComments,
+    campaignId: campaign.id,
+    campaignPostId: post.id,
+    accountId: campaign.account_id,
+    platform,
+    postUrl: post.post_url ?? "",
+    capacityParams: platformParams,
   });
 
   const { error: jobsError } = await supabase.from("campaign_jobs").insert(jobs);
@@ -284,21 +256,6 @@ export async function retryAwaitingPost(
   });
 
   return { success: true, message: `Created ${jobs.length} jobs`, jobsCreated: jobs.length };
-}
-
-async function getRecentAvatarComments(
-  supabase: ReturnType<typeof createAdminClient>,
-  avatarId: string,
-  limit: number,
-): Promise<string[]> {
-  const { data } = await supabase
-    .from("campaign_jobs")
-    .select("comment_text")
-    .eq("avatar_id", avatarId)
-    .in("status", ["ready", "executing", "done"])
-    .order("created_at", { ascending: false })
-    .limit(limit);
-  return (data ?? []).map((j) => j.comment_text);
 }
 
 export async function purgeAwaitingPosts(campaignId: string): Promise<number> {

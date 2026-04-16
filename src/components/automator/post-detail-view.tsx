@@ -13,8 +13,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { DeviceScreenshot } from "./device-screenshot";
-import { JobStatusIcon, JobStatusLabel } from "./pipeline-status";
-import { PostStatusIcon, renderMetricChips } from "./pipeline-post-row";
+import { JobStatusIcon, JobStatusLabel, PostStatusBadge } from "./pipeline-status";
+import { renderMetricChips } from "./pipeline-post-row";
 import { formatDistanceToNow } from "date-fns";
 import type {
   CampaignPost,
@@ -120,7 +120,7 @@ export function PostDetailView({
           {/* Post content */}
           <div>
             <div className="flex items-start gap-2">
-              <PostStatusIcon status={post.status} />
+              <PostStatusBadge status={post.status} />
               <div className="min-w-0 flex-1">
                 {post.post_author && (
                   <p className="text-xs font-medium text-primary">

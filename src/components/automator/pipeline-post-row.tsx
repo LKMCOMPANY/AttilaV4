@@ -1,12 +1,6 @@
 "use client";
 
-import { cn } from "@/lib/utils";
 import {
-  CheckCircle2,
-  Ban,
-  Clock,
-  AlertTriangle,
-  Loader2,
   Eye,
   Heart,
   MessageCircle,
@@ -17,13 +11,12 @@ import {
   Share2,
   Bookmark,
   Reply,
-  UserX,
 } from "lucide-react";
+import { PostStatusBadge } from "./pipeline-status";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { formatDistanceToNow } from "date-fns";
 import type {
   CampaignPost,
-  CampaignPostStatus,
   CampaignJobWithAvatar,
   SocialPlatform,
 } from "@/types";
@@ -55,8 +48,6 @@ export function PipelinePostRow({
       onClick={onSelect}
       className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted/50"
     >
-      <PostStatusIcon status={post.status} />
-
       <div className="min-w-0 flex-1">
         <p className="font-medium leading-snug">
           {post.post_author && (
@@ -75,7 +66,7 @@ export function PipelinePostRow({
             />
             {post.platform}
           </span>
-          <PostStatusLabel status={post.status} />
+          <PostStatusBadge status={post.status} />
           <span>
             {formatDistanceToNow(new Date(post.created_at), {
               addSuffix: true,
@@ -160,30 +151,3 @@ function formatCount(n: number): string {
   return n.toString();
 }
 
-// ---------------------------------------------------------------------------
-// Post status helpers
-// ---------------------------------------------------------------------------
-
-const POST_STATUS_CONFIG: Record<
-  CampaignPostStatus,
-  { icon: typeof Clock; color: string; iconExtra?: string; label: string }
-> = {
-  responded: { icon: CheckCircle2, color: "text-success", label: "Responded" },
-  awaiting_avatars: { icon: UserX, color: "text-warning", label: "Awaiting avatars" },
-  filtered_out: { icon: Ban, color: "text-muted-foreground/50", label: "Filtered" },
-  error: { icon: AlertTriangle, color: "text-destructive", label: "Error" },
-  processing: { icon: Loader2, color: "text-primary", iconExtra: "animate-spin", label: "Processing" },
-  pending: { icon: Clock, color: "text-muted-foreground", label: "Pending" },
-};
-
-export function PostStatusIcon({ status }: { status: CampaignPostStatus }) {
-  const config = POST_STATUS_CONFIG[status];
-  const Icon = config.icon;
-  return (
-    <Icon className={cn("mt-0.5 h-3 w-3 shrink-0", config.color, config.iconExtra)} />
-  );
-}
-
-function PostStatusLabel({ status }: { status: CampaignPostStatus }) {
-  return <span>{POST_STATUS_CONFIG[status].label}</span>;
-}

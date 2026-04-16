@@ -12,6 +12,7 @@ import {
   screenshot,
   sleep,
   escapeShellText,
+  wakeDevice,
 } from "./adb-helpers";
 
 const COORDS = {
@@ -78,7 +79,7 @@ export async function postTikTokComment(
     }
 
     ttLog(dbId, "step 2: wake device");
-    await shell(boxHost, dbId, "input keyevent KEYCODE_WAKEUP");
+    await wakeDevice(boxHost, dbId);
 
     ttLog(dbId, "step 3: open video via deep link", { url: videoUrl });
     await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${videoUrl}`);

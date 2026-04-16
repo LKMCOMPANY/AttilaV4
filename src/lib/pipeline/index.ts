@@ -5,6 +5,7 @@ export { writeComment } from "./writer";
 export { selectAvatars } from "./avatar-selector";
 export { executeJob } from "./executor";
 export { uploadProofScreenshot } from "./storage";
+export { generateComments, buildJobRows, getRecentAvatarComments } from "./job-builder";
 export type {
   PipelinePost,
   PipelineResult,

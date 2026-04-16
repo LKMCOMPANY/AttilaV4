@@ -1,4 +1,4 @@
-import type { CampaignPlatform, CampaignFilters, AnalystDecision, Avatar } from "@/types";
+import type { CampaignPlatform, AnalystDecision, Avatar } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Source post (unified shape from gorgone_tweets / gorgone_tiktok_videos)
@@ -159,5 +159,9 @@ export function pipelineError(
   error?: unknown,
 ) {
   const tag = postId ? `[Pipeline][${postId}][${phase}]` : `[Pipeline][${phase}]`;
-  console.error(`${tag} ${message}`, error instanceof Error ? error.message : error);
+  if (error instanceof Error) {
+    console.error(`${tag} ${message}`, error.message, error.stack);
+  } else {
+    console.error(`${tag} ${message}`, error);
+  }
 }
