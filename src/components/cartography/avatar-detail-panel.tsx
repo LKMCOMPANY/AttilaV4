@@ -16,7 +16,7 @@ import {
   Share2,
   Smartphone,
   Calendar,
-} from "lucide-react"; // All used directly in DetailSection icons
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";

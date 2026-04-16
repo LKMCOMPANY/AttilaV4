@@ -28,7 +28,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 const CLUSTER_PALETTE = [
-  "#b8a46c", // primary gold (dark)
+  "#b8a46c", // primary gold
   "#e07c52", // warm orange
   "#6ca4b8", // steel blue
   "#8cb86c", // olive green
@@ -61,7 +61,7 @@ interface UseConstellationReturn {
 }
 
 // ---------------------------------------------------------------------------
-// Cluster center computation
+// Cluster center computation — fills the viewport
 // ---------------------------------------------------------------------------
 
 function computeClusterCenters(
@@ -73,43 +73,65 @@ function computeClusterCenters(
   const count = keys.length;
 
   if (count === 0) return centers;
+
+  const cx = width / 2;
+  const cy = height / 2;
+  const pad = 80;
+
   if (count === 1) {
-    centers.set(keys[0], { x: width / 2, y: height / 2 });
+    centers.set(keys[0], { x: cx, y: cy });
     return centers;
   }
 
-  // Arrange clusters in concentric rings
-  const cx = width / 2;
-  const cy = height / 2;
-  const radius = Math.min(width, height) * 0.3;
+  if (count === 2) {
+    const spread = (width - pad * 2) * 0.35;
+    centers.set(keys[0], { x: cx - spread, y: cy });
+    centers.set(keys[1], { x: cx + spread, y: cy });
+    return centers;
+  }
 
-  if (count <= 6) {
+  if (count === 3) {
+    const r = Math.min(width, height) * 0.3;
+    keys.forEach((key, i) => {
+      const angle = (2 * Math.PI * i) / 3 - Math.PI / 2;
+      centers.set(key, {
+        x: cx + r * Math.cos(angle),
+        y: cy + r * Math.sin(angle),
+      });
+    });
+    return centers;
+  }
+
+  // 4+ clusters: elliptical layout using available space
+  const rx = (width - pad * 2) * 0.38;
+  const ry = (height - pad * 2) * 0.38;
+
+  if (count <= 8) {
     keys.forEach((key, i) => {
       const angle = (2 * Math.PI * i) / count - Math.PI / 2;
       centers.set(key, {
-        x: cx + radius * Math.cos(angle),
-        y: cy + radius * Math.sin(angle),
+        x: cx + rx * Math.cos(angle),
+        y: cy + ry * Math.sin(angle),
       });
     });
   } else {
-    // Inner ring: first 6, outer ring: rest
-    const innerCount = Math.min(6, count);
+    // Two rings for many clusters
+    const innerCount = Math.ceil(count / 2);
     const outerCount = count - innerCount;
-    const outerRadius = radius * 1.5;
 
     keys.slice(0, innerCount).forEach((key, i) => {
       const angle = (2 * Math.PI * i) / innerCount - Math.PI / 2;
       centers.set(key, {
-        x: cx + radius * Math.cos(angle),
-        y: cy + radius * Math.sin(angle),
+        x: cx + rx * 0.55 * Math.cos(angle),
+        y: cy + ry * 0.55 * Math.sin(angle),
       });
     });
 
     keys.slice(innerCount).forEach((key, i) => {
       const angle = (2 * Math.PI * i) / outerCount - Math.PI / 2;
       centers.set(key, {
-        x: cx + outerRadius * Math.cos(angle),
-        y: cy + outerRadius * Math.sin(angle),
+        x: cx + rx * Math.cos(angle),
+        y: cy + ry * Math.sin(angle),
       });
     });
   }
@@ -131,7 +153,6 @@ export function useConstellation({
   const simRef = useRef<Simulation<SimulationNodeDatum, undefined> | null>(null);
   const nodesRef = useRef<ConstellationNode[]>([]);
 
-  // Build cluster groups for current dimension
   const clusters = useMemo(() => {
     const keyCount = new Map<string, number>();
     for (const node of nodes) {
@@ -139,7 +160,6 @@ export function useConstellation({
       keyCount.set(key, (keyCount.get(key) ?? 0) + 1);
     }
 
-    // Sort by count descending for consistent layout
     const sorted = [...keyCount.entries()].sort((a, b) => b[1] - a[1]);
 
     return sorted.map(([key, count], i): ClusterGroup => ({
@@ -150,24 +170,21 @@ export function useConstellation({
     }));
   }, [nodes, dimension]);
 
-  // Cluster centers
   const clusterCenters = useMemo(() => {
     const keys = clusters.map((c) => c.key);
     return computeClusterCenters(keys, width, height);
   }, [clusters, width, height]);
 
-  // Initialize or update simulation
   useEffect(() => {
     if (width === 0 || height === 0 || nodes.length === 0) return;
 
-    // Copy nodes to avoid mutating props
     const simNodes = nodes.map((n) => ({
       ...n,
-      x: n.x ?? width / 2 + (Math.random() - 0.5) * 100,
-      y: n.y ?? height / 2 + (Math.random() - 0.5) * 100,
+      x: n.x ?? width / 2 + (Math.random() - 0.5) * 200,
+      y: n.y ?? height / 2 + (Math.random() - 0.5) * 200,
     }));
 
-    // Preserve positions from previous simulation
+    // Preserve positions from previous simulation for smooth transitions
     const prevMap = new Map<string, { x: number; y: number }>();
     for (const pn of nodesRef.current) {
       if (pn.x !== undefined && pn.y !== undefined) {
@@ -184,10 +201,12 @@ export function useConstellation({
 
     nodesRef.current = simNodes;
 
-    // Stop previous simulation
     if (simRef.current) simRef.current.stop();
 
-    const nodeRadius = Math.max(4, Math.min(8, 200 / Math.sqrt(nodes.length)));
+    // Scale forces based on node count for consistent density
+    const n = nodes.length;
+    const collideRadius = Math.max(6, Math.min(14, 300 / Math.sqrt(n)));
+    const chargeStrength = Math.max(-80, Math.min(-25, -2000 / n));
 
     const sim = forceSimulation(simNodes as unknown as SimulationNodeDatum[])
       .force(
@@ -196,7 +215,7 @@ export function useConstellation({
           const node = d as unknown as ConstellationNode;
           const key = node.clusters[dimension];
           return clusterCenters.get(key)?.x ?? width / 2;
-        }).strength(0.12)
+        }).strength(0.18)
       )
       .force(
         "y",
@@ -204,20 +223,18 @@ export function useConstellation({
           const node = d as unknown as ConstellationNode;
           const key = node.clusters[dimension];
           return clusterCenters.get(key)?.y ?? height / 2;
-        }).strength(0.12)
+        }).strength(0.18)
       )
-      .force("charge", forceManyBody().strength(-15).distanceMax(150))
-      .force("collide", forceCollide(nodeRadius + 2).strength(0.7))
-      .alphaDecay(0.02)
-      .velocityDecay(0.35)
+      .force("charge", forceManyBody().strength(chargeStrength).distanceMax(250))
+      .force("collide", forceCollide(collideRadius).strength(0.8).iterations(2))
+      .alphaDecay(0.018)
+      .velocityDecay(0.3)
       .on("tick", onTick);
 
-    sim.alpha(0.8).restart();
+    sim.alpha(0.9).restart();
     simRef.current = sim;
 
-    return () => {
-      sim.stop();
-    };
+    return () => { sim.stop(); };
   }, [nodes, dimension, width, height, clusterCenters, onTick]);
 
   // Update cluster centroids after simulation settles
@@ -229,11 +246,9 @@ export function useConstellation({
         );
         if (clusterNodes.length > 0) {
           cluster.centroidX =
-            clusterNodes.reduce((sum, n) => sum + (n.x ?? 0), 0) /
-            clusterNodes.length;
+            clusterNodes.reduce((sum, n) => sum + (n.x ?? 0), 0) / clusterNodes.length;
           cluster.centroidY =
-            clusterNodes.reduce((sum, n) => sum + (n.y ?? 0), 0) /
-            clusterNodes.length;
+            clusterNodes.reduce((sum, n) => sum + (n.y ?? 0), 0) / clusterNodes.length;
         }
       }
     }, 2000);
@@ -243,7 +258,7 @@ export function useConstellation({
 
   const reheat = useCallback(() => {
     if (simRef.current) {
-      simRef.current.alpha(0.6).restart();
+      simRef.current.alpha(0.7).restart();
     }
   }, []);
 

@@ -33,8 +33,8 @@ export const DIMENSION_CONFIGS: ClusterDimensionConfig[] = [
   { id: "status", label: "Status", description: "Grouped by avatar status" },
   { id: "identity", label: "Identity", description: "Grouped by country & language" },
   { id: "personality", label: "Personality", description: "Grouped by writing style & tone" },
-  { id: "operator_usage", label: "Operator", description: "Grouped by operator assignment intensity" },
-  { id: "automator_usage", label: "Automator", description: "Grouped by campaign activity level" },
+  { id: "operator_usage", label: "Operator", description: "Grouped by assigned operator" },
+  { id: "automator_usage", label: "Automator", description: "Grouped by campaign" },
   { id: "platform", label: "Platform", description: "Grouped by active social platforms" },
   { id: "device", label: "Device", description: "Grouped by device assignment status" },
 ];

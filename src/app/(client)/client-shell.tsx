@@ -11,7 +11,6 @@ import { createClient } from "@/lib/supabase/client";
 const CLIENT_NAV = [
   { label: "Operator", href: "/dashboard/operator" },
   { label: "Automator", href: "/dashboard/automator" },
-  { label: "Cartography", href: "/dashboard/cartography" },
 ];
 
 interface ClientShellProps {

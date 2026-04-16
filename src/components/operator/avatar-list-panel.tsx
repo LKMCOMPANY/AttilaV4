@@ -1,9 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { UserPlus, Search } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { UserPlus, Search, Radar } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
 import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
@@ -50,6 +57,9 @@ export function AvatarListPanel({
   presenceMap,
 }: AvatarListPanelProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const searchParams = useSearchParams();
+  const accountParam = searchParams.get("account");
+  const cartoHref = `/dashboard/cartography${accountParam ? `?account=${accountParam}` : ""}`;
 
   return (
     <div className="@container/list flex h-full flex-col bg-background">
@@ -68,15 +78,35 @@ export function AvatarListPanel({
             devices
           </span>
         </h2>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setDialogOpen(true)}
-          className="h-7 w-7 p-0 @[220px]/list:w-auto @[220px]/list:gap-1.5 @[220px]/list:px-2"
-        >
-          <UserPlus className="h-3.5 w-3.5 shrink-0" />
-          <span className="hidden @[220px]/list:inline text-xs">New</span>
-        </Button>
+        <div className="flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Link
+                  href={cartoHref}
+                  className={cn(
+                    "inline-flex h-7 w-7 items-center justify-center rounded-md",
+                    "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <Radar className="h-3.5 w-3.5" />
+                </Link>
+              }
+            />
+            <TooltipContent side="bottom" className="text-xs">
+              Cartography
+            </TooltipContent>
+          </Tooltip>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setDialogOpen(true)}
+            className="h-7 w-7 p-0 @[220px]/list:w-auto @[220px]/list:gap-1.5 @[220px]/list:px-2"
+          >
+            <UserPlus className="h-3.5 w-3.5 shrink-0" />
+            <span className="hidden @[220px]/list:inline text-xs">New</span>
+          </Button>
+        </div>
       </div>
 
       {/* Sort toolbar */}

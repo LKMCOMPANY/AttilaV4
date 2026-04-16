@@ -35,7 +35,6 @@ export async function getCartographyData(
 
     const supabase = await createClient();
 
-    // Parallel fetches
     const [avatarResult, jobsResult, contentResult, armyResult, campaignResult] =
       await Promise.all([
         supabase
@@ -51,7 +50,7 @@ export async function getCartographyData(
 
         supabase
           .from("campaign_jobs")
-          .select("avatar_id, status")
+          .select("avatar_id, status, campaign_id")
           .eq("account_id", accountId),
 
         supabase
@@ -67,7 +66,7 @@ export async function getCartographyData(
 
         supabase
           .from("campaigns")
-          .select("id", { count: "exact", head: true })
+          .select("id, name")
           .eq("account_id", accountId),
       ]);
 
@@ -75,16 +74,30 @@ export async function getCartographyData(
       return { data: null, error: avatarResult.error.message };
     }
 
-    // Build job stats per avatar
+    // Campaign name lookup
+    const campaignNames = new Map<string, string>();
+    for (const c of campaignResult.data ?? []) {
+      campaignNames.set(c.id, c.name);
+    }
+
+    // Job stats per avatar + primary campaign (most jobs)
     const jobStats = new Map<string, { total: number; done: number }>();
+    const avatarCampaigns = new Map<string, Map<string, number>>();
+
     for (const job of jobsResult.data ?? []) {
       const entry = jobStats.get(job.avatar_id) ?? { total: 0, done: 0 };
       entry.total++;
       if (job.status === "done") entry.done++;
       jobStats.set(job.avatar_id, entry);
+
+      if (job.campaign_id) {
+        const campMap = avatarCampaigns.get(job.avatar_id) ?? new Map();
+        campMap.set(job.campaign_id, (campMap.get(job.campaign_id) ?? 0) + 1);
+        avatarCampaigns.set(job.avatar_id, campMap);
+      }
     }
 
-    // Build content count per avatar
+    // Content count per avatar
     const contentCounts = new Map<string, number>();
     for (const item of contentResult.data ?? []) {
       if (item.avatar_id) {
@@ -115,8 +128,24 @@ export async function getCartographyData(
           .filter(Boolean) as { id: string; name: string }[];
 
         const device = row.device as { id: string; state: string } | null;
-        const stats = jobStats.get(row.id as string) ?? { total: 0, done: 0 };
-        const contentCount = contentCounts.get(row.id as string) ?? 0;
+        const avatarId = row.id as string;
+        const stats = jobStats.get(avatarId) ?? { total: 0, done: 0 };
+        const contentCount = contentCounts.get(avatarId) ?? 0;
+
+        // Resolve primary campaign for this avatar
+        const campMap = avatarCampaigns.get(avatarId);
+        let primaryCampaignName: string | null = null;
+        if (campMap && campMap.size > 0) {
+          let maxJobs = 0;
+          let maxCampId = "";
+          for (const [cid, count] of campMap) {
+            if (count > maxJobs) {
+              maxJobs = count;
+              maxCampId = cid;
+            }
+          }
+          primaryCampaignName = campaignNames.get(maxCampId) ?? null;
+        }
 
         const enabledPlatforms = [
           row.twitter_enabled && "twitter",
@@ -126,7 +155,7 @@ export async function getCartographyData(
         ].filter(Boolean) as string[];
 
         const snapshot: ConstellationAvatarSnapshot = {
-          id: row.id as string,
+          id: avatarId,
           firstName: row.first_name as string,
           lastName: row.last_name as string,
           profileImageUrl: row.profile_image_url as string | null,
@@ -151,10 +180,12 @@ export async function getCartographyData(
           createdAt: row.created_at as string,
         };
 
-        const clusters = buildClusterKeys(snapshot, armies, operators, enabledPlatforms, stats);
+        const clusters = buildClusterKeys(
+          snapshot, armies, operators, enabledPlatforms, stats, primaryCampaignName
+        );
 
         return {
-          id: row.id as string,
+          id: avatarId,
           label: `${row.first_name} ${row.last_name}`.trim(),
           profileImageUrl: row.profile_image_url as string | null,
           clusters,
@@ -174,7 +205,7 @@ export async function getCartographyData(
         nodes,
         totalAvatars: nodes.length,
         totalArmies: armyResult.count ?? 0,
-        totalCampaigns: campaignResult.count ?? 0,
+        totalCampaigns: (campaignResult.data ?? []).length,
       },
       error: null,
     };
@@ -196,47 +227,35 @@ function buildClusterKeys(
   armies: { id: string; name: string }[],
   operators: { id: string; name: string }[],
   enabledPlatforms: string[],
-  jobStats: { total: number; done: number }
+  jobStats: { total: number; done: number },
+  primaryCampaignName: string | null
 ): Record<ClusterDimension, string> {
-  // Army: primary army (first), or "Unassigned"
   const armyKey = armies.length > 0 ? armies[0].name : "Unassigned";
 
-  // Status: direct
-  const statusKey = snapshot.status;
+  const statusKey = capitalize(snapshot.status);
 
-  // Identity: country + language
   const identityKey = `${snapshot.countryCode.toUpperCase()} · ${snapshot.languageCode.toUpperCase()}`;
 
-  // Personality: writing style + tone combo
   const personalityKey = `${capitalize(snapshot.writingStyle)} · ${capitalize(snapshot.tone)}`;
 
-  // Operator usage: bucketed
-  const operatorKey = operators.length === 0
-    ? "No operator"
-    : operators.length === 1
-      ? "1 operator"
-      : `${operators.length} operators`;
+  // Operator: cluster by WHO operates them
+  const operatorKey = operators.length > 0
+    ? operators[0].name
+    : "Unassigned";
 
-  // Automator usage: bucketed by job count
-  let automatorKey: string;
-  if (jobStats.total === 0) automatorKey = "Unused";
-  else if (jobStats.total <= 5) automatorKey = "Low (1–5)";
-  else if (jobStats.total <= 20) automatorKey = "Medium (6–20)";
-  else if (jobStats.total <= 50) automatorKey = "High (21–50)";
-  else automatorKey = "Very High (50+)";
+  // Automator: cluster by WHICH campaign uses them
+  const automatorKey = primaryCampaignName ?? "Unused";
 
-  // Platform: primary or combo
   const platformKey =
     enabledPlatforms.length === 0
       ? "No platform"
       : enabledPlatforms.map(capitalize).join(" + ");
 
-  // Device: assignment status
   let deviceKey: string;
   if (!snapshot.deviceId) deviceKey = "No device";
-  else if (snapshot.deviceState === "running") deviceKey = "Device running";
-  else if (snapshot.deviceState === "stopped") deviceKey = "Device stopped";
-  else deviceKey = `Device ${snapshot.deviceState ?? "unknown"}`;
+  else if (snapshot.deviceState === "running") deviceKey = "Running";
+  else if (snapshot.deviceState === "stopped") deviceKey = "Stopped";
+  else deviceKey = capitalize(snapshot.deviceState ?? "unknown");
 
   return {
     army: armyKey,
