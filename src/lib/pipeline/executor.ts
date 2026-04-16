@@ -18,11 +18,24 @@ export async function executeJob(params: {
 }): Promise<ExecutionResult> {
   const { tunnelHostname, dbId, platform, postUrl, commentText, jobId } = params;
 
-  pipelineLog("execute", jobId, `Executing ${platform} job`, { dbId, postUrl });
+  pipelineLog("execute", jobId, `Executing ${platform} job`, {
+    dbId,
+    boxHost: tunnelHostname,
+    postUrl,
+    commentPreview: commentText.slice(0, 60),
+  });
 
   try {
     if (platform === "twitter") {
       const result = await postReply(tunnelHostname, dbId, postUrl, commentText);
+      pipelineLog("execute", jobId, `Twitter result`, {
+        success: result.success,
+        mode: result.mode,
+        error: result.error,
+        durationMs: result.durationMs,
+        sourceBytes: result.source?.length ?? 0,
+        proofBytes: result.proof?.length ?? 0,
+      });
       return {
         success: result.success,
         mode: result.mode,
@@ -34,6 +47,13 @@ export async function executeJob(params: {
     }
 
     const result = await postTikTokComment(tunnelHostname, dbId, postUrl, commentText);
+    pipelineLog("execute", jobId, `TikTok result`, {
+      success: result.success,
+      error: result.error,
+      durationMs: result.durationMs,
+      sourceBytes: result.source?.length ?? 0,
+      proofBytes: result.proof?.length ?? 0,
+    });
     return {
       success: result.success,
       mode: "app",
@@ -44,7 +64,7 @@ export async function executeJob(params: {
     };
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    pipelineError("execute", jobId, "Execution failed", err);
+    pipelineError("execute", jobId, "Execution CRASHED", err);
     return { success: false, error, durationMs: 0 };
   }
 }

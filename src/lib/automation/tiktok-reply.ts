@@ -37,14 +37,22 @@ export interface TikTokReplyResult {
   durationMs: number;
 }
 
+function ttLog(dbId: string, step: string, data?: Record<string, unknown>) {
+  console.log(`[TikTok-Reply][${dbId}] ${step}`, data ? JSON.stringify(data) : "");
+}
+
 async function hasTikTokApp(boxHost: string, dbId: string): Promise<boolean> {
   const result = await shell(boxHost, dbId, "pm list packages | grep musically");
-  return result.message.includes("com.zhiliaoapp.musically");
+  const found = result.message.includes("com.zhiliaoapp.musically");
+  ttLog(dbId, `hasTikTokApp: ${found}`, { raw: result.message.trim() });
+  return found;
 }
 
 async function isAdbKeyboardEnabled(boxHost: string, dbId: string): Promise<boolean> {
   const result = await shell(boxHost, dbId, "ime list -s");
-  return result.message.includes("com.android.adbkeyboard");
+  const enabled = result.message.includes("com.android.adbkeyboard");
+  ttLog(dbId, `isAdbKeyboardEnabled: ${enabled}`, { raw: result.message.trim() });
+  return enabled;
 }
 
 export async function postTikTokComment(
@@ -55,6 +63,8 @@ export async function postTikTokComment(
 ): Promise<TikTokReplyResult> {
   const start = Date.now();
 
+  ttLog(dbId, "postTikTokComment START", { boxHost, videoUrl, textPreview: text.slice(0, 60) });
+
   try {
     const hasApp = await hasTikTokApp(boxHost, dbId);
     if (!hasApp) {
@@ -63,41 +73,54 @@ export async function postTikTokComment(
 
     const adbkEnabled = await isAdbKeyboardEnabled(boxHost, dbId);
     if (!adbkEnabled) {
+      ttLog(dbId, "step 1: enabling ADBKeyboard (was disabled)");
       await shell(boxHost, dbId, `ime enable ${ADBKEYBOARD_IME}`);
     }
 
+    ttLog(dbId, "step 2: wake device");
     await shell(boxHost, dbId, "input keyevent KEYCODE_WAKEUP");
 
+    ttLog(dbId, "step 3: open video via deep link", { url: videoUrl });
     await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${videoUrl}`);
     await sleep(TIMING.videoLoad);
 
+    ttLog(dbId, "step 4: screenshot source");
     const source = await screenshot(boxHost, dbId);
 
+    ttLog(dbId, "step 5: tap comment button", { coords: COORDS.commentButton });
     await shell(boxHost, dbId, `input tap ${COORDS.commentButton.x} ${COORDS.commentButton.y}`);
     await sleep(TIMING.panelSlide);
 
+    ttLog(dbId, "step 6: tap comment field", { coords: COORDS.commentField });
     await shell(boxHost, dbId, `input tap ${COORDS.commentField.x} ${COORDS.commentField.y}`);
     await sleep(TIMING.keyboardAppear);
 
+    ttLog(dbId, "step 7: set ADBKeyboard + re-tap field");
     await shell(boxHost, dbId, `ime set ${ADBKEYBOARD_IME}`);
     await shell(boxHost, dbId, `input tap ${COORDS.commentField.x} ${COORDS.commentField.y}`);
     await sleep(TIMING.imeSwitch);
 
+    ttLog(dbId, "step 8: broadcast text input", { textLength: text.length });
     await shell(boxHost, dbId, `am broadcast -a ADB_INPUT_TEXT --es msg "${escapeShellText(text)}"`);
     await sleep(TIMING.afterType);
 
+    ttLog(dbId, "step 9: tap send button", { coords: COORDS.sendButton });
     await shell(boxHost, dbId, `input tap ${COORDS.sendButton.x} ${COORDS.sendButton.y}`);
     await sleep(TIMING.afterSend);
 
+    ttLog(dbId, "step 10: screenshot proof");
     const proof = await screenshot(boxHost, dbId);
 
+    ttLog(dbId, "step 11: restore Gboard + back");
     await shell(boxHost, dbId, `ime set ${GBOARD_IME}`);
     await shell(boxHost, dbId, "input keyevent KEYCODE_BACK");
 
+    ttLog(dbId, "postTikTokComment SUCCESS", { durationMs: Date.now() - start, sourceBytes: source.length, proofBytes: proof.length });
     return { success: true, source, proof, durationMs: Date.now() - start };
   } catch (err) {
     await shell(boxHost, dbId, `ime set ${GBOARD_IME}`).catch(() => {});
     const error = err instanceof Error ? err.message : String(err);
+    ttLog(dbId, "postTikTokComment FAILED", { error, durationMs: Date.now() - start });
     return {
       success: false,
       source: Buffer.alloc(0),

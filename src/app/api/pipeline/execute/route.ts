@@ -34,6 +34,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: "idle", message: "No ready jobs" });
   }
 
+  console.log(`[Execute] Claimed job ${job.id}`, JSON.stringify({
+    campaignId: job.campaign_id,
+    platform: job.platform,
+    avatarId: job.avatar_id,
+    deviceId: job.device_id,
+    boxId: job.box_id,
+    postUrl: job.post_url,
+    commentPreview: job.comment_text?.slice(0, 60),
+    scheduledAt: job.scheduled_at,
+  }));
+
   // Mark as executing (status guard prevents double-claim race condition)
   const { data: claimed } = await supabase
     .from("campaign_jobs")
@@ -43,6 +54,7 @@ export async function POST(req: NextRequest) {
     .select("id");
 
   if (!claimed || claimed.length === 0) {
+    console.log(`[Execute] Job ${job.id} already claimed by another worker`);
     return NextResponse.json({ action: "skipped", message: "Job already claimed" });
   }
 
@@ -58,6 +70,7 @@ export async function POST(req: NextRequest) {
     : { data: null };
 
   if (!device || !box) {
+    console.error(`[Execute] Job ${job.id} — device or box not found`, { deviceId: job.device_id, device, box });
     await supabase
       .from("campaign_jobs")
       .update({
@@ -71,6 +84,12 @@ export async function POST(req: NextRequest) {
   }
 
   const tunnelHostname = box.tunnel_hostname;
+  console.log(`[Execute] Resolved device → box`, JSON.stringify({
+    jobId: job.id,
+    dbId: device.db_id,
+    boxId: device.box_id,
+    tunnelHostname,
+  }));
 
   // Execute
   const result = await executeJob({
@@ -84,6 +103,13 @@ export async function POST(req: NextRequest) {
 
   // Report result
   const now = new Date().toISOString();
+
+  console.log(`[Execute] Job ${job.id} execution finished`, JSON.stringify({
+    success: result.success,
+    error: result.error,
+    durationMs: result.durationMs,
+    mode: result.mode,
+  }));
 
   if (result.success) {
     await supabase
