@@ -59,15 +59,24 @@ Chaque systeme est independant, observable, et scale separement.
 
 ---
 
-## Etape 1 — Ingestion Gorgone (FAIT)
+## Etape 1 — Ingestion Gorgone (FAIT, push pipeline)
 
-Deja implemente dans `src/lib/gorgone/` et `src/app/api/gorgone/sync/route.ts`.
+Implemente dans `src/lib/gorgone/` et `src/app/api/gorgone/{webhook,sweep}/route.ts`.
+Voir `GORGONE-INGESTION.md` pour les details d'archi.
 
-- Cron toutes les 30s appelle `POST /api/gorgone/sync` (protege par `CRON_SECRET`)
-- Sync incrementale par cursor (`collected_at`) depuis le Supabase Gorgone (lecture seule)
-- Upsert dans `gorgone_tweets` et `gorgone_tiktok_videos` avec `status = 'pending'`
-- Dedup par `UNIQUE(gorgone_id)` + `ON CONFLICT DO NOTHING`
-- Batch de 500 rows max, les prochains cycles rattrapent si plus
+- **Push webhook** : trigger Postgres cote Gorgone (`pg_net.http_post`)
+  appelle `POST /api/gorgone/webhook` (timing-safe `X-Webhook-Secret`)
+  des qu'une ligne arrive dans `twitter_tweets` / `tiktok_videos` pour
+  une zone avec `push_to_attila = true`. Latence < 1 s.
+- **Sweep filet** : worker in-process (`server.mjs`) tape
+  `POST /api/gorgone/sweep` toutes les 60s. Pour chaque
+  `(account, zone, platform)` actif, query Gorgone depuis
+  `last_event_at` (cursor composite anti-collision sur batchs
+  isochrones) et reuse exactement la meme logique d'ingestion que le
+  webhook. Filet en cas de webhook rate.
+- **Idempotence** : `UNIQUE(gorgone_id)` + `ON CONFLICT DO NOTHING`
+  cote Attila, plus le RPC `register_gorgone_event` qui n'avance le
+  cursor que vers l'avant. Aucun doublon, aucune perte.
 
 ### Volumes mesures (avril 2026)
 
@@ -80,7 +89,8 @@ Deja implemente dans `src/lib/gorgone/` et `src/app/api/gorgone/sync/route.ts`.
 
 - `gorgone_tweets` : tweets ingeres, avec auteur denormalise, stats, `status`
 - `gorgone_tiktok_videos` : videos TikTok ingeres, meme pattern
-- `gorgone_sync_cursors` : un cursor par zone par plateforme
+- `gorgone_zone_state` : etat observe par `(account, zone, platform)`
+  (cursor composite + compteurs par canal)
 - `gorgone_links` : mapping comptes Attila → clients Gorgone
 
 Le champ `status` (`pending` / `processing` / `processed` / `filtered_out` / `error`)

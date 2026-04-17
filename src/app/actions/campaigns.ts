@@ -4,8 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
 import { fetchGorgoneZones } from "@/lib/gorgone";
-import type { Campaign, CampaignFilters, CampaignPlatform, CapacityParams, GorgoneSyncCursor } from "@/types";
-import type { GorgoneZone } from "@/lib/gorgone/types";
+import type { Campaign, CampaignFilters, CampaignPlatform, CapacityParams, GorgoneZoneState } from "@/types";
+import type { GorgoneZone } from "@/lib/gorgone";
 
 // ---------------------------------------------------------------------------
 // Read
@@ -83,7 +83,7 @@ export async function getAccountZones(
 
   const { data: links, error } = await supabase
     .from("gorgone_links")
-    .select("*, gorgone_sync_cursors(*)")
+    .select("*, gorgone_zone_state(*)")
     .eq("account_id", accountId)
     .eq("is_active", true);
 
@@ -95,30 +95,31 @@ export async function getAccountZones(
     gorgone_client_id: string;
     gorgone_client_name: string;
     is_active: boolean;
-    gorgone_sync_cursors: GorgoneSyncCursor[];
+    gorgone_zone_state: GorgoneZoneState[];
   }
 
   const typedLinks = (links ?? []) as unknown as LinkRow[];
   const zoneMap = new Map<string, AccountZone>();
 
   for (const link of typedLinks) {
-    const cursors = link.gorgone_sync_cursors ?? [];
+    const states = link.gorgone_zone_state ?? [];
     let zones: GorgoneZone[] = [];
     try {
       zones = await fetchGorgoneZones(link.gorgone_client_id);
     } catch {
-      for (const cursor of cursors) {
-        if (!cursor.is_active) continue;
-        const existing = zoneMap.get(cursor.zone_id);
+      // Gorgone unreachable: fall back to whatever zones we've previously
+      // seen events from (stored locally in gorgone_zone_state).
+      for (const state of states) {
+        const existing = zoneMap.get(state.zone_id);
         if (existing) {
-          if (!existing.platforms.includes(cursor.platform)) {
-            existing.platforms.push(cursor.platform);
+          if (!existing.platforms.includes(state.platform)) {
+            existing.platforms.push(state.platform);
           }
         } else {
-          zoneMap.set(cursor.zone_id, {
-            zone_id: cursor.zone_id,
-            zone_name: cursor.zone_name,
-            platforms: [cursor.platform],
+          zoneMap.set(state.zone_id, {
+            zone_id: state.zone_id,
+            zone_name: state.zone_name,
+            platforms: [state.platform],
             gorgone_client_name: link.gorgone_client_name,
           });
         }

@@ -252,16 +252,21 @@ app.prepare().then(() => {
 const PROCESS_CONCURRENCY = parseInt(process.env.PIPELINE_PROCESS_CONCURRENCY || "3", 10);
 const EXECUTE_CONCURRENCY = parseInt(process.env.PIPELINE_EXECUTE_CONCURRENCY || "2", 10);
 const IDLE_MS = parseInt(process.env.PIPELINE_IDLE_MS || "5000", 10);
+const SWEEP_INTERVAL_MS = parseInt(process.env.GORGONE_SWEEP_INTERVAL_MS || "60000", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
 
-async function workerLoop(name, port, path) {
+async function workerLoop(name, port, path, opts = {}) {
   const url = `http://localhost:${port}${path}`;
   const headers = {
     "Authorization": `Bearer ${CRON_SECRET}`,
     "Content-Type": "application/json",
   };
+  const idleMs = opts.idleMs ?? IDLE_MS;
+  const fixedIntervalMs = opts.fixedIntervalMs ?? null;
 
   while (true) {
+    const cycleStart = Date.now();
+
     try {
       const res = await fetch(url, { method: "POST", headers });
       const data = await res.json();
@@ -271,12 +276,18 @@ async function workerLoop(name, port, path) {
         console.log(`[${name}]`, JSON.stringify(data));
       }
 
-      if (isIdle) {
-        await new Promise((r) => setTimeout(r, IDLE_MS));
+      if (fixedIntervalMs != null) {
+        // Fixed-cadence loop (sweep): always wait the remainder of the interval.
+        const elapsed = Date.now() - cycleStart;
+        const wait = Math.max(0, fixedIntervalMs - elapsed);
+        await new Promise((r) => setTimeout(r, wait));
+      } else if (isIdle) {
+        // Idle-aware loop (pipeline): only back off when there's nothing to do.
+        await new Promise((r) => setTimeout(r, idleMs));
       }
     } catch (err) {
       console.error(`[${name}] Error: ${err.message}`);
-      await new Promise((r) => setTimeout(r, IDLE_MS));
+      await new Promise((r) => setTimeout(r, idleMs));
     }
   }
 }
@@ -296,4 +307,11 @@ function startPipelineWorkers(port) {
     workerLoop(`Worker-Execute-${i}`, port, "/api/pipeline/execute");
   }
   console.log(`> Pipeline execute workers: ${EXECUTE_CONCURRENCY}`);
+
+  // Gorgone sweep — safety net behind the webhook ingestion. One worker is
+  // enough because the sweep is idempotent and doesn't bottleneck the pipe.
+  workerLoop("Gorgone-Sweep", port, "/api/gorgone/sweep", {
+    fixedIntervalMs: SWEEP_INTERVAL_MS,
+  });
+  console.log(`> Gorgone sweep worker: every ${SWEEP_INTERVAL_MS}ms`);
 }

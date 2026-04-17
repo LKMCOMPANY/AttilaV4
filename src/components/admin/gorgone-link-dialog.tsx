@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Plus, Loader2 } from "lucide-react";
 import { getGorgoneClients, linkGorgoneClient } from "@/app/actions/gorgone";
 import { toast } from "sonner";
-import type { GorgoneClient } from "@/lib/gorgone/types";
+import type { GorgoneClient } from "@/lib/gorgone";
 
 interface GorgoneLinkDialogProps {
   accountId: string;

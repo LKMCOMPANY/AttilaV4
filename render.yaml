@@ -1,8 +1,8 @@
 services:
   # ── Main Web Service ──────────────────────────────────────────────────
-  # Pipeline workers (process + execute) run as continuous loops inside
-  # server.mjs — no external cron needed. Concurrency is configured via
-  # PIPELINE_PROCESS_CONCURRENCY and PIPELINE_EXECUTE_CONCURRENCY env vars.
+  # Pipeline workers (process + execute) and the Gorgone sweep worker run
+  # as continuous loops inside server.mjs — no external cron needed.
+  # Concurrency knobs are wired through env vars below.
   - type: web
     name: attila-v4
     runtime: node
@@ -33,6 +33,8 @@ services:
         sync: false
       - key: GORGONE_SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: GORGONE_WEBHOOK_SECRET
+        sync: false
       - key: ALERIA_API_KEY
         sync: false
       - key: ALERIA_BASE_URL
@@ -45,22 +47,5 @@ services:
         value: "2"
       - key: PIPELINE_IDLE_MS
         value: "5000"
-
-  # ── Cron: Gorgone Sync (every 5 min) ─────────────────────────────────
-  - type: cron
-    name: attila-cron-gorgone-sync
-    runtime: node
-    region: frankfurt
-    plan: starter
-    branch: main
-    schedule: "*/5 * * * *"
-    buildCommand: echo "no build needed"
-    startCommand: |
-      curl -s -X POST "${ATTILA_APP_URL}/api/gorgone/sync" \
-        -H "Authorization: Bearer ${CRON_SECRET}" \
-        -H "Content-Type: application/json"
-    envVars:
-      - key: ATTILA_APP_URL
-        sync: false
-      - key: CRON_SECRET
-        sync: false
+      - key: GORGONE_SWEEP_INTERVAL_MS
+        value: "60000"

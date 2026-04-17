@@ -2,21 +2,10 @@
 
 import { useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { RefreshCw, Loader2 } from "lucide-react";
-import { toggleZoneSync, triggerManualSync } from "@/app/actions/gorgone";
+import { setZonePushEnabled } from "@/app/actions/gorgone";
 import { toast } from "sonner";
-import type { GorgoneSyncCursor } from "@/types";
-
-const STATUS_BADGE: Record<
-  string,
-  { label: string; variant: "default" | "secondary" | "outline" | "destructive" }
-> = {
-  idle: { label: "Idle", variant: "secondary" },
-  syncing: { label: "Syncing", variant: "default" },
-  error: { label: "Error", variant: "destructive" },
-};
+import type { GorgoneZoneRow } from "@/types";
 
 function formatTimeAgo(dateStr: string | null): string {
   if (!dateStr) return "Never";
@@ -35,37 +24,28 @@ function formatCount(n: number): string {
   return n.toString();
 }
 
-// ---------------------------------------------------------------------------
-// Single cursor row (one platform for a zone)
-// ---------------------------------------------------------------------------
-
-interface CursorRowProps {
-  cursor: GorgoneSyncCursor;
+interface ZoneRowProps {
+  row: GorgoneZoneRow;
   onUpdated: () => void;
 }
 
-function CursorRow({ cursor, onUpdated }: CursorRowProps) {
-  const [isSyncing, startSyncTransition] = useTransition();
-  const [isToggling, startToggleTransition] = useTransition();
-
-  const statusConfig = STATUS_BADGE[cursor.status] ?? STATUS_BADGE.idle;
-  const platformIcon = cursor.platform === "twitter" ? "𝕏" : "♪";
+function ZoneRow({ row, onUpdated }: ZoneRowProps) {
+  const [isToggling, startToggle] = useTransition();
+  const platformIcon = row.platform === "twitter" ? "𝕏" : "♪";
+  const total = row.state?.total_received ?? 0;
+  const lastEventAt = row.state?.last_event_at ?? null;
+  const lastSource = row.state?.last_event_source;
 
   function handleToggle(checked: boolean) {
-    startToggleTransition(async () => {
-      const result = await toggleZoneSync({ cursorId: cursor.id, isActive: checked });
-      if (result.error) toast.error(result.error);
-      onUpdated();
-    });
-  }
-
-  function handleSync() {
-    startSyncTransition(async () => {
-      const result = await triggerManualSync({ cursorId: cursor.id });
+    startToggle(async () => {
+      const result = await setZonePushEnabled({
+        zoneId: row.zone_id,
+        enabled: checked,
+      });
       if (result.error) {
         toast.error(result.error);
       } else {
-        toast.success(`Synced ${result.synced} ${cursor.platform === "twitter" ? "tweets" : "videos"}`);
+        toast.success(checked ? "Push enabled" : "Push disabled");
       }
       onUpdated();
     });
@@ -75,71 +55,59 @@ function CursorRow({ cursor, onUpdated }: CursorRowProps) {
     <div className="flex items-center gap-2 py-1">
       <span
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold"
-        title={cursor.platform}
+        title={row.platform}
       >
         {platformIcon}
       </span>
 
-      <Badge variant={statusConfig.variant} className="shrink-0 text-[10px]">
-        {statusConfig.label}
+      <Badge
+        variant={row.push_to_attila ? "default" : "outline"}
+        className="shrink-0 text-[10px]"
+      >
+        {row.push_to_attila ? "Live" : "Off"}
       </Badge>
 
-      <span className="text-xs text-muted-foreground">
-        {formatTimeAgo(cursor.last_synced_at)}
+      <span className="text-xs text-muted-foreground tabular-nums">
+        {formatCount(total)}
       </span>
       <span className="text-xs text-muted-foreground">
-        {formatCount(cursor.total_synced)}
+        {formatTimeAgo(lastEventAt)}
       </span>
-
-      {cursor.error_message && (
-        <span className="max-w-[120px] truncate text-xs text-destructive" title={cursor.error_message}>
-          {cursor.error_message}
+      {lastSource && (
+        <span className="text-[10px] uppercase text-muted-foreground/70">
+          {lastSource}
         </span>
       )}
 
-      <div className="ml-auto flex items-center gap-1.5">
+      <div className="ml-auto">
         <Switch
           size="sm"
-          checked={cursor.is_active}
+          checked={row.push_to_attila}
           onCheckedChange={handleToggle}
           disabled={isToggling}
         />
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6"
-          onClick={handleSync}
-          disabled={isSyncing || !cursor.is_active}
-          title="Sync now"
-        >
-          {isSyncing ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3 w-3" />
-          )}
-        </Button>
       </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Grouped zone item (groups cursors by zone_name)
-// ---------------------------------------------------------------------------
-
 interface GorgoneZoneGroupProps {
   zoneName: string;
-  cursors: GorgoneSyncCursor[];
+  rows: GorgoneZoneRow[];
   onUpdated: () => void;
 }
 
-export function GorgoneZoneGroup({ zoneName, cursors, onUpdated }: GorgoneZoneGroupProps) {
+export function GorgoneZoneGroup({ zoneName, rows, onUpdated }: GorgoneZoneGroupProps) {
   return (
     <div className="rounded-md border px-3 py-2">
       <p className="text-sm font-medium">{zoneName}</p>
       <div className="mt-1 divide-y">
-        {cursors.map((cursor) => (
-          <CursorRow key={cursor.id} cursor={cursor} onUpdated={onUpdated} />
+        {rows.map((row) => (
+          <ZoneRow
+            key={`${row.zone_id}:${row.platform}`}
+            row={row}
+            onUpdated={onUpdated}
+          />
         ))}
       </div>
     </div>

@@ -1,21 +1,28 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdmin } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
   fetchGorgoneClients as fetchClients,
   fetchGorgoneZones as fetchZones,
-  syncZoneTweets,
-  syncZoneTiktok,
+  setZonePushToAttila as setZonePushToAttilaCore,
+  getZonePushStates,
+  syncWebhookConfigToGorgone,
+  getAttilaWebhookConfig,
+  runSweepCycle,
+  type GorgoneClient,
+  type AttilaWebhookConfig,
+  type SweepReport,
 } from "@/lib/gorgone";
 import type {
   GorgoneLink,
-  GorgoneLinkWithCursors,
-  GorgoneSyncCursor,
+  GorgoneLinkWithZones,
+  GorgoneZoneRow,
+  GorgoneZoneState,
 } from "@/types";
-import type { GorgoneClient } from "@/lib/gorgone/types";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -27,42 +34,113 @@ const linkSchema = z.object({
   gorgoneClientName: z.string().min(1),
 });
 
-const unlinkSchema = z.object({
-  linkId: z.string().uuid(),
-});
+const linkIdSchema = z.object({ linkId: z.string().uuid() });
 
-const toggleSchema = z.object({
-  cursorId: z.string().uuid(),
-  isActive: z.boolean(),
-});
-
-const syncSchema = z.object({
-  cursorId: z.string().uuid(),
+const togglePushSchema = z.object({
+  zoneId: z.string().uuid(),
+  enabled: z.boolean(),
 });
 
 // ---------------------------------------------------------------------------
-// Queries
+// Reads
 // ---------------------------------------------------------------------------
 
+/**
+ * Returns every Gorgone link for an account, enriched with:
+ *   - the live `push_to_attila` flag for each (zone, platform) (read from
+ *     Gorgone),
+ *   - the Attila-side ingestion state (from `gorgone_zone_state`).
+ *
+ * Zones declared by Gorgone but never pre-registered in Attila are
+ * surfaced too — they appear with `state: null` and the admin can
+ * still toggle them on (it'll create the state row lazily).
+ */
 export async function getGorgoneLinks(
-  accountId: string
-): Promise<GorgoneLinkWithCursors[]> {
+  accountId: string,
+): Promise<GorgoneLinkWithZones[]> {
   await requireAdmin();
   const supabase = await createClient();
 
   const { data: links, error } = await supabase
     .from("gorgone_links")
-    .select("*, gorgone_sync_cursors(*)")
+    .select("*, gorgone_zone_state(*)")
     .eq("account_id", accountId)
     .order("created_at", { ascending: false });
 
   if (error) throw new Error(error.message);
 
-  return (links ?? []).map((link) => ({
-    ...link,
-    cursors: (link.gorgone_sync_cursors ?? []) as GorgoneSyncCursor[],
-    gorgone_sync_cursors: undefined,
-  })) as unknown as GorgoneLinkWithCursors[];
+  const enriched: GorgoneLinkWithZones[] = [];
+
+  for (const link of (links ?? []) as (GorgoneLink & {
+    gorgone_zone_state: GorgoneZoneState[];
+  })[]) {
+    const states = link.gorgone_zone_state ?? [];
+
+    // Fetch the canonical list of zones from Gorgone (always up to date).
+    const gorgoneZones = await fetchZones(link.gorgone_client_id).catch(() => []);
+
+    // Combine: every (zone, platform) Gorgone declares + every state row we
+    // have. We dedupe by `${zone_id}:${platform}`.
+    const stateMap = new Map<string, GorgoneZoneState>();
+    for (const s of states) stateMap.set(`${s.zone_id}:${s.platform}`, s);
+
+    const zoneIds = gorgoneZones.map((z) => z.id);
+    const pushStates = await getZonePushStates(zoneIds).catch(() => new Map());
+
+    const rows: GorgoneZoneRow[] = [];
+
+    for (const z of gorgoneZones) {
+      if (z.data_sources?.twitter) {
+        rows.push({
+          zone_id: z.id,
+          zone_name: z.name,
+          platform: "twitter",
+          push_to_attila: pushStates.get(z.id) ?? false,
+          state: stateMap.get(`${z.id}:twitter`) ?? null,
+        });
+      }
+      if (z.data_sources?.tiktok) {
+        rows.push({
+          zone_id: z.id,
+          zone_name: z.name,
+          platform: "tiktok",
+          push_to_attila: pushStates.get(z.id) ?? false,
+          state: stateMap.get(`${z.id}:tiktok`) ?? null,
+        });
+      }
+    }
+
+    // Surface orphan state rows too (zones removed from Gorgone but still
+    // referenced in our state). This protects against silently losing
+    // visibility on historical activity.
+    for (const s of states) {
+      const seen = rows.some((r) => r.zone_id === s.zone_id && r.platform === s.platform);
+      if (!seen) {
+        rows.push({
+          zone_id: s.zone_id,
+          zone_name: s.zone_name,
+          platform: s.platform,
+          push_to_attila: false,
+          state: s,
+        });
+      }
+    }
+
+    enriched.push({
+      id: link.id,
+      account_id: link.account_id,
+      gorgone_client_id: link.gorgone_client_id,
+      gorgone_client_name: link.gorgone_client_name,
+      is_active: link.is_active,
+      created_at: link.created_at,
+      updated_at: link.updated_at,
+      zones: rows.sort((a, b) =>
+        a.zone_name.localeCompare(b.zone_name) || a.platform.localeCompare(b.platform),
+      ),
+    });
+  }
+
+  return enriched;
 }
 
 export async function getGorgoneClients(): Promise<GorgoneClient[]> {
@@ -71,22 +149,18 @@ export async function getGorgoneClients(): Promise<GorgoneClient[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Mutations
+// Mutations — links
 // ---------------------------------------------------------------------------
 
 export async function linkGorgoneClient(
-  input: z.infer<typeof linkSchema>
+  input: z.infer<typeof linkSchema>,
 ): Promise<{ data: GorgoneLink | null; error: string | null }> {
   await requireAdmin();
 
   const parsed = linkSchema.safeParse(input);
-  if (!parsed.success) {
-    return { data: null, error: parsed.error.issues[0].message };
-  }
+  if (!parsed.success) return { data: null, error: parsed.error.issues[0].message };
 
   const supabase = await createClient();
-
-  // Insert the link
   const { data: link, error: linkError } = await supabase
     .from("gorgone_links")
     .insert({
@@ -104,156 +178,182 @@ export async function linkGorgoneClient(
     return { data: null, error: linkError.message };
   }
 
-  // Fetch zones and create cursors
-  try {
-    const zones = await fetchZones(parsed.data.gorgoneClientId);
-
-    const cursors = zones.flatMap((zone) => {
-      const platforms: string[] = [];
-      if (zone.data_sources?.twitter) platforms.push("twitter");
-      if (zone.data_sources?.tiktok) platforms.push("tiktok");
-
-      return platforms.map((platform) => ({
-        gorgone_link_id: link.id,
-        account_id: parsed.data.accountId,
-        zone_id: zone.id,
-        zone_name: zone.name,
-        platform,
-      }));
-    });
-
-    if (cursors.length > 0) {
-      await supabase.from("gorgone_sync_cursors").insert(cursors);
-    }
-  } catch {
-    // Link created successfully, cursors can be added later
-  }
+  // Pre-create zone state rows so the UI can show toggles before any event
+  // arrives. Soft-fail: state rows are also created lazily by the webhook /
+  // sweep via `register_gorgone_event`.
+  await preregisterZoneStates(link.id, parsed.data.accountId, parsed.data.gorgoneClientId).catch(
+    (err) => console.warn("[gorgone] pre-register zone states failed:", err),
+  );
 
   revalidatePath("/admin/accounts");
   return { data: link as GorgoneLink, error: null };
 }
 
+export async function unlinkGorgoneClient(
+  input: z.infer<typeof linkIdSchema>,
+): Promise<{ error: string | null }> {
+  await requireAdmin();
+  const parsed = linkIdSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const supabase = await createClient();
+  const { error } = await supabase.from("gorgone_links").delete().eq("id", parsed.data.linkId);
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/accounts");
+  return { error: null };
+}
+
+/**
+ * Reconciles Attila's `gorgone_zone_state` rows with Gorgone's current
+ * zone catalogue. Adds missing (zone, platform) entries; never deletes.
+ */
 export async function refreshGorgoneZones(
-  input: z.infer<typeof unlinkSchema>
+  input: z.infer<typeof linkIdSchema>,
 ): Promise<{ added: number; error: string | null }> {
   await requireAdmin();
-
-  const parsed = unlinkSchema.safeParse(input);
+  const parsed = linkIdSchema.safeParse(input);
   if (!parsed.success) return { added: 0, error: parsed.error.issues[0].message };
 
   const supabase = await createClient();
-
-  const { data: link, error: linkError } = await supabase
+  const { data: link, error } = await supabase
     .from("gorgone_links")
-    .select("*, gorgone_sync_cursors(zone_id, platform)")
+    .select("id, account_id, gorgone_client_id")
     .eq("id", parsed.data.linkId)
     .single();
+  if (error || !link) return { added: 0, error: "Link not found" };
 
-  if (linkError || !link) return { added: 0, error: "Link not found" };
+  const added = await preregisterZoneStates(link.id, link.account_id, link.gorgone_client_id);
+
+  revalidatePath("/admin/accounts");
+  return { added, error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Mutations — push toggle (writes directly into Gorgone)
+// ---------------------------------------------------------------------------
+
+export async function setZonePushEnabled(
+  input: z.infer<typeof togglePushSchema>,
+): Promise<{ error: string | null }> {
+  await requireAdmin();
+  const parsed = togglePushSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  try {
+    await setZonePushToAttilaCore(parsed.data.zoneId, parsed.data.enabled);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to update Gorgone" };
+  }
+
+  revalidatePath("/admin/accounts");
+  return { error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Mutations — webhook config + sweep
+// ---------------------------------------------------------------------------
+
+/**
+ * Mirrors Attila's webhook URL + secret (from env) to Gorgone's
+ * `integration_config`. Idempotent.
+ *
+ * Required env vars (Render):
+ *   - NEXT_PUBLIC_APP_URL          base URL of this Attila deployment
+ *   - GORGONE_WEBHOOK_SECRET       shared secret (>=32 chars)
+ */
+export async function pushWebhookConfigToGorgone(): Promise<{
+  ok: boolean;
+  url: string;
+  error: string | null;
+}> {
+  await requireAdmin();
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL;
+  const secret = process.env.GORGONE_WEBHOOK_SECRET;
+
+  if (!baseUrl) return { ok: false, url: "", error: "NEXT_PUBLIC_APP_URL not set" };
+  if (!secret) return { ok: false, url: "", error: "GORGONE_WEBHOOK_SECRET not set" };
+
+  const url = `${baseUrl.replace(/\/$/, "")}/api/gorgone/webhook`;
+
+  try {
+    await syncWebhookConfigToGorgone({ url, secret });
+    return { ok: true, url, error: null };
+  } catch (err) {
+    return { ok: false, url, error: err instanceof Error ? err.message : "unknown" };
+  }
+}
+
+export async function inspectWebhookConfig(): Promise<AttilaWebhookConfig> {
+  await requireAdmin();
+  return getAttilaWebhookConfig();
+}
+
+/**
+ * Manually triggers a sweep cycle. Useful from the admin UI as a
+ * "rescue" action, or when bringing a freshly-linked zone online.
+ */
+export async function runSweepNow(): Promise<SweepReport & { error: string | null }> {
+  await requireAdmin();
+  try {
+    const report = await runSweepCycle(createAdminClient());
+    return { ...report, error: null };
+  } catch (err) {
+    return {
+      cursors_processed: 0,
+      zones_with_data: 0,
+      total_ingested: 0,
+      errors: [],
+      duration_ms: 0,
+      error: err instanceof Error ? err.message : "sweep failed",
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async function preregisterZoneStates(
+  linkId: string,
+  accountId: string,
+  gorgoneClientId: string,
+): Promise<number> {
+  const supabase = await createClient();
+
+  const zones = await fetchZones(gorgoneClientId);
+
+  const { data: existing } = await supabase
+    .from("gorgone_zone_state")
+    .select("zone_id, platform")
+    .eq("gorgone_link_id", linkId);
 
   const existingKeys = new Set(
-    ((link.gorgone_sync_cursors ?? []) as { zone_id: string; platform: string }[])
-      .map((c) => `${c.zone_id}:${c.platform}`)
+    ((existing ?? []) as { zone_id: string; platform: string }[]).map(
+      (e) => `${e.zone_id}:${e.platform}`,
+    ),
   );
 
-  const zones = await fetchZones(link.gorgone_client_id);
-
-  const newCursors = zones.flatMap((zone) => {
-    const platforms: string[] = [];
-    if (zone.data_sources?.twitter) platforms.push("twitter");
-    if (zone.data_sources?.tiktok) platforms.push("tiktok");
-
+  const newRows = zones.flatMap((z) => {
+    const platforms: ("twitter" | "tiktok")[] = [];
+    if (z.data_sources?.twitter) platforms.push("twitter");
+    if (z.data_sources?.tiktok) platforms.push("tiktok");
     return platforms
-      .filter((p) => !existingKeys.has(`${zone.id}:${p}`))
+      .filter((p) => !existingKeys.has(`${z.id}:${p}`))
       .map((platform) => ({
-        gorgone_link_id: link.id,
-        account_id: link.account_id,
-        zone_id: zone.id,
-        zone_name: zone.name,
+        gorgone_link_id: linkId,
+        account_id: accountId,
+        zone_id: z.id,
+        zone_name: z.name,
         platform,
       }));
   });
 
-  if (newCursors.length > 0) {
-    const { error } = await supabase.from("gorgone_sync_cursors").insert(newCursors);
-    if (error) return { added: 0, error: error.message };
-  }
+  if (newRows.length === 0) return 0;
 
-  revalidatePath("/admin/accounts");
-  return { added: newCursors.length, error: null };
-}
+  const { error } = await supabase.from("gorgone_zone_state").insert(newRows);
+  if (error) throw new Error(`pre-register zone states: ${error.message}`);
 
-export async function unlinkGorgoneClient(
-  input: z.infer<typeof unlinkSchema>
-): Promise<{ error: string | null }> {
-  await requireAdmin();
-
-  const parsed = unlinkSchema.safeParse(input);
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
-
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("gorgone_links")
-    .delete()
-    .eq("id", parsed.data.linkId);
-
-  if (error) return { error: error.message };
-
-  revalidatePath("/admin/accounts");
-  return { error: null };
-}
-
-export async function toggleZoneSync(
-  input: z.infer<typeof toggleSchema>
-): Promise<{ error: string | null }> {
-  await requireAdmin();
-
-  const parsed = toggleSchema.safeParse(input);
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
-
-  const supabase = await createClient();
-
-  const { error } = await supabase
-    .from("gorgone_sync_cursors")
-    .update({
-      is_active: parsed.data.isActive,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", parsed.data.cursorId);
-
-  if (error) return { error: error.message };
-
-  revalidatePath("/admin/accounts");
-  return { error: null };
-}
-
-export async function triggerManualSync(
-  input: z.infer<typeof syncSchema>
-): Promise<{ synced: number; error: string | null }> {
-  await requireAdmin();
-
-  const parsed = syncSchema.safeParse(input);
-  if (!parsed.success) return { synced: 0, error: parsed.error.issues[0].message };
-
-  const supabase = await createClient();
-
-  const { data: cursor, error: cursorError } = await supabase
-    .from("gorgone_sync_cursors")
-    .select("*")
-    .eq("id", parsed.data.cursorId)
-    .single();
-
-  if (cursorError || !cursor) {
-    return { synced: 0, error: "Cursor not found" };
-  }
-
-  const typedCursor = cursor as GorgoneSyncCursor;
-  const result =
-    typedCursor.platform === "twitter"
-      ? await syncZoneTweets(supabase, typedCursor)
-      : await syncZoneTiktok(supabase, typedCursor);
-
-  revalidatePath("/admin/accounts");
-  return { synced: result.synced, error: result.error ?? null };
+  return newRows.length;
 }

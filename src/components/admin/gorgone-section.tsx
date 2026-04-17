@@ -13,25 +13,26 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Database, Loader2, RefreshCw, Unlink } from "lucide-react";
+import { Database, Loader2, RefreshCw, Unlink, Zap } from "lucide-react";
 import { GorgoneLinkDialog } from "./gorgone-link-dialog";
 import { GorgoneZoneGroup } from "./gorgone-zone-item";
 import {
   getGorgoneLinks,
   unlinkGorgoneClient,
   refreshGorgoneZones,
+  runSweepNow,
 } from "@/app/actions/gorgone";
 import { toast } from "sonner";
-import type { GorgoneLinkWithCursors, GorgoneSyncCursor } from "@/types";
+import type { GorgoneLinkWithZones, GorgoneZoneRow } from "@/types";
 
-function groupCursorsByZone(
-  cursors: GorgoneSyncCursor[]
-): [string, GorgoneSyncCursor[]][] {
-  const map = new Map<string, GorgoneSyncCursor[]>();
-  for (const cursor of cursors) {
-    const group = map.get(cursor.zone_name) ?? [];
-    group.push(cursor);
-    map.set(cursor.zone_name, group);
+function groupZonesByName(
+  rows: GorgoneZoneRow[],
+): [string, GorgoneZoneRow[]][] {
+  const map = new Map<string, GorgoneZoneRow[]>();
+  for (const row of rows) {
+    const group = map.get(row.zone_name) ?? [];
+    group.push(row);
+    map.set(row.zone_name, group);
   }
   return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
 }
@@ -41,10 +42,11 @@ interface GorgoneSectionProps {
 }
 
 export function GorgoneSection({ accountId }: GorgoneSectionProps) {
-  const [links, setLinks] = useState<GorgoneLinkWithCursors[]>([]);
+  const [links, setLinks] = useState<GorgoneLinkWithZones[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [unlinkTarget, setUnlinkTarget] = useState<string | null>(null);
   const [refreshingLinkId, setRefreshingLinkId] = useState<string | null>(null);
+  const [isSweeping, startSweepTransition] = useTransition();
   const [, startTransition] = useTransition();
 
   const refresh = useCallback(async () => {
@@ -69,9 +71,9 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
       if (result.error) {
         toast.error(result.error);
       } else if (result.added > 0) {
-        toast.success(`${result.added} new zone(s) added`);
+        toast.success(`${result.added} new zone(s) registered`);
       } else {
-        toast.info("All zones already synced");
+        toast.info("All zones already registered");
       }
       setRefreshingLinkId(null);
       refresh();
@@ -87,6 +89,20 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
         toast.success("Client unlinked");
       }
       setUnlinkTarget(null);
+      refresh();
+    });
+  }
+
+  function handleSweepNow() {
+    startSweepTransition(async () => {
+      const report = await runSweepNow();
+      if (report.error) {
+        toast.error(report.error);
+      } else {
+        toast.success(
+          `Sweep done: ${report.total_ingested} ingested across ${report.zones_with_data} zone(s) in ${report.duration_ms}ms`,
+        );
+      }
       refresh();
     });
   }
@@ -118,18 +134,36 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
             {links.length}
           </Badge>
         </div>
-        <GorgoneLinkDialog
-          accountId={accountId}
-          existingClientIds={existingClientIds}
-          onLinked={refresh}
-        />
+        <div className="flex items-center gap-2">
+          {links.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-muted-foreground"
+              onClick={handleSweepNow}
+              disabled={isSweeping}
+              title="Run reconciliation sweep across all linked zones"
+            >
+              {isSweeping ? (
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+              ) : (
+                <Zap className="mr-1 h-3 w-3" />
+              )}
+              Sweep
+            </Button>
+          )}
+          <GorgoneLinkDialog
+            accountId={accountId}
+            existingClientIds={existingClientIds}
+            onLinked={refresh}
+          />
+        </div>
       </div>
 
       {links.length === 0 ? (
         <div className="rounded-lg border border-dashed p-6 text-center">
           <p className="text-sm text-muted-foreground">
-            No Gorgone clients linked. Link a client to start syncing
-            monitoring data.
+            No Gorgone clients linked. Link a client to receive monitoring data.
           </p>
         </div>
       ) : (
@@ -155,7 +189,7 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
                     className="h-7 text-xs text-muted-foreground"
                     onClick={() => handleRefreshZones(link.id)}
                     disabled={refreshingLinkId === link.id}
-                    title="Fetch new zones from Gorgone"
+                    title="Discover new zones from Gorgone"
                   >
                     {refreshingLinkId === link.id ? (
                       <Loader2 className="mr-1 h-3 w-3 animate-spin" />
@@ -176,17 +210,17 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
                 </div>
               </div>
 
-              {link.cursors.length === 0 ? (
+              {link.zones.length === 0 ? (
                 <p className="px-1 text-xs text-muted-foreground">
-                  No zones available for sync.
+                  No zones available for this client.
                 </p>
               ) : (
                 <div className="space-y-1.5">
-                  {groupCursorsByZone(link.cursors).map(([zoneName, cursors]) => (
+                  {groupZonesByName(link.zones).map(([zoneName, rows]) => (
                     <GorgoneZoneGroup
                       key={zoneName}
                       zoneName={zoneName}
-                      cursors={cursors}
+                      rows={rows}
                       onUpdated={refresh}
                     />
                   ))}
@@ -207,8 +241,12 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
           <AlertDialogHeader>
             <AlertDialogTitle>Unlink Gorgone Client</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove the link and all sync cursors for this client.
-              Already synced data will be preserved.
+              This removes the link and all per-zone state. Push toggles
+              ({" "}
+              <code>push_to_attila</code>
+              ) on Gorgone are <strong>not</strong> reset and need to be turned
+              off manually if you want to fully detach. Already-ingested data
+              is preserved.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

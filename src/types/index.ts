@@ -211,8 +211,8 @@ export interface Army {
 // Gorgone Integration
 // ---------------------------------------------------------------------------
 
-export type GorgoneSyncStatus = "idle" | "syncing" | "error";
-export type GorgoneSyncPlatform = "twitter" | "tiktok";
+export type GorgonePlatform = "twitter" | "tiktok";
+export type GorgoneEventSource = "webhook" | "sweep";
 
 export interface GorgoneLink {
   id: string;
@@ -224,25 +224,48 @@ export interface GorgoneLink {
   updated_at: string;
 }
 
-export interface GorgoneLinkWithCursors extends GorgoneLink {
-  cursors: GorgoneSyncCursor[];
-}
-
-export interface GorgoneSyncCursor {
+export interface GorgoneZoneState {
   id: string;
   gorgone_link_id: string;
   account_id: string;
   zone_id: string;
   zone_name: string;
-  platform: GorgoneSyncPlatform;
-  is_active: boolean;
-  last_cursor: string | null;
-  last_synced_at: string | null;
-  total_synced: number;
-  status: GorgoneSyncStatus;
-  error_message: string | null;
+  platform: GorgonePlatform;
+
+  // Composite cursor used by the sweep reconciler.
+  last_event_at: string | null;
+  last_event_id: string | null;
+  last_event_source: GorgoneEventSource | null;
+
+  // Last activity timestamps per delivery channel.
+  last_webhook_at: string | null;
+  last_sweep_at: string | null;
+
+  // Counters.
+  total_received: number;
+  total_via_webhook: number;
+  total_via_sweep: number;
+
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * A Gorgone link enriched with the per-zone activation flag (read live
+ * from Gorgone via `getZonePushStates`) plus the Attila-side ingestion
+ * state. Zones declared by Gorgone but never seen by Attila yet appear
+ * here with `state: null`.
+ */
+export interface GorgoneZoneRow {
+  zone_id: string;
+  zone_name: string;
+  platform: GorgonePlatform;
+  push_to_attila: boolean;
+  state: GorgoneZoneState | null;
+}
+
+export interface GorgoneLinkWithZones extends GorgoneLink {
+  zones: GorgoneZoneRow[];
 }
 
 // ---------------------------------------------------------------------------

@@ -1,264 +1,224 @@
 # Gorgone Ingestion Module
 
-> Module d'ingestion des données Twitter et TikTok depuis Gorgone vers Attila V4.
-> Implémenté et testé le 15 avril 2026. Capacity Estimator mis à jour le 15 avril 2026.
+> Push pipeline (webhook + sweep) for Twitter & TikTok data flowing
+> from Gorgone into Attila V4.
+> Refactored 17 avril 2026 — replaces the legacy polling design.
 
 ---
 
 ## Contexte
 
-Gorgone est la plateforme de monitoring des réseaux sociaux. Elle collecte les données Twitter et TikTok par batch via des règles API configurées dans des "zones" (topics).
+Gorgone est la plateforme de monitoring des réseaux sociaux. Elle
+collecte les données Twitter et TikTok via des "zones" (topics) et
+les stocke dans son propre Supabase.
 
-Attila V4 a besoin de ces données pour le mode Sniper de l'automator : capter les posts → filtrer → décider via IA → rédiger des réponses → publier via les avatars.
+Attila V4 a besoin de ces données **au fil de l'eau** pour son mode
+Sniper : capter les posts → filtrer (rules + IA) → rédiger des
+réponses → publier via les avatars (devices Android sur des box).
 
-Ce module gère la **première étape** : capter les données de Gorgone et les stocker dans Attila.
+Ce module gère la **première étape** : capter les données de Gorgone
+et les stocker dans Attila au moment exact où elles arrivent.
 
 ---
 
 ## Architecture
 
-### Deux projets Supabase distincts
+### Flow de bout en bout
 
 ```
-Gorgone Supabase (lecture seule)          Attila V4 Supabase
-─────────────────────────────             ──────────────────
-twitter_tweets      (4.6M rows)    →      gorgone_tweets
-twitter_profiles    (1.4M rows)           gorgone_tiktok_videos
-tiktok_videos       (33.8K rows)   →      gorgone_links
-tiktok_profiles     (18.7K rows)          gorgone_sync_cursors
-zones               (66 rows)
-clients             (17 rows)
+┌──────────── GORGONE (Supabase) ─────────────┐
+│                                             │
+│  zones.push_to_attila ──┐ (toggle on/off)   │
+│                         │                   │
+│  twitter_tweets ─► trigger ─► function ─┐   │
+│  tiktok_videos  ─► trigger ─► function ─┤   │
+│                                         │   │
+│                pg_net.http_post (async) │   │
+│                                         ▼   │
+│  integration_config:                        │
+│    attila_webhook_url     (Attila V4 URL)   │
+│    attila_webhook_secret  (shared secret)   │
+└─────────────────────────────────────┬───────┘
+                                      │ HTTPS POST + X-Webhook-Secret
+                                      ▼
+┌──────────── ATTILA V4 (Render) ─────────────┐
+│                                             │
+│  POST /api/gorgone/webhook                  │
+│   1. timing-safe secret check               │
+│   2. Zod parse (twitter | tiktok)           │
+│   3. resolve account via gorgone_links      │
+│   4. upsert gorgone_tweets|videos           │
+│      ON CONFLICT(gorgone_id) DO NOTHING     │
+│   5. register_gorgone_event RPC             │
+│      (advances last_event_at, +counter)     │
+│   6. status='pending' → claimed by pipeline │
+│                                             │
+│  Sweep worker (server.mjs, every 60s)       │
+│   - safety net behind the webhook           │
+│   - per (zone, platform): query Gorgone     │
+│     since last_event_at, ingest via SAME    │
+│     ingestTweet/ingestTiktok function       │
+│                                             │
+└─────────────────────────────────────────────┘
 ```
 
-Les bases ne sont **pas connectées**. L'application fait le pont :
-1. Se connecte à Gorgone via un Supabase client (service role, lecture seule)
-2. Query les nouveaux posts depuis le dernier cursor
-3. Upsert dans les tables Attila avec dedup
+### Pourquoi le webhook (et pas le polling, ni Realtime)
 
-### Sync incrémentale par cursor
-
-Chaque zone/plateforme a un cursor (`gorgone_sync_cursors`) qui stocke le `collected_at` du dernier row synchronisé.
-
-```
-Premier sync : WHERE collected_at >= now()     → 0 rows (démarre au présent)
-Sync suivant : WHERE collected_at > cursor     → nouveaux posts seulement
-Pas de données : query retourne 0 rows         → cursor ne bouge pas
-Erreur : cursor ne bouge pas                   → prochain cycle re-essaie
-```
-
-Batch de 500 rows max par sync. Dedup garanti par `UNIQUE(gorgone_id)` + `ON CONFLICT DO NOTHING`.
-
-### Données dénormalisées
-
-Les tweets/vidéos sont stockés avec les infos auteur (username, followers, verified) dénormalisées au moment du sync. Le JOIN avec `twitter_profiles`/`tiktok_profiles` est fait côté Gorgone, une seule fois. Aucune query cross-DB ensuite.
-
----
-
-## Mapping des comptes
-
-Un compte Attila peut être lié à **plusieurs** clients Gorgone (relation 1:N).
-
-```
-accounts (Attila)
-  └── gorgone_links (1:N)
-        ├── gorgone_client_id → clients.id (Gorgone)
-        └── gorgone_sync_cursors (1:N par zone par plateforme)
-              ├── zone_id → zones.id (Gorgone)
-              └── platform: 'twitter' | 'tiktok'
-```
-
-L'admin lie les comptes dans `/admin/accounts` > détail du compte > section Gorgone.
+- **Push, pas polling** → latence < 1 s, zéro requête à vide.
+- **Webhook plutôt que Realtime Broadcast** → server-to-server, l'historique
+  complet est tracé dans `net._http_response` côté Gorgone, pas de
+  WebSocket à maintenir, scaling horizontal trivial.
+- **Sweep en filet** → si Attila est down lors d'un déploiement Render,
+  la boucle 60 s rattrape silencieusement les événements perdus
+  (idempotence garantie par `UNIQUE(gorgone_id)` + cursor composite
+  `(last_event_at, last_event_id)`).
 
 ---
 
 ## Tables Attila
 
 ### `gorgone_links`
-Mapping comptes. FK `account_id` → `accounts`, CASCADE on delete. UNIQUE sur `(account_id, gorgone_client_id)`.
+Mapping `accounts ↔ Gorgone clients`. FK `account_id` → `accounts`,
+CASCADE on delete. UNIQUE sur `(account_id, gorgone_client_id)`.
 
-### `gorgone_sync_cursors`
-Un cursor par zone par plateforme. FK `gorgone_link_id` → `gorgone_links`, CASCADE on delete. Colonnes clés : `last_cursor` (timestamptz), `total_synced` (bigint), `status` (idle/syncing/error), `error_message`.
+### `gorgone_zone_state`
+Une ligne par `(account, zone, platform)`. Stocke uniquement l'**état
+observé** côté Attila (l'activation vit côté Gorgone via
+`zones.push_to_attila`). Champs clés :
 
-### `gorgone_tweets`
-Tweets ingérés. `gorgone_id` (UNIQUE) = l'UUID du tweet dans Gorgone, clé de dedup. Auteur dénormalisé (`author_username`, `author_followers`, `author_verified`, etc.). Index sur `(zone_id, collected_at DESC)` et `(account_id, status)`.
+| Colonne              | Rôle |
+|----------------------|------|
+| `last_event_at`      | timestamp du dernier post ingéré pour ce cursor |
+| `last_event_id`      | UUID du dernier post (avec `last_event_at` forme un cursor composite anti-collision sur les bordures de batch) |
+| `last_event_source`  | `webhook` ou `sweep` |
+| `last_webhook_at`    | timestamp de la dernière livraison par webhook |
+| `last_sweep_at`      | timestamp de la dernière livraison par sweep |
+| `total_received`, `total_via_webhook`, `total_via_sweep` | compteurs informatifs |
 
-### `gorgone_tiktok_videos`
-Vidéos TikTok ingérées. Même pattern que les tweets. Champs spécifiques : `play_count`, `digg_count`, `share_url`, etc.
+RPC `register_gorgone_event(...)` : upsert atomique idempotent qui
+n'avance le cursor que vers l'avant. Appelée à la fois par le webhook
+et par le sweep.
 
-### RLS
-Chaque table : admin full access + account members read own (filtré par `account_id`).
+### `gorgone_tweets` / `gorgone_tiktok_videos`
+Tables d'ingestion. `gorgone_id` UNIQUE = clé de dedup. Auteur
+dénormalisé. `status='pending'` à l'insertion → consommé par le
+pipeline (RPC `claim_pending_post`).
 
 ---
 
 ## Code
 
-### `src/lib/gorgone/` — Module pur (pas de framework)
+### `src/lib/gorgone/`
 
-| Fichier | Rôle |
-|---------|------|
-| `client.ts` | Client Supabase Gorgone (service role, server-only) |
-| `types.ts` | Types des données brutes Gorgone (GorgoneRawTweetRow, GorgoneRawTiktokVideoRow, GorgoneClient, GorgoneZone) |
-| `sync-core.ts` | Moteur de sync générique `executeCursorSync<T>()` — une seule implémentation pour Twitter et TikTok |
-| `sync-tweets.ts` | SELECT + mapping Twitter → appelle sync-core |
-| `sync-tiktok.ts` | SELECT + mapping TikTok → appelle sync-core |
-| `sync-zones.ts` | `fetchGorgoneClients()` et `fetchGorgoneZones()` — listing depuis Gorgone |
-| `index.ts` | Barrel exports |
+| Fichier               | Rôle |
+|-----------------------|------|
+| `client.ts`           | Supabase client vers le projet Gorgone (service role, server-only) |
+| `zones.ts`            | `fetchGorgoneClients()`, `fetchGorgoneZones()` — listing depuis Gorgone |
+| `webhook-payload.ts`  | Schemas Zod du contrat webhook v2 (discriminated union `tweet.created` / `tiktok.created`) |
+| `ingest.ts`           | `ingestTweet`, `ingestTiktok` — upsert idempotent + advance cursor. Source unique partagée par webhook **ET** sweep. |
+| `sweep.ts`            | `runSweepCycle` — boucle de réconciliation (filet de sécurité) |
+| `admin-config.ts`     | Lit/écrit `zones.push_to_attila` et `integration_config` côté Gorgone |
+| `capacity-estimator.ts` | Estimateur de volume + capacité (inchangé) |
+| `types.ts`            | Types du capacity estimator |
+| `index.ts`            | Barrel exports |
 
-### `src/app/actions/gorgone.ts` — Server Actions
+### `src/app/actions/gorgone.ts`
 
-| Action | Usage |
-|--------|-------|
-| `getGorgoneLinks(accountId)` | Charge liens + cursors pour l'UI admin |
-| `getGorgoneClients()` | Liste les clients Gorgone pour le dialog de linking |
-| `linkGorgoneClient(...)` | Crée le lien + cursors pour chaque zone/plateforme |
-| `unlinkGorgoneClient(linkId)` | Supprime le lien (CASCADE supprime cursors) |
-| `refreshGorgoneZones(linkId)` | Détecte et ajoute les nouvelles zones sans toucher aux existantes |
-| `toggleZoneSync(cursorId, isActive)` | Active/désactive un cursor |
-| `triggerManualSync(cursorId)` | Lance un sync immédiat |
+| Action                       | Usage |
+|------------------------------|-------|
+| `getGorgoneLinks(accountId)` | Liens enrichis avec `push_to_attila` (live Gorgone) + `gorgone_zone_state` |
+| `getGorgoneClients()`        | Liste les clients Gorgone disponibles |
+| `linkGorgoneClient(...)`     | Crée le lien + pré-enregistre les zone states |
+| `unlinkGorgoneClient(...)`   | Supprime le lien (CASCADE supprime les states) |
+| `refreshGorgoneZones(...)`   | Pré-enregistre les nouvelles zones côté Attila |
+| `setZonePushEnabled(...)`    | Toggle `zones.push_to_attila` côté Gorgone |
+| `pushWebhookConfigToGorgone()` | Mirror URL + secret de Attila → `integration_config` Gorgone |
+| `inspectWebhookConfig()`     | Lit la config webhook actuelle dans Gorgone |
+| `runSweepNow()`              | Déclenche un cycle de sweep manuel |
 
-### `src/app/api/gorgone/sync/route.ts` — Cron endpoint
+### `src/app/api/gorgone/`
 
-`POST` protégé par `Authorization: Bearer {CRON_SECRET}`.
-1. Auto-discover : détecte les nouvelles zones pour chaque lien actif
-2. Sync : itère tous les cursors actifs et lance les syncs
-3. Retourne un rapport JSON
+| Route               | Rôle |
+|---------------------|------|
+| `webhook/route.ts`  | Endpoint POST appelé par les triggers Postgres Gorgone |
+| `sweep/route.ts`    | Endpoint POST appelé par le sweep worker (server.mjs) |
 
-### `src/components/admin/` — UI
-
-| Composant | Rôle |
-|-----------|------|
-| `gorgone-section.tsx` | Section dans AccountDetail avec liens, zones groupées, refresh, unlink |
-| `gorgone-link-dialog.tsx` | Dialog pour lier un client Gorgone (Select avec clients disponibles) |
-| `gorgone-zone-item.tsx` | Zone groupée avec cursors par plateforme (toggle, sync now, status) |
+### `server.mjs`
+Le worker `Gorgone-Sweep` tourne en continu à intervalle fixe
+(`GORGONE_SWEEP_INTERVAL_MS`, défaut 60 s) et tape sur
+`/api/gorgone/sweep`. Même pattern que les workers pipeline.
 
 ---
 
 ## Variables d'environnement
 
 ```
+NEXT_PUBLIC_APP_URL=https://attila-yew3.onrender.com
 GORGONE_SUPABASE_URL=https://rgegkezdegibgbdqzesd.supabase.co
 GORGONE_SUPABASE_SERVICE_ROLE_KEY=eyJhb...
-CRON_SECRET=<secret pour protéger l'endpoint sync>
+GORGONE_WEBHOOK_SECRET=<32 chars base64url>
+GORGONE_SWEEP_INTERVAL_MS=60000
+CRON_SECRET=<protège /api/gorgone/sweep>
 ```
 
 ---
 
-## Cron (à configurer au déploiement)
+## Activation (par zone)
 
-Appeler `POST /api/gorgone/sync` avec le header `Authorization: Bearer {CRON_SECRET}`.
+1. Lien le client Gorgone à un account Attila depuis `/admin/accounts`.
+2. Sur chaque zone listée, toggle "Live" → écrit `push_to_attila=true`
+   dans Gorgone.
+3. La prochaine INSERT sur `twitter_tweets`/`tiktok_videos` pour cette
+   zone déclenche le webhook → ingestion immédiate dans Attila.
 
-- Twitter : toutes les 30 secondes (aligné avec la cadence de collecte Gorgone ~60-100s)
-- TikTok : toutes les 5 minutes (Gorgone collecte toutes les 60min)
-
-Le endpoint traite les deux plateformes en un seul appel. Un seul cron suffit.
+Pour rotater le secret webhook : changer `GORGONE_WEBHOOK_SECRET` dans
+les env Render, puis cliquer "Push webhook config" dans l'admin (ou
+appeler `pushWebhookConfigToGorgone`).
 
 ---
 
-## Points d'attention pour les prochains développements
+## Garanties
 
-### Volumes Gorgone (avril 2026)
+| Propriété | Mécanisme |
+|---|---|
+| **Latence < 1 s** | trigger Postgres synchrone → `pg_net` async → POST direct |
+| **Zéro doublon** | `UNIQUE(gorgone_id)` + `ON CONFLICT DO NOTHING` |
+| **Zéro perte** | webhook + sweep 60 s, cursor composite `(collected_at, id)` |
+| **Pas de back-pressure** | `pg_net` est async, ne bloque pas l'INSERT côté Gorgone |
+| **Observabilité** | tous les calls webhook tracés dans `net._http_response` Gorgone |
+| **Activation par zone** | `zones.push_to_attila` (Gorgone, source de vérité) |
 
-| Table | Rows | Cadence |
-|-------|-----:|---------|
-| `twitter_tweets` | 4.6M | ~2.2K/jour/zone active |
-| `tiktok_videos` | 33.8K | ~500/semaine/zone |
-| `twitter_profiles` | 1.4M | — |
-| `tiktok_profiles` | 18.7K | — |
+---
 
-### Pas d'historique
+## Filtres disponibles pour les campagnes
 
-Les cursors démarrent à `now()`. On ne sync que les posts arrivés **après** le linking. L'automator répond en temps réel, pas besoin de rattraper l'historique.
+Toutes les données nécessaires au filtrage (`src/lib/pipeline/filter.ts`)
+sont incluses dans le payload webhook v2 et stockées dénormalisées dans
+`gorgone_tweets` / `gorgone_tiktok_videos`. Aucune query vers Gorgone
+n'est jamais nécessaire dans le pipeline.
 
-### Dedup garantie
+**Twitter :** `post_type` (post/reply/retweet), `min_author_followers`,
+`verified_only`, `languages`, `min_engagement`, `min_like_count`,
+`min_view_count`, `min_reply_count`, `min_quote_count`, `min_retweet_count`.
 
-Double protection : cursor strict `>` + `UNIQUE(gorgone_id)` avec `ON CONFLICT DO NOTHING`. Même si le même batch est re-synced (crash, retry), zero doublon.
+**TikTok :** `exclude_ads`, `exclude_private`, `min_author_followers`,
+`verified_only`, `languages`, `min_engagement`, `min_play_count`,
+`min_comment_count`, `min_digg_count`, `min_share_count`, `min_collect_count`.
 
-### Scalabilité
+---
 
-- Un cursor par zone par plateforme = parallélisable
-- Le code dans `lib/gorgone/` est du TypeScript pur, déplaçable vers un worker dédié sans modification
-- Batch de 500 rows max : si plus de 500 en attente, les prochains cycles rattrapent
-
-### Filtres disponibles pour les campagnes
-
-Toutes les données nécessaires au filtrage sont déjà ingérées. Aucune query vers Gorgone nécessaire.
-
-**Twitter :**
-
-| Filtre | Champ | Exemple |
-|--------|-------|---------|
-| Post type (post original) | `is_reply = false AND text NOT LIKE 'RT @%'` | Exclure replies et RT |
-| Post type (reply) | `is_reply = true` | Seulement les réponses |
-| Post type (retweet) | `text LIKE 'RT @%'` | Seulement les RT |
-| Min followers auteur | `author_followers >= N` | `>= 100` |
-| Verified only | `author_verified = true` | Comptes vérifiés |
-| Langue | `lang IN ('en', 'fr')` | Cibler des langues |
-| Min engagement | `total_engagement >= N` | `>= 50` |
-| Min likes / views | `like_count >= N`, `view_count >= N` | Seuils spécifiques |
-
-**TikTok :**
-
-| Filtre | Champ | Exemple |
-|--------|-------|---------|
-| Min followers auteur | `author_followers >= N` | `>= 100` |
-| Verified only | `author_verified = true` | Comptes vérifiés |
-| Exclure comptes privés | `author_is_private = false` | Ne peut pas commenter |
-| Exclure les pubs | `is_ad = false` | Pas de réponse aux ads |
-| Langue | `language IN ('en', 'fr')` | Cibler des langues |
-| Min plays | `play_count >= N` | `>= 1000` |
-| Min engagement | `total_engagement >= N` | `>= 100` |
-| Min comments | `comment_count >= N` | Vidéos commentées |
-
-### Capacity Estimator
-
-Module intégré dans l'automator qui estime le volume de posts d'une zone, applique les filtres de campagne, et calcule le besoin en avatars vs la capacité disponible — **par réseau** (Twitter et TikTok séparément).
-
-**Architecture :**
+## Pipeline downstream (inchangé)
 
 ```
-lib/gorgone/capacity-estimator.ts    — moteur de calcul pur (3 fonctions composables)
-app/actions/capacity.ts              — server action (auth, filtrage avatars par réseau, orchestration)
-components/campaigns/capacity-estimator.tsx — composant UI par plateforme
+[1. Ingestion]  ← CE MODULE (push webhook + sweep)
+[2. Filtrage par règles]   src/lib/pipeline/filter.ts
+[3. Filtrage IA]           src/lib/pipeline/analyst.ts
+[4. Sélection avatars]     src/lib/pipeline/avatar-selector.ts
+[5. Rédaction]             src/lib/pipeline/writer.ts
+[6. Publication ADB]       campaign_jobs → executor.ts
 ```
 
-**3 fonctions composables (moteur) :**
-
-1. `estimateZoneVolume(zoneId, platform)` — query Gorgone pour le volume brut sur les dernières 24h de données disponibles (fenêtre adaptative, pas NOW()) avec breakdown par type de post, langues, stats auteurs
-2. `applyFilters(volume, filters)` — calcul pur : applique les filtres de campagne et retourne le taux de passage et le volume filtré/heure
-3. `estimateCapacity(filtered, avatarParams)` — calcul pur : double contrainte horaire/journalière, calcule avatars nécessaires, manquants, bottleneck
-
-**Server action `getCapacityEstimate` :**
-
-- Reçoit les `capacity_params` par réseau depuis la table `campaigns` (JSONB)
-- Pour chaque plateforme : filtre les avatars par `twitter_enabled` / `tiktok_enabled`, calcule le volume, applique les filtres, estime la capacité avec les params spécifiques au réseau
-- Retourne un résultat par plateforme (volume, filtré, capacité, avatars nécessaires)
-
-**Paramètres par réseau (stockés en DB, colonne `capacity_params` JSONB) :**
-
-```typescript
-capacity_params: {
-  twitter: { max_responses_per_hour: 5, max_responses_per_day: 50, min_avatars_per_post: 1, max_avatars_per_post: 3 },
-  tiktok:  { max_responses_per_hour: 3, max_responses_per_day: 30, min_avatars_per_post: 1, max_avatars_per_post: 2 },
-}
-```
-
-**Calcul de capacité (par réseau) :**
-
-- `avg_avatars_per_post = (min + max) / 2`
-- `blocked_rate` calculé automatiquement depuis le status des avatars (pas un input manuel)
-- `avatars_needed = max(ceil(need_hourly / max_per_hour), ceil(need_daily / max_per_day))` — le bottleneck le plus contraint gagne
-- `avatars_missing = max(0, avatars_needed - available_avatars)`
-
-**UI :** intégrée dans le settings panel de l'automator et dans le wizard de création de campagne. Un bloc par réseau actif avec les métriques (volume brut, filtré, réponses/h) et les 4 paramètres éditables.
-
-### Prochaines étapes (pipeline automator)
-
-```
-[1. Ingestion]  ← CE MODULE (fait)
-[2. Filtrage par règles]  — engagement min, type de post, followers, langue
-[3. Filtrage IA]  — guideline, pertinence, décision
-[4. Rédaction]  — réponses par avatar avec personnalité
-[5. Publication]  — scripts ADB via gateway (scripts existants)
-```
-
-Le champ `status` sur `gorgone_tweets` et `gorgone_tiktok_videos` (valeurs : `pending`, `processed`, `filtered_out`, `error`) est prévu pour le pipeline. L'étape 2 mettra à jour ce status.
+Le champ `status` sur `gorgone_tweets` / `gorgone_tiktok_videos`
+(valeurs : `pending`, `processing`, `processed`, `filtered_out`,
+`error`) est piloté par le pipeline. Le webhook insère toujours en
+`pending`.
