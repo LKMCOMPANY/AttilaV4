@@ -28,19 +28,30 @@ Les deux flows sont 100% déterministes, pas besoin de LLM à l'exécution.
 
 ### Installation ADBKeyboard (une seule fois par device)
 
-```
-POST /android_api/v1/install_apk_from_url_batch
-Body: {
-  "db_ids": "{DB_ID}",
-  "url": "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/keyboardservice-debug.apk"
-}
+**Trois étapes obligatoires**, dans cet ordre :
 
-Puis :
-POST /android_api/v1/shell/{DB_ID}
-Body: { "id": "{DB_ID}", "cmd": "ime enable com.android.adbkeyboard/.AdbIME" }
 ```
+1. POST /android_api/v1/install_apk_from_url_batch
+   Body: {
+     "db_ids": "{DB_ID}",
+     "url": "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/keyboardservice-debug.apk"
+   }
+
+2. POST /android_api/v1/shell/{DB_ID}
+   Body: { "id": "{DB_ID}", "cmd": "pm enable com.android.adbkeyboard" }
+
+3. POST /android_api/v1/shell/{DB_ID}
+   Body: { "id": "{DB_ID}", "cmd": "ime enable com.android.adbkeyboard/.AdbIME" }
+```
+
+⚠️ Sans le `pm enable` (étape 2), `install_apk_from_url_batch` laisse le package
+en `enabled=0` et le service IME ne le voit pas — `ime enable` retourne alors
+`Unknown input method ... cannot be enabled for user #0`.
 
 Temps d'installation : ~6 secondes. À intégrer dans la séquence de provisioning.
+
+**Provisioning de masse** : `node scripts/install-adbkeyboard.mjs` —
+voir `ADB-REFERENCE.md` section 2 bis.
 
 ---
 

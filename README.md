@@ -66,3 +66,23 @@ Follows the [official Supabase SSR guide](https://supabase.com/docs/guides/auth/
 |---------------------------------------|----------------------------|
 | `NEXT_PUBLIC_SUPABASE_URL`            | Supabase project URL       |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`| Supabase publishable key   |
+
+## Operational scripts
+
+```bash
+# Install ADBKeyboard on every device (idempotent, --concurrency 1 for serial)
+node scripts/install-adbkeyboard.mjs --concurrency 1
+
+# Audit ADBKeyboard state (read-only, only checks running containers)
+node scripts/audit-adbkeyboard.mjs
+
+# Manual single-device automation tests
+npx tsx scripts/x-reply.ts      --box <host> --device <db_id> --tweet-url <url> --text "<reply>"
+npx tsx scripts/tiktok-reply.ts --box <host> --device <db_id> --video-url <url> --text "<reply>"
+```
+
+VMOS host limit: **10 containers running simultaneously max**. Respect this
+with `--concurrency` on the install script.
+
+See `ADB-REFERENCE.md` (section 2 bis) for the full ADBKeyboard provisioning
+spec including the mandatory `pm enable` step.

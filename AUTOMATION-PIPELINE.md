@@ -5,6 +5,27 @@
 
 ---
 
+## Prerequis devices
+
+Avant qu'un device puisse executer des jobs du pipeline, il doit avoir
+**ADBKeyboard installe et active**. Sans ca, l'execution echoue avec
+`Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled`.
+
+Provisioning de masse (idempotent) :
+```bash
+node scripts/install-adbkeyboard.mjs --concurrency 1
+```
+
+Audit read-only :
+```bash
+node scripts/audit-adbkeyboard.mjs
+```
+
+Detail technique : voir `ADB-REFERENCE.md` section 2 bis. Tous les 46 devices
+de `box-1.attila.army` ont ete provisionnes le 17 avril 2026.
+
+---
+
 ## Vue d'ensemble
 
 Le pipeline automatise la reponse aux posts des reseaux sociaux via des avatars
@@ -471,7 +492,9 @@ src/lib/automation/
                          shell() — retourne { code, message, ok } (verifie code VMOS 200)
                          screenshot() — capture ecran en Buffer
                          wakeDevice() — WAKEUP + MENU + verify + retry swipe
-                         ensureAdbKeyboard() — enable + set + verify (3 etapes)
+                         ensureAdbKeyboard() — pm enable + ime enable + ime set + verify
+                                              (le pm enable est requis car install_apk_from_url_batch
+                                              installe le package en enabled=0 par defaut)
                          typeText() — broadcast + verification "Broadcast completed"
                          restoreGboard() — best-effort restore du clavier standard
                          escapeShellText() — echappe \, ", $, ` pour le shell
@@ -757,6 +780,12 @@ src/components/automator/
 scripts/
   x-reply.ts                CLI wrapper → importe de src/lib/automation/
   tiktok-reply.ts           CLI wrapper → importe de src/lib/automation/
+  install-adbkeyboard.mjs   Provisioning ADBKeyboard sur tous les devices
+                            (boot → install APK → pm enable → ime enable → stop).
+                            Idempotent. Flags : --concurrency N, --only DBID1,DBID2.
+                            Limite host VMOS : 10 containers running max.
+  audit-adbkeyboard.mjs     Audit read-only ADBKeyboard sur tous les devices
+                            (pour les devices currently running uniquement).
 ```
 
 ---

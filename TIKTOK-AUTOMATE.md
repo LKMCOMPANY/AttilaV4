@@ -34,17 +34,25 @@ pm list packages | grep musically
 
 ### Installation ADBKeyboard (une seule fois par device)
 
-```
-POST /android_api/v1/install_apk_from_url_batch
-Body: {
-  "db_ids": "{DB_ID}",
-  "url": "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/keyboardservice-debug.apk"
-}
+**Trois étapes obligatoires**, dans cet ordre (le `pm enable` est requis car
+`install_apk_from_url_batch` installe le package en `enabled=0`) :
 
-Puis :
-POST /android_api/v1/shell/{DB_ID}
-Body: { "id": "{DB_ID}", "cmd": "ime enable com.android.adbkeyboard/.AdbIME" }
 ```
+1. POST /android_api/v1/install_apk_from_url_batch
+   Body: {
+     "db_ids": "{DB_ID}",
+     "url": "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/keyboardservice-debug.apk"
+   }
+
+2. POST /android_api/v1/shell/{DB_ID}
+   Body: { "id": "{DB_ID}", "cmd": "pm enable com.android.adbkeyboard" }
+
+3. POST /android_api/v1/shell/{DB_ID}
+   Body: { "id": "{DB_ID}", "cmd": "ime enable com.android.adbkeyboard/.AdbIME" }
+```
+
+Provisioning de masse : `node scripts/install-adbkeyboard.mjs`. Voir
+`ADB-REFERENCE.md` section 2 bis pour le détail.
 
 ---
 

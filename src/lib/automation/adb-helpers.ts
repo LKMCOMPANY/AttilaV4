@@ -150,6 +150,12 @@ export async function wakeDevice(
 /**
  * Enable and activate ADBKeyboard. Verifies the switch actually succeeded.
  * Must be called BEFORE any `am broadcast -a ADB_INPUT_TEXT` call.
+ *
+ * If the package is installed but disabled (which is the default state right
+ * after `install_apk_from_url_batch`), the IME service does not see it, so
+ * `ime enable` returns "Unknown input method". We `pm enable` first as a
+ * safety net so this also works on freshly-provisioned devices.
+ *
  * Returns true if ADBKeyboard is ready, false on failure.
  */
 export async function ensureAdbKeyboard(
@@ -157,6 +163,9 @@ export async function ensureAdbKeyboard(
   dbId: string,
 ): Promise<boolean> {
   adbLog(dbId, "ensureAdbKeyboard START");
+
+  await shell(boxHost, dbId, "pm enable com.android.adbkeyboard");
+  await sleep(300);
 
   await shell(boxHost, dbId, `ime enable ${ADBKEYBOARD_IME}`);
   await sleep(300);

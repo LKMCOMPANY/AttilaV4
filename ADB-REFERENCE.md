@@ -115,7 +115,12 @@ Deux taps séparés. **Ne PAS chaîner avec `&&`** — envoyer deux appels API d
 
 ## 2. Saisie de texte
 
-### Taper du texte
+### Taper du texte (méthode recommandée : ADBKeyboard)
+
+Pour tout texte non trivial (espaces, accents, emojis), utiliser **ADBKeyboard**.
+Voir la section 2 bis ci-dessous pour l'installation et le flow complet.
+
+### Taper du texte (fallback : `input text`)
 
 ```
 input text '{texte}'
@@ -130,9 +135,10 @@ input text '{texte}'
 Testé : tous OK.
 
 **Limitations** :
-- Pas de caractères spéciaux (émojis, accents complexes)
+- Pas d'émojis ni d'accents complexes (`NullPointerException` côté Android)
 - Pour les accents simples, tester au cas par cas
 - `%s` remplace les espaces (le shell Android ne gère pas les espaces dans `input text`)
+- Pour tout texte saisi par les automations (X, TikTok), passer par ADBKeyboard.
 
 ### Effacer du texte
 
@@ -150,6 +156,99 @@ Sélectionner tout puis supprimer (3 appels séparés) :
 1. input keyevent 122          (KEYCODE_MOVE_HOME — curseur au début)
 2. input keyevent 28 123       (SHIFT + MOVE_END — sélectionner tout)
 3. input keyevent 67           (KEYCODE_DEL — supprimer la sélection)
+```
+
+---
+
+## 2 bis. ADBKeyboard — saisie de texte robuste
+
+ADBKeyboard est un IME tiers (`com.android.adbkeyboard`) qui accepte le texte
+via `am broadcast`. Indispensable dès qu'on saisit autre chose que de l'ASCII
+sans espaces : émojis, accents, ponctuation.
+
+### Installation (une fois par device, déjà fait sur les 46 devices actuels)
+
+Trois étapes obligatoires, dans cet ordre :
+
+```
+1. POST /android_api/v1/install_apk_from_url_batch
+   Body: {
+     "db_ids": "{DB_ID}",                // string, pas array
+     "url": "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/keyboardservice-debug.apk"
+   }
+
+2. POST /android_api/v1/shell/{DB_ID}
+   Body: { "id": "{DB_ID}", "cmd": "pm enable com.android.adbkeyboard" }
+
+3. POST /android_api/v1/shell/{DB_ID}
+   Body: { "id": "{DB_ID}", "cmd": "ime enable com.android.adbkeyboard/.AdbIME" }
+```
+
+**Pourquoi `pm enable` ?** L'API `install_apk_from_url_batch` installe le package
+en état **`enabled=0`** (DISABLED). Le service IME filtre par apps `enabled`,
+donc sans `pm enable` la commande `ime enable` retourne :
+```
+Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled for user #0
+```
+C'est le piège qui a fait planter tous les jobs pipeline du 17 avril.
+
+### Vérifications
+
+```
+# Le package est installé ?
+pm list packages com.android.adbkeyboard
+→ package:com.android.adbkeyboard
+
+# L'IME est connue du système ?
+ime list -a | grep adbkeyboard          # IMPORTANT : grep côté device
+→ com.android.adbkeyboard/.AdbIME: ...
+
+# L'IME est activée pour l'utilisateur ?
+ime list -s | grep adbkeyboard
+→ com.android.adbkeyboard/.AdbIME
+
+# L'IME est sélectionnée comme courante ?
+settings get secure default_input_method
+→ com.android.adbkeyboard/.AdbIME
+```
+
+> ⚠️ `ime list -a` sans `grep` produit ~15 KB et est **tronqué** par le shell
+> VMOS, ce qui peut donner l'impression que l'IME n'est pas enregistrée.
+> Toujours grep côté device pour les commandes verbeuses.
+
+### Utilisation runtime (chaque automation)
+
+Le code prod gère déjà ce flow dans `src/lib/automation/adb-helpers.ts` —
+voir `ensureAdbKeyboard()` et `typeText()`. Séquence à respecter :
+
+```
+1. Tap le champ de saisie cible (focus initial sur Gboard)
+2. ensureAdbKeyboard() : pm enable + ime enable + ime set + verify
+3. Re-tap le champ (le focus est perdu au switch d'IME)
+4. typeText("texte avec accents et 🔥") via am broadcast -a ADB_INPUT_TEXT
+5. Tap le bouton "post"
+6. restoreGboard() en best-effort pour rendre la main à l'opérateur
+```
+
+### Provisionning de masse
+
+Le script `scripts/install-adbkeyboard.mjs` automatise l'install + pm enable
++ ime enable sur tous les devices listés en base. Idempotent.
+
+```bash
+# Tous les devices, en série
+node scripts/install-adbkeyboard.mjs --concurrency 1
+
+# Sous-ensemble (CSV de db_id ou user_name)
+node scripts/install-adbkeyboard.mjs --concurrency 1 --only EDGEXXX,EDGEYYY
+```
+
+Limite host : **10 containers running simultanément max**. Le script respecte
+cette contrainte via `--concurrency`.
+
+Audit read-only :
+```bash
+node scripts/audit-adbkeyboard.mjs
 ```
 
 ---
