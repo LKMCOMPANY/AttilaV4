@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
-import { fetchGorgoneZones } from "@/lib/gorgone";
+import { fetchGorgoneZones, getZonePushStates } from "@/lib/gorgone";
 import type { Campaign, CampaignFilters, CampaignPlatform, CapacityParams, GorgoneZoneState } from "@/types";
 import type { GorgoneZone } from "@/lib/gorgone";
 
@@ -65,6 +65,12 @@ export interface AccountZone {
   zone_name: string;
   platforms: ("twitter" | "tiktok")[];
   gorgone_client_name: string;
+  /**
+   * Mirror of `zones.push_to_attila` (live from Gorgone). When `false`,
+   * the campaign creation UI surfaces a clear warning so users don't
+   * configure a campaign on a zone that won't ever push data.
+   */
+  push_enabled: boolean;
 }
 
 export async function getAccountZones(
@@ -104,11 +110,15 @@ export async function getAccountZones(
   for (const link of typedLinks) {
     const states = link.gorgone_zone_state ?? [];
     let zones: GorgoneZone[] = [];
+    let pushStates: Map<string, boolean> = new Map();
+
     try {
       zones = await fetchGorgoneZones(link.gorgone_client_id);
+      pushStates = await getZonePushStates(zones.map((z) => z.id));
     } catch {
       // Gorgone unreachable: fall back to whatever zones we've previously
-      // seen events from (stored locally in gorgone_zone_state).
+      // seen events from (stored locally in gorgone_zone_state). We can't
+      // know push state from here, so we mark them as "unknown" → false.
       for (const state of states) {
         const existing = zoneMap.get(state.zone_id);
         if (existing) {
@@ -121,6 +131,7 @@ export async function getAccountZones(
             zone_name: state.zone_name,
             platforms: [state.platform],
             gorgone_client_name: link.gorgone_client_name,
+            push_enabled: false,
           });
         }
       }
@@ -139,6 +150,7 @@ export async function getAccountZones(
         zone_name: zone.name,
         platforms,
         gorgone_client_name: link.gorgone_client_name,
+        push_enabled: pushStates.get(zone.id) ?? false,
       });
     }
   }

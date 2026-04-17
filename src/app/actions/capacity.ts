@@ -6,8 +6,9 @@ import {
   estimateZoneVolume,
   applyFilters,
   estimateCapacity,
-} from "@/lib/gorgone/capacity-estimator";
-import type { EstimatorFilters, CampaignCapacityResult } from "@/lib/gorgone/types";
+  type EstimatorFilters,
+  type CampaignCapacityResult,
+} from "@/lib/gorgone";
 import type { CampaignFilters, CampaignPlatform, CapacityParams } from "@/types";
 
 // ---------------------------------------------------------------------------

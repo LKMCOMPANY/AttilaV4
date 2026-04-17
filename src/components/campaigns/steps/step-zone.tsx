@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Loader2, Radio, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,17 @@ export function StepZone({ data, onChange, accountId }: StepProps) {
       }
     });
   }, [accountId]);
+
+  // Live (push enabled) zones float to the top of the list — that's where
+  // a campaign can actually receive data.
+  const sortedZones = useMemo(
+    () =>
+      [...zones].sort((a, b) => {
+        if (a.push_enabled !== b.push_enabled) return a.push_enabled ? -1 : 1;
+        return a.zone_name.localeCompare(b.zone_name);
+      }),
+    [zones],
+  );
 
   const handleSelect = (zone: AccountZone) => {
     onChange({
@@ -77,7 +89,7 @@ export function StepZone({ data, onChange, accountId }: StepProps) {
       </div>
 
       <div className="space-y-2">
-        {zones.map((zone) => {
+        {sortedZones.map((zone) => {
           const isSelected = data.gorgone_zone_id === zone.zone_id;
           return (
             <button
@@ -88,7 +100,8 @@ export function StepZone({ data, onChange, accountId }: StepProps) {
                 "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors",
                 isSelected
                   ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/30 hover:bg-muted/50"
+                  : "border-border hover:border-primary/30 hover:bg-muted/50",
+                !zone.push_enabled && !isSelected && "opacity-70"
               )}
             >
               <div
@@ -100,11 +113,31 @@ export function StepZone({ data, onChange, accountId }: StepProps) {
                 <Radio className="h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{zone.zone_name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="truncate text-sm font-medium">{zone.zone_name}</p>
+                  <Badge
+                    variant={zone.push_enabled ? "secondary" : "outline"}
+                    className={cn(
+                      "h-4 shrink-0 px-1.5 text-[9px] uppercase tracking-wide",
+                      !zone.push_enabled &&
+                        "border-warning/40 text-warning"
+                    )}
+                  >
+                    {zone.push_enabled ? "Live" : "Off"}
+                  </Badge>
+                </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <span>{zone.gorgone_client_name}</span>
                   <span className="text-border">·</span>
                   <span>{zone.platforms.join(", ")}</span>
+                  {!zone.push_enabled && (
+                    <>
+                      <span className="text-border">·</span>
+                      <span className="text-warning/80">
+                        Enable push in admin to receive data
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
               {isSelected && (

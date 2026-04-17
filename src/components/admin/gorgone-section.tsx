@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Database, Loader2, RefreshCw, Unlink, Zap } from "lucide-react";
 import { GorgoneLinkDialog } from "./gorgone-link-dialog";
 import { GorgoneZoneGroup } from "./gorgone-zone-item";
+import { GorgoneWebhookConfig } from "./gorgone-webhook-config";
 import {
   getGorgoneLinks,
   unlinkGorgoneClient,
@@ -159,6 +160,8 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
           />
         </div>
       </div>
+
+      {links.length > 0 && <GorgoneWebhookConfig />}
 
       {links.length === 0 ? (
         <div className="rounded-lg border border-dashed p-6 text-center">

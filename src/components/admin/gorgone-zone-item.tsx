@@ -4,14 +4,21 @@ import { useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { setZonePushEnabled } from "@/app/actions/gorgone";
+import { XIcon, TikTokIcon } from "@/components/icons/social-icons";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import type { GorgoneZoneRow } from "@/types";
 
+const PLATFORM_ICON = {
+  twitter: XIcon,
+  tiktok: TikTokIcon,
+} as const;
+
 function formatTimeAgo(dateStr: string | null): string {
-  if (!dateStr) return "Never";
+  if (!dateStr) return "—";
   const diff = Date.now() - new Date(dateStr).getTime();
   const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "Just now";
+  if (minutes < 1) return "just now";
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
@@ -31,7 +38,7 @@ interface ZoneRowProps {
 
 function ZoneRow({ row, onUpdated }: ZoneRowProps) {
   const [isToggling, startToggle] = useTransition();
-  const platformIcon = row.platform === "twitter" ? "𝕏" : "♪";
+  const Icon = PLATFORM_ICON[row.platform];
   const total = row.state?.total_received ?? 0;
   const lastEventAt = row.state?.last_event_at ?? null;
   const lastSource = row.state?.last_event_source;
@@ -52,29 +59,36 @@ function ZoneRow({ row, onUpdated }: ZoneRowProps) {
   }
 
   return (
-    <div className="flex items-center gap-2 py-1">
-      <span
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-bold"
-        title={row.platform}
-      >
-        {platformIcon}
-      </span>
+    <div
+      className={cn(
+        "flex items-center gap-2 py-1 transition-opacity",
+        !row.push_to_attila && "opacity-60"
+      )}
+    >
+      <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
 
       <Badge
         variant={row.push_to_attila ? "default" : "outline"}
-        className="shrink-0 text-[10px]"
+        className="h-4 shrink-0 px-1.5 text-[9px] uppercase tracking-wide"
       >
         {row.push_to_attila ? "Live" : "Off"}
       </Badge>
 
-      <span className="text-xs text-muted-foreground tabular-nums">
+      <span
+        className={cn(
+          "text-xs tabular-nums",
+          total > 0 ? "text-foreground" : "text-muted-foreground/40"
+        )}
+      >
         {formatCount(total)}
       </span>
-      <span className="text-xs text-muted-foreground">
+
+      <span className="text-xs text-muted-foreground/70">
         {formatTimeAgo(lastEventAt)}
       </span>
+
       {lastSource && (
-        <span className="text-[10px] uppercase text-muted-foreground/70">
+        <span className="rounded bg-muted px-1 text-[9px] uppercase tracking-wide text-muted-foreground/70">
           {lastSource}
         </span>
       )}
@@ -98,9 +112,18 @@ interface GorgoneZoneGroupProps {
 }
 
 export function GorgoneZoneGroup({ zoneName, rows, onUpdated }: GorgoneZoneGroupProps) {
+  const liveCount = rows.filter((r) => r.push_to_attila).length;
+
   return (
     <div className="rounded-md border px-3 py-2">
-      <p className="text-sm font-medium">{zoneName}</p>
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">{zoneName}</p>
+        {liveCount > 0 && (
+          <span className="text-[10px] font-medium text-success">
+            {liveCount} live
+          </span>
+        )}
+      </div>
       <div className="mt-1 divide-y">
         {rows.map((row) => (
           <ZoneRow

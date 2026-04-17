@@ -39,3 +39,13 @@ export {
   applyFilters,
   estimateCapacity,
 } from "./capacity-estimator";
+export type {
+  ZoneVolumeEstimate,
+  TwitterBreakdown,
+  TiktokBreakdown,
+  EstimatorFilters,
+  FilteredVolume,
+  AvatarCapacityInput,
+  CapacityEstimate,
+  CampaignCapacityResult,
+} from "./types";
