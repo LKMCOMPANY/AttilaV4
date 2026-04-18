@@ -31,6 +31,7 @@ import { encodeJobError, JobError } from "./errors";
 
 const X_PACKAGE = "com.twitter.android";
 const TWEET_DETAIL_FOCUS_HINT = "TweetDetailActivity";
+const COMPOSER_FOCUS_HINT = "ComposerActivity";
 
 /**
  * Blocking states detected from the UI tree right after the tweet loads.
@@ -79,10 +80,16 @@ function detectBlockingState(ui: string): JobError | null {
 }
 
 const COORDS = {
-  // Reply field at the bottom of the tweet detail screen, opens composer.
+  // Reply field hint at the bottom of the tweet detail screen — opens
+  // either the inline composer (stays inside TweetDetailActivity) or
+  // the fullscreen ComposerActivity depending on the device/account.
   replyField: { x: 540, y: 2277 },
-  // Active "Répondre/Reply" button inside the composer.
-  postButton: { x: 947, y: 2220 },
+  // Active "Répondre/Reply" button when the composer renders inline as
+  // a fragment of TweetDetailActivity (bottom-right of the composer row).
+  postButtonInline: { x: 947, y: 2220 },
+  // Active "Répondre/Reply" button when the composer takes over the
+  // screen (ComposerActivity) — top-right of the screen.
+  postButtonFullscreen: { x: 947, y: 165 },
 } as const;
 
 // Timings tuned for a believable human pace AND to give VMOS' ~5 s
@@ -120,6 +127,12 @@ export async function postReply(
 ): Promise<ReplyResult> {
   const start = Date.now();
   xLog(dbId, "postReply START", { tweetUrl, textPreview: text.slice(0, 60) });
+
+  // Captured progressively so the catch can surface them as proofs even on
+  // partial flows (e.g. when the submit verification fails, we still want
+  // the source + proof shots for operator debugging).
+  let source: Buffer = Buffer.alloc(0);
+  let proof: Buffer = Buffer.alloc(0);
 
   try {
     if (!(await isPackageInstalled(tunnelHostname, dbId, X_PACKAGE))) {
@@ -163,11 +176,18 @@ export async function postReply(
     }
 
     xLog(dbId, "source screenshot");
-    const source = await screenshot(tunnelHostname, dbId);
+    source = await screenshot(tunnelHostname, dbId);
 
-    // Open composer
+    // Open composer. Depending on the device / account / build, this either
+    // expands an inline composer fragment inside TweetDetailActivity OR
+    // launches the standalone ComposerActivity full-screen. Both are valid
+    // entry points; the only difference for us is the position of the
+    // submit button — we detect the mode and pick the right coords.
     await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
     await sleep(TIMING.composerOpen);
+
+    const composerMode = await detectComposerMode(tunnelHostname, dbId);
+    xLog(dbId, "composer mode detected", { mode: composerMode });
 
     // Switch to ADBKeyboard so `am broadcast -a ADB_INPUT_TEXT` is honored.
     // The X app loses focus during the IME swap so we re-tap the field after.
@@ -179,27 +199,31 @@ export async function postReply(
     await sleep(TIMING.afterType);
 
     xLog(dbId, "proof screenshot (composer ready)");
-    const proof = await screenshot(tunnelHostname, dbId);
+    proof = await screenshot(tunnelHostname, dbId);
     await sleep(TIMING.beforeSubmit);
 
-    // Submit
-    await shell(tunnelHostname, dbId, `input tap ${COORDS.postButton.x} ${COORDS.postButton.y}`);
+    // Submit using the coords for the current composer mode.
+    const submit = composerMode === "fullscreen"
+      ? COORDS.postButtonFullscreen
+      : COORDS.postButtonInline;
+    await shell(tunnelHostname, dbId, `input tap ${submit.x} ${submit.y}`);
     await sleep(TIMING.postSubmit);
 
-    // Verify: composer must close — focus returns to tweet detail. Anything
-    // else (composer still up, dialog, app crash) means the post did not go
-    // through (text too long, rate limit, network…).
+    // Verify: focus must come back to the tweet detail screen. If the
+    // composer is still on screen (inline or fullscreen) the submit did
+    // not go through (text too long, rate limit, captcha, network…).
     const focus = await getCurrentFocus(tunnelHostname, dbId);
-    if (!focus.includes(TWEET_DETAIL_FOCUS_HINT)) {
+    if (!focus.includes(TWEET_DETAIL_FOCUS_HINT) || focus.includes(COMPOSER_FOCUS_HINT)) {
       throw new JobError(
         "ui_unexpected",
-        `Post not submitted — focus did not return to tweet detail (current=${focus})`,
+        `Post not submitted — focus did not return to tweet detail (mode=${composerMode}, current=${focus})`,
       );
     }
 
     const durationMs = Date.now() - start;
     xLog(dbId, "postReply SUCCESS", {
       durationMs,
+      mode: composerMode,
       sourceBytes: source.length,
       proofBytes: proof.length,
     });
@@ -207,13 +231,37 @@ export async function postReply(
   } catch (err) {
     const error = encodeJobError(err);
     const durationMs = Date.now() - start;
-    xLog(dbId, "postReply FAILED", { error, durationMs });
+    xLog(dbId, "postReply FAILED", {
+      error,
+      durationMs,
+      sourceBytes: source.length,
+      proofBytes: proof.length,
+    });
     return {
       success: false,
-      source: Buffer.alloc(0),
-      proof: Buffer.alloc(0),
+      source,
+      proof,
       error,
       durationMs,
     };
   }
+}
+
+/**
+ * Inspect the current window focus to decide which submit-button coords
+ * to use. The X app sometimes opens a compact composer fragment inside
+ * TweetDetailActivity, sometimes the full-screen ComposerActivity — the
+ * positions of the active "Répondre" button differ between the two.
+ *
+ * Treats missing/empty focus as `inline` — that's the conservative choice
+ * because the inline coord (947, 2220) overlaps the bottom action row in
+ * fullscreen mode, while the fullscreen coord (947, 165) sits in the top
+ * status area in inline mode (no-op tap).
+ */
+async function detectComposerMode(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<"inline" | "fullscreen"> {
+  const focus = await getCurrentFocus(tunnelHostname, dbId);
+  return focus.includes(COMPOSER_FOCUS_HINT) ? "fullscreen" : "inline";
 }

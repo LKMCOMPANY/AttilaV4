@@ -146,6 +146,11 @@ export async function postTikTokComment(
   const start = Date.now();
   ttLog(dbId, "postTikTokComment START", { videoUrl, textPreview: text.slice(0, 60) });
 
+  // Captured progressively so partial flows still surface evidence to the
+  // operator (e.g. a rate_limited failure keeps the composer-with-text proof).
+  let source: Buffer = Buffer.alloc(0);
+  let proof: Buffer = Buffer.alloc(0);
+
   try {
     if (!(await isPackageInstalled(tunnelHostname, dbId, TIKTOK_PACKAGE))) {
       throw new JobError(
@@ -173,7 +178,7 @@ export async function postTikTokComment(
     }
 
     ttLog(dbId, "source screenshot");
-    const source = await screenshot(tunnelHostname, dbId);
+    source = await screenshot(tunnelHostname, dbId);
 
     // Open the comments panel
     await shell(tunnelHostname, dbId, `input tap ${COORDS.commentButton.x} ${COORDS.commentButton.y}`);
@@ -191,7 +196,7 @@ export async function postTikTokComment(
     await sleep(TIMING.afterType);
 
     ttLog(dbId, "proof screenshot (composer ready)");
-    const proof = await screenshot(tunnelHostname, dbId);
+    proof = await screenshot(tunnelHostname, dbId);
     await sleep(TIMING.beforeSubmit);
 
     // Submit. The composer stays on screen but the field clears on success.
@@ -225,11 +230,16 @@ export async function postTikTokComment(
   } catch (err) {
     const error = encodeJobError(err);
     const durationMs = Date.now() - start;
-    ttLog(dbId, "postTikTokComment FAILED", { error, durationMs });
+    ttLog(dbId, "postTikTokComment FAILED", {
+      error,
+      durationMs,
+      sourceBytes: source.length,
+      proofBytes: proof.length,
+    });
     return {
       success: false,
-      source: Buffer.alloc(0),
-      proof: Buffer.alloc(0),
+      source,
+      proof,
       error,
       durationMs,
     };
