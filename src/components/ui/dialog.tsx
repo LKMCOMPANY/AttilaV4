@@ -31,7 +31,7 @@ function DialogOverlay({
     <DialogPrimitive.Backdrop
       data-slot="dialog-overlay"
       className={cn(
-        "fixed inset-0 isolate z-50 bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+        "fixed inset-0 isolate z-[var(--z-modal-backdrop)] bg-black/10 duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
         className
       )}
       {...props}
@@ -50,7 +50,7 @@ function DialogContent({
   return (
     <DialogPortal>
       <DialogOverlay />
-      <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="pointer-events-none fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-4">
         <DialogPrimitive.Popup
           data-slot="dialog-content"
           className={cn(

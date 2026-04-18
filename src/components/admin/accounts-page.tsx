@@ -184,13 +184,25 @@ export function AccountsPage({ initialAccounts }: AccountsPageProps) {
             }
           }}
         >
-          <SheetContent side="bottom" className="h-[85vh] overflow-y-auto p-4">
+          {/*
+           * Mobile sheet — the base sheet uses `data-[side=bottom]:h-auto`, so
+           * we re-apply the variant to lock height to the dynamic viewport
+           * (`dvh` accounts for iOS Safari chrome) and delegate scrolling to an
+           * inner `flex-1 overflow-y-auto` container. This is the canonical
+           * pattern that survives long content and tall children.
+           */}
+          <SheetContent
+            side="bottom"
+            className="flex flex-col rounded-t-xl p-0 data-[side=bottom]:h-[90dvh] data-[side=bottom]:max-h-[90dvh]"
+          >
             {selectedAccount && (
-              <AccountDetail
-                key={selectedAccount.id}
-                account={selectedAccount}
-                onUpdated={refreshAccounts}
-              />
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pt-6 scrollbar-thin">
+                <AccountDetail
+                  key={selectedAccount.id}
+                  account={selectedAccount}
+                  onUpdated={refreshAccounts}
+                />
+              </div>
             )}
           </SheetContent>
         </Sheet>

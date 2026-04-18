@@ -49,6 +49,7 @@ export function OperatorLayout({
   );
   const [sortField, setSortField] = useState<AvatarSortField>("last_used");
   const [filterArmyId, setFilterArmyId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [localAvatars, setLocalAvatars] = useState(avatars);
   const [automatorStatuses, setAutomatorStatuses] = useState<Record<string, AvatarAutomatorInfo>>({});
@@ -128,11 +129,23 @@ export function OperatorLayout({
   }, [avatarsWithLiveState]);
 
   const filteredAvatars = useMemo(() => {
-    if (!filterArmyId) return avatarsWithLiveState;
-    return avatarsWithLiveState.filter((a) =>
-      a.armies?.some((army) => army.id === filterArmyId)
-    );
-  }, [avatarsWithLiveState, filterArmyId]);
+    let result = avatarsWithLiveState;
+    if (filterArmyId) {
+      result = result.filter((a) =>
+        a.armies?.some((army) => army.id === filterArmyId)
+      );
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter((a) => {
+        const fullName = `${a.first_name} ${a.last_name}`.toLowerCase();
+        if (fullName.includes(q)) return true;
+        if (a.tags.some((t) => t.toLowerCase().includes(q))) return true;
+        return false;
+      });
+    }
+    return result;
+  }, [avatarsWithLiveState, filterArmyId, searchQuery]);
 
   const sortedAvatars = useMemo(() => {
     switch (sortField) {
@@ -181,6 +194,8 @@ export function OperatorLayout({
           armies={armies}
           filterArmyId={filterArmyId}
           onFilterArmyChange={setFilterArmyId}
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
           deviceCount={deviceCount}
           accountId={accountId}
           automatorStatuses={automatorStatuses}

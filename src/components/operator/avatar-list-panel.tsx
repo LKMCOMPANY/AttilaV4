@@ -5,12 +5,13 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserPlus, Search, Radar } from "lucide-react";
+import { UserPlus, Search, Radar, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
 import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
@@ -36,6 +37,8 @@ interface AvatarListPanelProps {
   armies: Pick<Army, "id" | "name">[];
   filterArmyId: string | null;
   onFilterArmyChange: (armyId: string | null) => void;
+  searchQuery: string;
+  onSearchChange: (query: string) => void;
   deviceCount: number;
   accountId: string;
   automatorStatuses?: Record<string, AvatarAutomatorInfo>;
@@ -51,11 +54,14 @@ export function AvatarListPanel({
   armies,
   filterArmyId,
   onFilterArmyChange,
+  searchQuery,
+  onSearchChange,
   deviceCount,
   accountId,
   automatorStatuses,
   presenceMap,
 }: AvatarListPanelProps) {
+  const isSearching = searchQuery.trim().length > 0;
   const [dialogOpen, setDialogOpen] = useState(false);
   const searchParams = useSearchParams();
   const accountParam = searchParams.get("account");
@@ -133,38 +139,46 @@ export function AvatarListPanel({
         ))}
       </div>
 
-      {/* Army filter */}
-      {armies.length > 0 && (
-        <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b px-1.5 py-1.5 scrollbar-hide">
-          <button
-            onClick={() => onFilterArmyChange(null)}
-            className={cn(
-              "shrink-0 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-              filterArmyId === null
-                ? "bg-secondary text-secondary-foreground shadow-sm"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            All
-          </button>
-          {armies.map((army) => (
+      {/* Army filter + search — sticky-right search keeps the row scannable */}
+      <div className="flex shrink-0 items-center gap-1 border-b px-1.5 py-1.5">
+        {armies.length > 0 && (
+          <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto scrollbar-hide">
             <button
-              key={army.id}
-              onClick={() =>
-                onFilterArmyChange(filterArmyId === army.id ? null : army.id)
-              }
+              onClick={() => onFilterArmyChange(null)}
               className={cn(
-                "shrink-0 truncate rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
-                filterArmyId === army.id
+                "shrink-0 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                filterArmyId === null
                   ? "bg-secondary text-secondary-foreground shadow-sm"
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
-              {army.name}
+              All
             </button>
-          ))}
-        </div>
-      )}
+            {armies.map((army) => (
+              <button
+                key={army.id}
+                onClick={() =>
+                  onFilterArmyChange(filterArmyId === army.id ? null : army.id)
+                }
+                className={cn(
+                  "shrink-0 truncate rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                  filterArmyId === army.id
+                    ? "bg-secondary text-secondary-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                )}
+              >
+                {army.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <SearchField
+          value={searchQuery}
+          onChange={onSearchChange}
+          fillRow={armies.length === 0}
+        />
+      </div>
 
       {/* List — dir=rtl positions scrollbar on left edge, content restored to ltr */}
       <div className="min-h-0 flex-1" dir="rtl">
@@ -177,21 +191,35 @@ export function AvatarListPanel({
               </div>
               <div>
                 <p className="text-sm font-medium text-muted-foreground">
-                  No avatars yet
+                  {isSearching ? "No matching avatars" : "No avatars yet"}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-foreground/60">
-                  Create your first avatar to get started
+                  {isSearching
+                    ? "Try a different name or tag."
+                    : "Create your first avatar to get started"}
                 </p>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setDialogOpen(true)}
-                className="mt-1 gap-1.5"
-              >
-                <UserPlus className="h-3.5 w-3.5" />
-                Create Avatar
-              </Button>
+              {isSearching ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onSearchChange("")}
+                  className="mt-1 gap-1.5"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Clear search
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDialogOpen(true)}
+                  className="mt-1 gap-1.5"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Create Avatar
+                </Button>
+              )}
             </div>
           ) : (
             <div className="space-y-px">
@@ -216,6 +244,77 @@ export function AvatarListPanel({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
       />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SearchField — auto-expanding compact search input
+// Collapses to an icon when empty + unfocused so the army row stays clean.
+// ---------------------------------------------------------------------------
+
+function SearchField({
+  value,
+  onChange,
+  fillRow,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  fillRow: boolean;
+}) {
+  const [focused, setFocused] = useState(false);
+  const hasValue = value.length > 0;
+  const expanded = fillRow || focused || hasValue;
+
+  return (
+    <div
+      data-expanded={expanded}
+      className={cn(
+        "relative ml-auto flex shrink-0 items-center transition-[width] duration-150",
+        fillRow ? "w-full" : expanded ? "w-[160px]" : "w-7"
+      )}
+    >
+      <Search
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute left-2 h-3.5 w-3.5 transition-colors",
+          expanded ? "text-muted-foreground" : "text-muted-foreground/70"
+        )}
+      />
+      <Input
+        type="search"
+        role="searchbox"
+        aria-label="Search avatars"
+        autoComplete="off"
+        spellCheck={false}
+        placeholder={expanded ? "Search avatars…" : ""}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && hasValue) {
+            e.preventDefault();
+            onChange("");
+          }
+        }}
+        className={cn(
+          "h-7 rounded-md pl-7 text-[11px] transition-all",
+          expanded ? "pr-7" : "border-transparent bg-transparent pr-2",
+          // hide native search clear icon
+          "[&::-webkit-search-cancel-button]:appearance-none"
+        )}
+      />
+      {hasValue && (
+        <button
+          type="button"
+          onClick={() => onChange("")}
+          aria-label="Clear search"
+          className="absolute right-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }

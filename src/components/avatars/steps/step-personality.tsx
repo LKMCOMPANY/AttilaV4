@@ -125,16 +125,27 @@ export function StepPersonality({ data, onChange }: StepProps) {
           />
         </div>
 
-        <div className="flex flex-col items-center justify-center rounded-lg border bg-muted/30 p-4">
+        <div className="flex flex-col items-center justify-center rounded-lg border bg-muted/30 p-3">
           <span className="mb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Personality Profile
           </span>
-          <ChartContainer config={chartConfig} className="mx-auto aspect-square w-full max-w-[240px]">
-            <RadarChart data={chartData}>
+          <ChartContainer
+            config={chartConfig}
+            className="mx-auto aspect-square w-full max-w-[300px]"
+          >
+            <RadarChart
+              data={chartData}
+              outerRadius="68%"
+              margin={{ top: 8, right: 8, bottom: 8, left: 8 }}
+            >
               <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
               <PolarAngleAxis
                 dataKey="trait"
-                tick={{ fontSize: 10, fill: "var(--color-value)", fontWeight: 500 }}
+                tick={{
+                  fontSize: 10,
+                  fill: "var(--color-value)",
+                  fontWeight: 500,
+                }}
                 tickLine={false}
               />
               <PolarGrid className="stroke-muted-foreground/20" />
