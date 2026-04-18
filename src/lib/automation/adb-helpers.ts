@@ -1,96 +1,29 @@
 /**
- * Shared low-level ADB helpers for automation scripts.
- * Used by both x-reply and tiktok-reply modules.
+ * High-level Android helpers used by automation scripts (X, TikTok, …).
+ *
+ * Built on top of the shell primitives in `@/lib/box-api`. Helpers here:
+ *   - assume the container has already passed `ensureContainerReady`
+ *   - propagate `ContainerNotReadyError` if the device dies mid-flow
+ *   - never silently ignore failures (use `shellSafe` for explicit cleanup)
  */
 
-import { getCfHeaders } from "@/lib/box-api";
+import { shell, shellSafe } from "@/lib/box-api";
 
-export const ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME";
-export const GBOARD_IME =
-  "com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME";
+const ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME";
 
 function adbLog(dbId: string, message: string, data?: Record<string, unknown>) {
-  const tag = `[ADB][${dbId}]`;
-  console.log(`${tag} ${message}`, data ? JSON.stringify(data) : "");
+  console.log(`[ADB][${dbId}] ${message}`, data ? JSON.stringify(data) : "");
 }
 
-export interface ShellResult {
-  code: number;
-  message: string;
-  ok: boolean;
-}
-
-export async function shell(
-  boxHost: string,
-  dbId: string,
-  cmd: string,
-): Promise<ShellResult> {
-  const url = `https://${boxHost}/android_api/v1/shell/${dbId}`;
-  const start = Date.now();
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...getCfHeaders() },
-      body: JSON.stringify({ id: dbId, cmd }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      adbLog(dbId, `shell FAILED`, { cmd, httpStatus: res.status, body: body.slice(0, 200), ms: Date.now() - start });
-      return { code: -1, message: `HTTP ${res.status}: ${body.slice(0, 200)}`, ok: false };
-    }
-
-    const json = await res.json();
-    const vmosCode = json.code ?? -1;
-    const message = json.data?.message ?? "";
-    const ok = vmosCode === 200;
-
-    adbLog(dbId, ok ? `shell OK` : `shell WARN`, {
-      cmd: cmd.length > 80 ? cmd.slice(0, 80) + "…" : cmd,
-      code: vmosCode,
-      output: message.length > 200 ? message.slice(0, 200) + "…" : message,
-      ms: Date.now() - start,
-    });
-    return { code: vmosCode, message, ok };
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    adbLog(dbId, `shell ERROR`, { cmd, error, ms: Date.now() - start });
-    throw err;
-  }
-}
-
-export async function screenshot(
-  boxHost: string,
-  dbId: string,
-): Promise<Buffer> {
-  const url = `https://${boxHost}/container_api/v1/screenshots/${dbId}`;
-  const start = Date.now();
-
-  try {
-    const res = await fetch(url, { headers: getCfHeaders() });
-
-    if (!res.ok) {
-      const body = await res.text();
-      adbLog(dbId, `screenshot FAILED`, { httpStatus: res.status, body: body.slice(0, 200), ms: Date.now() - start });
-      return Buffer.alloc(0);
-    }
-
-    const buf = Buffer.from(await res.arrayBuffer());
-    adbLog(dbId, `screenshot OK`, { bytes: buf.length, ms: Date.now() - start });
-    return buf;
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    adbLog(dbId, `screenshot ERROR`, { error, ms: Date.now() - start });
-    throw err;
-  }
-}
+// ---------------------------------------------------------------------------
+// Generic helpers
+// ---------------------------------------------------------------------------
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export function escapeShellText(text: string): string {
+function escapeShellText(text: string): string {
   return text
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
@@ -98,128 +31,219 @@ export function escapeShellText(text: string): string {
     .replace(/`/g, "\\`");
 }
 
-export function extractTweetId(tweetUrl: string): string {
-  const match = tweetUrl.match(/status\/(\d+)/);
-  if (!match) throw new Error(`Cannot extract tweet ID from: ${tweetUrl}`);
-  return match[1];
+// ---------------------------------------------------------------------------
+// Polling utilities — used to replace fragile `sleep(N)` waits
+// ---------------------------------------------------------------------------
+
+interface PollOptions {
+  timeoutMs: number;
+  intervalMs?: number;
+  label?: string;
 }
 
-export async function isDeviceAwake(
-  boxHost: string,
+async function poll<T>(
+  fn: () => Promise<T | null>,
+  predicate: (v: T) => boolean,
+  { timeoutMs, intervalMs = 500, label = "poll" }: PollOptions,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let last: T | null = null;
+  while (Date.now() < deadline) {
+    last = await fn();
+    if (last !== null && predicate(last)) return last;
+    await sleep(intervalMs);
+  }
+  throw new Error(`${label} timed out after ${timeoutMs}ms (last=${JSON.stringify(last)})`);
+}
+
+// ---------------------------------------------------------------------------
+// Power state
+// ---------------------------------------------------------------------------
+
+async function isDeviceAwake(
+  tunnelHostname: string,
   dbId: string,
 ): Promise<boolean> {
-  const result = await shell(boxHost, dbId, "dumpsys power | grep mWakefulness");
-  const awake = result.message.includes("Awake");
-  adbLog(dbId, `isDeviceAwake: ${awake}`, { raw: result.message.trim() });
-  return awake;
+  const result = await shell(tunnelHostname, dbId, "dumpsys power | grep mWakefulness");
+  return result.message.includes("Awake");
 }
 
 /**
- * Wake the device and dismiss the lock screen.
- * Sends WAKEUP + MENU (unlocks most lock screens without PIN).
- * Verifies the device is awake after, retries once if needed.
+ * Wake the device and dismiss the lock screen. Sends WAKEUP + MENU then
+ * verifies wakefulness, retrying once with a swipe-up unlock if needed.
  */
 export async function wakeDevice(
-  boxHost: string,
+  tunnelHostname: string,
   dbId: string,
 ): Promise<void> {
-  adbLog(dbId, "wakeDevice START");
+  if (await isDeviceAwake(tunnelHostname, dbId)) return;
 
-  const awake = await isDeviceAwake(boxHost, dbId);
-  if (awake) {
-    adbLog(dbId, "Device already awake");
-    return;
-  }
-
-  adbLog(dbId, "Device asleep, sending WAKEUP + MENU");
-  await shell(boxHost, dbId, "input keyevent KEYCODE_WAKEUP");
+  adbLog(dbId, "wakeDevice: device asleep, sending WAKEUP + MENU");
+  await shell(tunnelHostname, dbId, "input keyevent KEYCODE_WAKEUP");
   await sleep(500);
-  await shell(boxHost, dbId, "input keyevent KEYCODE_MENU");
+  await shell(tunnelHostname, dbId, "input keyevent KEYCODE_MENU");
+  await sleep(800);
+
+  if (await isDeviceAwake(tunnelHostname, dbId)) return;
+
+  adbLog(dbId, "wakeDevice: still asleep, retrying with swipe unlock");
+  await shell(tunnelHostname, dbId, "input keyevent KEYCODE_WAKEUP");
+  await sleep(500);
+  await shell(tunnelHostname, dbId, "input swipe 540 1800 540 800 300");
   await sleep(1000);
 
-  const stillAsleep = !(await isDeviceAwake(boxHost, dbId));
-  if (stillAsleep) {
-    adbLog(dbId, "Still asleep after first attempt, retrying with swipe unlock");
-    await shell(boxHost, dbId, "input keyevent KEYCODE_WAKEUP");
-    await sleep(500);
-    await shell(boxHost, dbId, "input swipe 540 1800 540 800 300");
-    await sleep(1000);
+  if (!(await isDeviceAwake(tunnelHostname, dbId))) {
+    throw new Error("Failed to wake device after retry");
   }
 }
 
-/**
- * Enable and activate ADBKeyboard. Verifies the switch actually succeeded.
- * Must be called BEFORE any `am broadcast -a ADB_INPUT_TEXT` call.
- *
- * If the package is installed but disabled (which is the default state right
- * after `install_apk_from_url_batch`), the IME service does not see it, so
- * `ime enable` returns "Unknown input method". We `pm enable` first as a
- * safety net so this also works on freshly-provisioned devices.
- *
- * Returns true if ADBKeyboard is ready, false on failure.
- */
-export async function ensureAdbKeyboard(
-  boxHost: string,
+// ---------------------------------------------------------------------------
+// Package introspection
+// ---------------------------------------------------------------------------
+
+export async function isPackageInstalled(
+  tunnelHostname: string,
   dbId: string,
+  packageName: string,
 ): Promise<boolean> {
-  adbLog(dbId, "ensureAdbKeyboard START");
+  const result = await shell(tunnelHostname, dbId, `pm list packages ${packageName}`);
+  return result.message.includes(`package:${packageName}`);
+}
 
-  await shell(boxHost, dbId, "pm enable com.android.adbkeyboard");
-  await sleep(300);
+// ---------------------------------------------------------------------------
+// Input methods (IME)
+// ---------------------------------------------------------------------------
 
-  await shell(boxHost, dbId, `ime enable ${ADBKEYBOARD_IME}`);
-  await sleep(300);
-
-  const setResult = await shell(boxHost, dbId, `ime set ${ADBKEYBOARD_IME}`);
-
-  if (!setResult.ok || setResult.message.includes("Unknown input method")) {
-    adbLog(dbId, "ensureAdbKeyboard FAILED — ADBKeyboard not recognized", {
-      code: setResult.code,
-      output: setResult.message,
-    });
-    return false;
-  }
-
-  await sleep(300);
-
-  const verify = await shell(boxHost, dbId, "settings get secure default_input_method");
-  const active = verify.message.includes("adbkeyboard");
-  adbLog(dbId, `ensureAdbKeyboard ${active ? "READY" : "NOT ACTIVE"}`, {
-    currentIme: verify.message.trim(),
-  });
-  return active;
+export async function getCurrentIme(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<string> {
+  const result = await shell(tunnelHostname, dbId, "settings get secure default_input_method");
+  return result.message.trim();
 }
 
 /**
- * Type text via ADBKeyboard broadcast. Verifies the broadcast was received.
- * Returns true if the broadcast completed successfully.
+ * Activate ADBKeyboard so `am broadcast -a ADB_INPUT_TEXT` can deliver text.
+ * The package ships disabled on freshly-provisioned devices, so the function
+ * does `pm enable` + `ime enable` + `ime set` and verifies the switch took
+ * effect. Throws on any failure — calling code must abort.
  */
+export async function activateAdbKeyboard(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<void> {
+  await shell(tunnelHostname, dbId, "pm enable com.android.adbkeyboard");
+  await shell(tunnelHostname, dbId, `ime enable ${ADBKEYBOARD_IME}`);
+  const setResult = await shell(tunnelHostname, dbId, `ime set ${ADBKEYBOARD_IME}`);
+
+  if (setResult.message.includes("Unknown input method")) {
+    throw new Error(`ADBKeyboard not recognized — package may be missing: ${setResult.message.trim()}`);
+  }
+
+  // Confirm via settings since `ime set` returns success even when ignored
+  const active = await getCurrentIme(tunnelHostname, dbId);
+  if (active !== ADBKEYBOARD_IME) {
+    throw new Error(`ADBKeyboard activation failed — current IME: ${active}`);
+  }
+}
+
+/**
+ * Restore a previously-captured IME id. Best-effort: never throws so it can
+ * always run from a `finally` clause without masking the original error.
+ * Logs but does not retry on failure to keep automation latency predictable.
+ */
+export async function restoreIme(
+  tunnelHostname: string,
+  dbId: string,
+  imeId: string,
+): Promise<void> {
+  if (!imeId || imeId === ADBKEYBOARD_IME) return;
+  const result = await shellSafe(tunnelHostname, dbId, `ime set ${imeId}`);
+  if (!result || result.code !== 200 || result.message.includes("Unknown input method")) {
+    adbLog(dbId, "restoreIme: failed", { target: imeId, output: result?.message });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Text input via ADBKeyboard broadcast
+// ---------------------------------------------------------------------------
+
 export async function typeText(
-  boxHost: string,
+  tunnelHostname: string,
   dbId: string,
   text: string,
-): Promise<boolean> {
+): Promise<void> {
   const escaped = escapeShellText(text);
   const result = await shell(
-    boxHost,
+    tunnelHostname,
     dbId,
     `am broadcast -a ADB_INPUT_TEXT --es msg "${escaped}"`,
   );
+  if (!result.message.includes("Broadcast completed")) {
+    throw new Error(`Text broadcast not acknowledged: ${result.message.slice(0, 120)}`);
+  }
+}
 
-  const received = result.ok && result.message.includes("Broadcast completed");
-  adbLog(dbId, `typeText ${received ? "OK" : "FAILED"}`, {
-    textLength: text.length,
-    broadcastResult: result.message.slice(0, 100),
-  });
-  return received;
+// ---------------------------------------------------------------------------
+// Window focus tracking — used to verify intents land on the right activity
+// ---------------------------------------------------------------------------
+
+export async function getCurrentFocus(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<string> {
+  const result = await shell(tunnelHostname, dbId, "dumpsys window | grep mCurrentFocus");
+  // example: mCurrentFocus=Window{8099aa1 u0 com.twitter.android/com.twitter.tweetdetail.TweetDetailActivity}
+  return result.message.trim();
 }
 
 /**
- * Restore Gboard as the active keyboard. Best-effort, never throws.
+ * Wait until the focused window matches `substring` (typically an activity
+ * name fragment). Polls cheaply so 99% of cases settle in under 1s. Throws
+ * on timeout with the last observed focus included.
  */
-export async function restoreGboard(
-  boxHost: string,
+export async function waitForFocus(
+  tunnelHostname: string,
   dbId: string,
-): Promise<void> {
-  await shell(boxHost, dbId, `ime set ${GBOARD_IME}`).catch(() => {});
+  substring: string,
+  timeoutMs = 15_000,
+): Promise<string> {
+  return poll<string>(
+    () => getCurrentFocus(tunnelHostname, dbId).catch(() => null),
+    (focus) => focus.includes(substring),
+    { timeoutMs, intervalMs: 500, label: `waitForFocus("${substring}")` },
+  );
 }
+
+// ---------------------------------------------------------------------------
+// UI tree introspection — used by both Twitter and TikTok flows to detect
+// blocking states (login screen, content unavailable, captcha…).
+// ---------------------------------------------------------------------------
+
+/**
+ * Best-effort `uiautomator dump --compressed`. Returns the raw XML on
+ * success, `null` when uiautomator is not in an idle state (typical when
+ * a video is playing or an animation is mid-frame). Callers must treat a
+ * `null` result as "could not verify" rather than "no match".
+ */
+export async function tryUiDump(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<string | null> {
+  const result = await shellSafe(
+    tunnelHostname,
+    dbId,
+    "uiautomator dump --compressed /sdcard/ui.xml > /dev/null 2>&1 && cat /sdcard/ui.xml",
+  );
+  if (!result || result.code !== 200) return null;
+  if (result.message.includes("could not get idle state")) return null;
+  if (!result.message.includes("<hierarchy")) return null;
+  return result.message;
+}
+
+// ---------------------------------------------------------------------------
+// Re-exports — convenience for automation modules so they import from a
+// single place (every helper they need lives in `adb-helpers`).
+// ---------------------------------------------------------------------------
+
+export { shell, shellSafe, screenshot } from "@/lib/box-api";

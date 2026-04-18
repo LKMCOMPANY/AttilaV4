@@ -1,7 +1,93 @@
 # ADB & Automation Reference — Attila V4
 
 > Dictionnaire complet des commandes ADB et APIs d'automatisation pour les devices VMOS Magic Box.
-> Toutes les commandes ont été testées en live via le tunnel Cloudflare le 13/04/2026.
+> Refactor des helpers le 18 avril 2026 — voir section ⚡ ci-dessous.
+
+---
+
+## ⚡ Helpers TS — état actuel (refactor 18 avril 2026)
+
+À utiliser depuis tout nouveau code d'automation. Source : `src/lib/box-api.ts`
+et `src/lib/automation/adb-helpers.ts`.
+
+### `box-api.ts`
+
+```ts
+// Throws ContainerNotReadyError on VMOS code 201. Never silently no-op
+// against a dead container. Use this for any command whose result matters.
+shell(tunnelHostname, dbId, cmd): Promise<{ code, message }>
+
+// Same but returns null on container-not-ready. Cleanup paths only.
+shellSafe(tunnelHostname, dbId, cmd): Promise<{ code, message } | null>
+
+// Adaptive cache busting: VMOS caches /screenshots/ for ~5 s server-side.
+// Returns the same JPEG twice ⇒ retries up to 3× × 1 s, then accepts (the
+// screen may genuinely be static).
+screenshot(tunnelHostname, dbId): Promise<Buffer>
+
+// Start the container if needed AND poll getprop sys.boot_completed=1.
+// Without this Android may still be booting while VMOS reports "running"
+// → every shell call returns code 201 silently → automation taps in the void.
+ensureContainerReady(tunnelHostname, dbId): Promise<{ wasStarted, durationMs }>
+
+// Stop only if no other ready/executing job targets this device.
+stopContainerIfIdle(tunnelHostname, dbId, deviceId, supabase)
+
+// Operator-initiated unconditional stop.
+stopContainer(tunnelHostname, dbId)
+
+// Thrown by shell() — caught by route.ts and executor.ts to encode as
+// JobError(category="container_not_ready").
+class ContainerNotReadyError extends Error
+```
+
+### `adb-helpers.ts`
+
+```ts
+sleep(ms)
+wakeDevice(tunnelHostname, dbId)              // throws if device cannot be woken
+isPackageInstalled(tunnelHostname, dbId, pkg)
+
+// IME lifecycle — ALWAYS pair captureIme + restoreIme via try/finally.
+// The pipeline executor does this for you; CLI scripts do NOT.
+getCurrentIme(tunnelHostname, dbId): Promise<string>
+activateAdbKeyboard(tunnelHostname, dbId)     // throws if package missing
+restoreIme(tunnelHostname, dbId, imeId)       // best-effort, never throws
+
+// Text input — only ADBKeyboard works on X (input text is anti-bot dropped).
+typeText(tunnelHostname, dbId, text)          // verifies "Broadcast completed"
+
+// Window focus — bounded poll, throws on timeout with last seen focus.
+getCurrentFocus(tunnelHostname, dbId): Promise<string>
+waitForFocus(tunnelHostname, dbId, substring, timeoutMs?): Promise<string>
+
+// UI tree introspection — best-effort, returns null if uiautomator can't
+// reach idle (common on TikTok with video playing).
+tryUiDump(tunnelHostname, dbId): Promise<string | null>
+```
+
+### `errors.ts`
+
+```ts
+class JobError extends Error {
+  constructor(category: JobErrorCategory, message: string)
+}
+
+// 11 categories with severity (action_required / transient / terminal / bug)
+type JobErrorCategory =
+  | "container_not_ready" | "infrastructure"
+  | "device_setup_required" | "consent_required"
+  | "account_logged_out" | "account_blocked" | "account_captcha" | "rate_limited"
+  | "content_unavailable"
+  | "ui_unexpected" | "unknown"
+
+encodeJobError(err): string                   // "[category] message"
+parseJobError(raw): { category, severity, message } | null
+```
+
+`encodeJobError` is idempotent and tolerant: plain `Error` falls back to
+`unknown`. The frontend `parseJobError` returns the same shape for both
+structured and legacy raw messages.
 
 ---
 
@@ -218,17 +304,31 @@ settings get secure default_input_method
 
 ### Utilisation runtime (chaque automation)
 
-Le code prod gère déjà ce flow dans `src/lib/automation/adb-helpers.ts` —
-voir `ensureAdbKeyboard()` et `typeText()`. Séquence à respecter :
+API actuelle dans `src/lib/automation/adb-helpers.ts` (refactor 18 avril 2026) :
 
+```ts
+// Capture once at the start of the job (executor.executeJob does this)
+const originalIme = await getCurrentIme(tunnelHostname, dbId);
+
+try {
+  await shell(tunnelHostname, dbId, "input tap <fieldX> <fieldY>"); // focus
+  await activateAdbKeyboard(tunnelHostname, dbId);                  // pm/ime enable+set+verify
+  await shell(tunnelHostname, dbId, "input tap <fieldX> <fieldY>"); // re-tap (focus lost on swap)
+  await typeText(tunnelHostname, dbId, "texte avec accents 🔥");    // broadcast + verifies "Broadcast completed"
+  await shell(tunnelHostname, dbId, "input tap <submitX> <submitY>");
+} finally {
+  // ALWAYS restore even on crash so operators don't see "ADB Keyboard {ON}"
+  await restoreIme(tunnelHostname, dbId, originalIme);
+}
 ```
-1. Tap le champ de saisie cible (focus initial sur Gboard)
-2. ensureAdbKeyboard() : pm enable + ime enable + ime set + verify
-3. Re-tap le champ (le focus est perdu au switch d'IME)
-4. typeText("texte avec accents et 🔥") via am broadcast -a ADB_INPUT_TEXT
-5. Tap le bouton "post"
-6. restoreGboard() en best-effort pour rendre la main à l'opérateur
-```
+
+Notes :
+- `restoreIme(_, _, imeId)` is best-effort — uses `shellSafe` so it never
+  throws and can run from `finally` without masking the original error.
+- The previous `restoreGboard()` was hard-coded to `com.google.android.inputmethod.latin/.LatinIME` and would silently fail on
+  devices without Gboard. Now removed.
+- `activateAdbKeyboard` throws `Error("ADBKeyboard not recognized…")` if
+  the package is missing — see provisioning section above.
 
 ### Provisionning de masse
 

@@ -1,307 +1,148 @@
-# X-AUTOMATE — Automation Twitter/X via ADB sur containers VMOS
+# X-AUTOMATE — Twitter/X automation via ADB on VMOS
 
-> Référence complète pour poster des commentaires Twitter/X via les containers VMOS Magic Box.
-> Validé en live le 15 avril 2026 sur box-1.attila.army (devices FR2, FR8, US1).
-
----
-
-## Principe
-
-On poste des commentaires sur Twitter/X via les containers Android VMOS.
-Le script **détecte automatiquement** si l'app Twitter native est installée :
-
-- **App installée** → deep link ouvre le tweet dans l'app, le champ reply est en bas
-- **Pas d'app** → deep link ouvre Chrome, on utilise l'URL `intent/post` pour le compose
-
-Les deux flows sont 100% déterministes, pas besoin de LLM à l'exécution.
+> Reference for posting replies on Twitter/X through VMOS Android containers.
+> Last validated: 18 April 2026 — `box-1.attila.army`, AOSP 13, 1080×2340.
 
 ---
 
-## Prérequis par device
+## Source of truth
 
-| Élément | Détail |
-|---------|--------|
-| Chrome | Pré-installé sur tous les devices |
-| Compte Twitter | Connecté dans l'app OU dans Chrome (login manuel via streaming) |
-| ADBKeyboard | Installé et activé (`ime enable`) |
-| Proxy | Configuré (Oxylabs ou autre) pour l'IP de sortie |
+| File | Role |
+|---|---|
+| `src/lib/automation/x-reply.ts` | High-level `postReply(tunnelHostname, dbId, tweetUrl, text)` |
+| `src/lib/automation/adb-helpers.ts` | Shared Android helpers (wake, IME, type, focus) |
+| `src/lib/box-api.ts` | VMOS HTTP layer (shell, screenshot, container lifecycle) |
+| `src/lib/automation/errors.ts` | `JobError` + categories surfaced in the dashboard |
+| `scripts/x-reply.ts` | Thin CLI wrapper around `postReply` for manual debugging |
 
-### Installation ADBKeyboard (une seule fois par device)
-
-**Trois étapes obligatoires**, dans cet ordre :
-
-```
-1. POST /android_api/v1/install_apk_from_url_batch
-   Body: {
-     "db_ids": "{DB_ID}",
-     "url": "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/keyboardservice-debug.apk"
-   }
-
-2. POST /android_api/v1/shell/{DB_ID}
-   Body: { "id": "{DB_ID}", "cmd": "pm enable com.android.adbkeyboard" }
-
-3. POST /android_api/v1/shell/{DB_ID}
-   Body: { "id": "{DB_ID}", "cmd": "ime enable com.android.adbkeyboard/.AdbIME" }
-```
-
-⚠️ Sans le `pm enable` (étape 2), `install_apk_from_url_batch` laisse le package
-en `enabled=0` et le service IME ne le voit pas — `ime enable` retourne alors
-`Unknown input method ... cannot be enabled for user #0`.
-
-Temps d'installation : ~6 secondes. À intégrer dans la séquence de provisioning.
-
-**Provisioning de masse** : `node scripts/install-adbkeyboard.mjs` —
-voir `ADB-REFERENCE.md` section 2 bis.
+The browser/Chrome flow has been **removed** — it never worked reliably and
+the deep link always opens the native app anyway. Only the native-app flow
+is supported.
 
 ---
 
-## Détection du mode : App native vs Chrome
+## Pre-conditions
+
+The caller (`pipeline/executor` or the CLI script) is responsible for:
+
+1. **Container fully booted** — `ensureContainerReady()` polls
+   `getprop sys.boot_completed=1` (timeout 90 s). Without this the device
+   may report "running" while still in early boot, every shell call returns
+   VMOS code 201 silently, and the automation taps into the void.
+2. **Original IME captured for restore** — `executor.executeJob()` snapshots
+   `getCurrentIme()` before invoking `postReply` and restores it from a
+   `finally` block so the operator never lands on ADBKeyboard.
+3. **Twitter app `com.twitter.android` installed and signed in** —
+   `postReply` checks installation and throws `device_setup_required`
+   if missing. Login state is detected on the first UI dump (see below).
+
+---
+
+## Flow (validated step-by-step)
+
+| Step | Action | What it does |
+|---|---|---|
+| 1 | `isPackageInstalled(com.twitter.android)` | Throws `device_setup_required` if missing |
+| 2 | `wakeDevice()` | WAKEUP + MENU + verify, retry with swipe-up |
+| 3 | `am force-stop com.twitter.android` | Clean entry point — no inherited composer |
+| 4 | `am start -a VIEW -d <tweet>` | Deep link routes to the native app |
+| 5 | `waitForFocus("TweetDetailActivity", 15 s)` | Bounded polling, throws `ui_unexpected` on timeout |
+| 6 | `tryUiDump()` + `detectBlockingState()` | Throws `account_logged_out` / `content_unavailable` if matched |
+| 7 | `screenshot()` → **SOURCE** | Adaptive cache busting via hash retry |
+| 8 | `input tap 540 2277` | Opens the composer |
+| 9 | `activateAdbKeyboard()` | `pm enable` + `ime enable` + `ime set` + verify |
+| 10 | `input tap 540 2277` | Re-tap — composer steals focus during IME swap |
+| 11 | `typeText(text)` | `am broadcast -a ADB_INPUT_TEXT --es msg "…"`, verifies "Broadcast completed" |
+| 12 | `screenshot()` → **PROOF** | Composer + typed text + active "Répondre" button |
+| 13 | `input tap 947 2220` | Submit |
+| 14 | `getCurrentFocus()` | Must contain `TweetDetailActivity` — otherwise throws `ui_unexpected` |
+
+Total typical duration: **~17 s**.
+
+---
+
+## Coordinates (1080 × 2340, FR locale)
+
+| Element | Coordinates | Notes |
+|---|---:|---|
+| Reply field (entry point on tweet detail) | `(540, 2277)` | Same coord re-tapped after IME swap |
+| Submit button (active "Répondre") | `(947, 2220)` | Only clickable once text is typed |
+
+⚠️ The X composer is a **fragment within `TweetDetailActivity`**, not a
+new activity. `dumpsys window | grep mCurrentFocus` returns the same
+window class whether the composer is open or not — that's why we cannot
+use focus alone to detect "composer up" (we use the screenshot proof
+instead).
+
+---
+
+## Screenshot proofs
+
+| Capture | When | Proves |
+|---|---|---|
+| **SOURCE** | Right after `waitForFocus(TweetDetailActivity)` | We are looking at the right tweet |
+| **PROOF** | Composer open with text typed + active submit button | What we are about to send |
+
+This is **not** a screenshot of the post going live — that signal is
+unreliable on X (most-relevant sort, shadow ban, propagation delay). The
+real success signal is `getCurrentFocus()` returning to the tweet detail
+state right after the submit tap.
+
+VMOS caches `/container_api/v1/screenshots/<dbId>` server-side for ~5 s.
+`screenshot()` in `box-api.ts` retries up to 3× when the SHA-256 of the
+returned JPEG matches the previous capture for that device — bounded
+3 s wait, never blocks on a genuinely static screen.
+
+---
+
+## Text input — ADBKeyboard is mandatory
+
+`input text` and `input keyevent` are **silently dropped** by the X
+composer (anti-bot protection). Only the IME broadcast path works:
 
 ```bash
-pm list packages | grep twitter
+am broadcast -a ADB_INPUT_TEXT --es msg "…"
 ```
 
-| Résultat | Mode |
-|----------|------|
-| `package:com.twitter.android` | **APP** — utiliser le flow app native |
-| *(vide)* | **CHROME** — utiliser le flow Chrome web |
+For this to land, ADBKeyboard must be the active IME at the moment of
+the broadcast. `executor.executeJob()` saves the previous IME, the
+flow swaps to ADBKeyboard, types, taps submit, and the wrapper restores
+the original IME from `finally` even on crash. Operators never see the
+"ADB Keyboard {ON}" banner outside an active job.
+
+ADBKeyboard provisioning on a fresh device requires `pm enable` after
+the APK install — without it, `ime enable` returns "Unknown input
+method". See `ADB-REFERENCE.md`.
 
 ---
 
-## Flow APP NATIVE (quand `com.twitter.android` est installé)
+## Error categories surfaced
 
-### Avantages
+| Category | When | Operator action |
+|---|---|---|
+| `container_not_ready` | VMOS code 201 mid-flow | Wait, retry |
+| `device_setup_required` | X app or ADBKeyboard missing | Provision the device |
+| `account_logged_out` | UI markers "Connecte-toi" / "Sign in to X" / `LoginActivity` | Re-login the avatar |
+| `content_unavailable` | "This Post is unavailable", "compte suspendu" | Skip — post will never succeed |
+| `ui_unexpected` | Timeout on `waitForFocus`, focus didn't return after submit | Investigate (likely UI change) |
 
-- Le deep link ouvre directement le tweet dans l'app (pas dans Chrome)
-- Le champ "Post your reply" est toujours visible en bas de l'écran
-- Un seul deep link suffit (pas besoin de l'URL `intent/post`)
-- `uiautomator dump` retourne de vrais resource-ids exploitables
-- Layout plus stable que la webview Chrome
-
-### Resource IDs de l'app Twitter
-
-| Resource ID | Élément | Usage |
-|-------------|---------|-------|
-| `com.twitter.android:id/tweet_text` | Champ "Post your reply" (`EditText`) | Taper dessus pour focus |
-| `com.twitter.android:id/tweet_button` | Bouton "Reply" (`Button`) | Taper pour poster |
-| `com.twitter.android:id/inline_reply` | Icône Reply sous le tweet | Alternative pour ouvrir le compose |
-| `com.twitter.android:id/persistent_reply` | Barre reply persistante en bas | Container du champ reply |
-| `com.twitter.android:id/reply_sorting` | "Most relevant replies" | Filtre des réponses |
-| `com.twitter.android:id/reply_context_text` | "Replying to @user" | Texte contextuel |
-
-### Coordonnées (résolution 1080×2340)
-
-| Élément | Coordonnées | Bounds du dump |
-|---------|-------------|----------------|
-| Champ "Post your reply" | `input tap 540 2277` | `[0,2214][1080,2340]` |
-| Bouton "Reply" (poster) | `input tap 947 2220` | `[843,2172][1050,2268]` |
-
-### Les 12 étapes (consolidé V4.1, 16 avril 2026)
-
-```
-ÉTAPE   COMMANDE                                                    DURÉE
-─────   ────────                                                    ─────
- 1      wakeDevice (WAKEUP + MENU + verify, retry swipe)            ~2s
- 2      am start -d "{TWEET_URL}"                                   ~500ms
- 3      sleep 6                                                     6s
- 4      GET /screenshots/{DB_ID}                      📸 SOURCE     ~500ms
- 5      input tap 540 2277  (reply field)                            ~500ms
- 6      sleep 1.5                                                   1.5s
- 7      ensureAdbKeyboard (enable + set + verify)                    ~1.5s
- 8      input tap 540 2277  (re-tap après IME switch)                ~500ms
- 9      typeText (broadcast + verify)                                ~500ms
-10      sleep 1                                                     1s
-11      input tap 947 2220  (bouton Reply)                           ~500ms
-12      sleep 6 → am start -d "{TWEET_URL}" → sleep 6 → 📸 PREUVE  ~13s
-
-TOTAL : ~28 secondes par commentaire
-```
-
-### Points critiques (bugs corrigés V4.1)
-
-- **`ime enable` AVANT `ime set`** : sans enable, le device retourne code 201
-  "Unknown input method" et le texte ne s'injecte jamais
-- **Re-tap du champ** après switch IME : le focus se perd au changement de clavier
-- **Vérification broadcast** : `typeText()` vérifie "Broadcast completed" dans la réponse
-- **Vérification IME active** : `ensureAdbKeyboard()` vérifie via
-  `settings get secure default_input_method` que le switch a bien pris effet
+All categories are encoded as `[category]` prefix in
+`campaign_jobs.error_message` and rendered as a coloured badge in the
+automator pipeline list.
 
 ---
 
-## Flow CHROME WEB (quand l'app Twitter n'est pas installée)
-
-### Avantages
-
-- Pas besoin d'installer l'app Twitter
-- Chrome est pré-installé sur tous les devices
-- L'URL `intent/post` ouvre directement le compose reply
-
-### URL magique
-
-```
-https://x.com/intent/post?in_reply_to={TWEET_ID}
-```
-
-Ouvre directement la page de composition de réponse dans Chrome :
-- Le tweet source est affiché en contexte
-- Le champ "Post your reply" est prêt
-- Le bouton "Reply" est en haut à droite
-
-**Toujours utiliser `intent/post`**, jamais `compose/post` (layout instable, liens cliquables parasites).
-
-### Coordonnées (résolution 1080×2340)
-
-| Élément | Coordonnées | Note |
-|---------|-------------|------|
-| Champ "Post your reply" | `input tap 300 1000` | Sous le "Replying to @user" |
-| Bouton "Reply" (poster) | `input tap 920 285` | En haut à droite de la page |
-
-### Zones à éviter
-
-| Zone | Coordonnées | Ce qui se passe |
-|------|-------------|-----------------|
-| "Replying to @user" | y=700-900, x=80-400 | Ouvre le sélecteur (page `compose/reply_to`) |
-| Barre d'adresse Chrome | y=70-240 | Perd le contexte |
-
-### Les 14 étapes (consolidé V4.1, 16 avril 2026)
-
-```
-ÉTAPE   COMMANDE                                                          DURÉE
-─────   ────────                                                          ─────
- 1      wakeDevice (WAKEUP + MENU + verify, retry swipe)                   ~2s
- 2      am start -d "{TWEET_URL}"                                          ~500ms
- 3      sleep 6                                                            6s
- 4      GET /screenshots/{DB_ID}                             📸 SOURCE     ~500ms
- 5      am start -d "https://x.com/intent/post?in_reply_to={TWEET_ID}"    ~500ms
- 6      sleep 6                                                            6s
- 7      input tap 300 1000  (reply field)                                   ~500ms
- 8      sleep 1.5                                                          1.5s
- 9      ensureAdbKeyboard (enable + set + verify)                           ~1.5s
-10      input tap 300 1000  (re-tap après IME switch)                       ~500ms
-11      typeText (broadcast + verify)                                       ~500ms
-12      sleep 1                                                            1s
-13      input tap 920 285  (bouton Reply)                                   ~500ms
-14      sleep 6 → am start -d "{TWEET_URL}" → sleep 6 → 📸 PREUVE         ~13s
-
-TOTAL : ~34 secondes par commentaire
-```
-
----
-
-## Saisie de texte — ADBKeyboard
-
-### Pourquoi ADBKeyboard
-
-| Méthode | ASCII | Espaces | Accents | Emojis | Recommandé |
-|---------|-------|---------|---------|--------|------------|
-| `input text` | ✅ | Via `%s` | ❌ CRASH | ❌ | Non |
-| ADBKeyboard broadcast | ✅ | ✅ | ✅ | ✅ | **Oui** |
-
-`input text` provoque un `NullPointerException` sur les caractères non-ASCII.
-
-### Commandes
+## Manual test
 
 ```bash
-# Saisir du texte (unicode complet)
-am broadcast -a ADB_INPUT_TEXT --es msg "Texte avec accents é è à et emojis 🤖🔥"
-
-# Effacer le champ
-am broadcast -a ADB_CLEAR_TEXT
-
-# Activer ADBKeyboard
-ime set com.android.adbkeyboard/.AdbIME
-
-# Revenir à Gboard
-ime set com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME
+npx tsx scripts/x-reply.ts \
+  --box box-1.attila.army \
+  --device EDGEQ3CM8BJHIE64 \
+  --tweet-url "https://x.com/semafor/status/2045179739766215016" \
+  --text "test"
 ```
 
-### Workflow clavier
-
-```
-1. Gboard est le clavier par défaut (pour l'opérateur en streaming)
-2. Avant la saisie → ime set ADBKeyboard
-3. Saisie via broadcast
-4. Après le post → ime set Gboard (restore)
-```
-
----
-
-## Vérification du résultat
-
-### Succès
-
-| Mode | Signal de succès |
-|------|-----------------|
-| App native | Retour automatique au tweet detail, reply visible |
-| Chrome | Redirection vers `x.com/home` |
-
-Le screenshot preuve montre le commentaire sous le tweet avec le timestamp ("Xs" ou "Xm").
-
-### Échec — cas connus
-
-| Écran | Signification | Action |
-|-------|---------------|--------|
-| "Unlock more on X" | Rate limiting nouveau compte | Le post passe souvent quand même |
-| "Something went wrong" | Erreur Twitter temporaire | Retry |
-| "Verify your identity" / CAPTCHA | Vérification requise | Marquer `failed` |
-| Page blanche | Timeout réseau / proxy lent | Retry avec sleep plus long |
-
----
-
-## Tests validés (15 avril 2026)
-
-| # | Device | Mode | Compte | Tweet | Commentaire | Résultat |
-|---|--------|------|--------|-------|-------------|----------|
-| 1 | FR2 `EDGEMMSDVAA82KIU` | Chrome | @EmilyPolicy | @J0NB13 | "Attila V4 test 🤖" | ✅ |
-| 2 | FR8 `EDGE3BD3397RQJPC` | Chrome | @DelhormePaulo | @JustRocketMan | "Those Furbys look ready for a board meeting" | ✅ |
-| 3 | FR8 `EDGE3BD3397RQJPC` | Chrome | @DelhormePaulo | @JustRocketMan | "Donald Furby en mode attaque 😂" | ✅ |
-| 4 | US1 `EDGEFXX5W5CEHEZ0` | **App** | @SmithOlive2... | @JustRocketMan | "Epic Fury mode activated, those Furbys are going full MAGA 😂🔥" | ✅ |
-
----
-
-## Latences mesurées
-
-| Opération | Latence |
-|-----------|---------|
-| Commande shell (tap, keyevent, broadcast) | 450-580ms |
-| Screenshot | 500-700ms |
-| Deep link + chargement page | 5-6s (avec sleep) |
-| Flow complet app native | **~21 secondes** |
-| Flow complet Chrome | **~25 secondes** |
-| Installation APK | ~6s |
-
----
-
-## Architecture globale
-
-```
-Worker Render (intelligence)          Gateway Box (exécution)
-────────────────────────              ──────────────────────
-GORGONE → filtre → LLM               Reçoit le job Supabase
-    ↓                                     ↓
-LLM choisit les avatars              Détecte app ou Chrome
-    ↓                                     ↓
-LLM rédige le commentaire            postReply(dbId, tweetId, text)
-    ↓                                     ↓
-INSERT campaign_job                   Screenshots source + preuve
-  (device, text, tweet_url)               ↓
-                                      UPDATE job → done/failed
-```
-
-Le LLM rédige. Le gateway exécute. Pas d'intelligence côté exécution.
-
----
-
-## Évolutions futures
-
-### TikTok
-- Probablement nécessitera l'app native + navigation UI
-- Le dump `uiautomator` ou le LLM vision pourrait être utile
-
-### Instagram
-- Instagram web mobile est très limité (popups constants)
-- App native fortement recommandée
-
-### Gestion des erreurs avancée
-- Détecter "Unlock more on X" via screenshot ou dump UI
-- Fallback LLM vision Aleria pour les états inconnus (gratuit)
+Saves `screenshot_source_<ts>.jpg` and `screenshot_proof_<ts>.jpg`
+beside the script (gitignored). The CLI wrapper does **not** restore the
+IME — only the pipeline executor does. Restart the device or re-run the
+pipeline to bring Gboard back after a CLI test.

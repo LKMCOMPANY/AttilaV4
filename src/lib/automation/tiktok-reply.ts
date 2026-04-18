@@ -1,33 +1,114 @@
 /**
- * Post a comment on TikTok via ADB on VMOS containers.
+ * Post a comment on TikTok via the native Android app.
  *
- * Requires the TikTok app (com.zhiliaoapp.musically) installed and logged in.
- * Uses calibrated coordinates for the comment button, text field, and send button.
+ * Pre-conditions enforced by the caller (`pipeline/executor`):
+ *   - Container is fully booted (`ensureContainerReady`)
+ *   - Original IME captured for restore in the surrounding try/finally
+ *
+ * Success contract:
+ *   - SOURCE screenshot is captured once the target video is on screen
+ *     (proves we are commenting on the right video).
+ *   - PROOF screenshot is captured with the composer open and the typed
+ *     comment visible (proves what is about to be sent).
+ *   - The submit is verified by checking the comment field is empty in
+ *     the UI tree after the send tap. If the field still contains our
+ *     text the post is considered failed.
+ *
+ * Known blockers — the function throws with an explicit message:
+ *   - TikTok app missing (`com.zhiliaoapp.musically`)
+ *   - First-launch GDPR/ads consent dialog still on screen (requires
+ *     a one-time manual ack on the device)
  */
 
 import {
   shell,
+  shellSafe,
   screenshot,
   sleep,
   wakeDevice,
-  ensureAdbKeyboard,
+  isPackageInstalled,
+  activateAdbKeyboard,
   typeText,
-  restoreGboard,
+  tryUiDump,
 } from "./adb-helpers";
+import { encodeJobError, JobError } from "./errors";
 
+const TIKTOK_PACKAGE = "com.zhiliaoapp.musically";
+
+// Validated 2026-04 on AOSP 13 / 1080×2340 / TikTok FR build.
 const COORDS = {
-  commentButton: { x: 985, y: 1425 },
-  commentField: { x: 200, y: 2290 },
+  // Speech-bubble icon on the right action column of the video screen.
+  commentButton: { x: 970, y: 1500 },
+  // "Add a comment" input field at the bottom of the comments panel.
+  commentField: { x: 450, y: 2262 },
+  // Pink ↑ submit button shown to the right of the field once focused.
   sendButton: { x: 970, y: 1515 },
-};
+} as const;
 
+// Timings tuned for a believable human pace AND to give VMOS' ~5 s
+// screenshot cache time to invalidate between source and proof shots.
 const TIMING = {
-  videoLoad: 8000,
-  panelSlide: 3000,
-  afterTapField: 1500,
-  afterType: 1000,
-  afterSend: 5000,
-};
+  afterForceStop: 800,
+  videoLoad: 8000,           // cold-start + first frame
+  panelSlide: 2500,
+  fieldFocus: 1500,
+  afterImeSwitch: 800,
+  afterType: 2000,           // reread before sending
+  beforeSubmit: 1200,        // pause before the decisive tap
+  postSubmit: 4000,
+} as const;
+
+/**
+ * Substrings observed in TikTok consent / first-launch dialogs across
+ * supported locales. Detected via UI dump right after the deep link.
+ */
+const CONSENT_BLOCKERS = [
+  "Choisir comment afficher",  // FR — ads consent
+  "Pubs personnalisées",       // FR — option label
+  "Choose your ads experience", // EN — ads consent
+  "Personalized ads",           // EN — option label
+];
+
+const TIKTOK_LOGGED_OUT_MARKERS = [
+  "Connecte-toi pour ",
+  "Connecte-toi à TikTok",
+  "Inscris-toi avec",
+  "Log in to TikTok",
+  "Sign up for TikTok",
+  "Inicia sesión",
+  "LoginActivity",
+];
+
+const TIKTOK_CONTENT_UNAVAILABLE_MARKERS = [
+  "Vidéo non disponible",
+  "Cette vidéo n'est pas disponible",
+  "Video currently unavailable",
+  "This video is currently unavailable",
+  "Couldn't find this account",
+  "Compte introuvable",
+];
+
+function detectBlockingState(ui: string): JobError | null {
+  if (CONSENT_BLOCKERS.some((m) => ui.includes(m))) {
+    return new JobError(
+      "consent_required",
+      "TikTok consent dialog blocking — device requires a one-time manual ack",
+    );
+  }
+  if (TIKTOK_LOGGED_OUT_MARKERS.some((m) => ui.includes(m))) {
+    return new JobError(
+      "account_logged_out",
+      "TikTok session expired or no avatar logged in on this device — operator must sign in again",
+    );
+  }
+  if (TIKTOK_CONTENT_UNAVAILABLE_MARKERS.some((m) => ui.includes(m))) {
+    return new JobError(
+      "content_unavailable",
+      "Video is deleted, private, or unavailable in this region — skip this post",
+    );
+  }
+  return null;
+}
 
 export interface TikTokReplyResult {
   success: boolean;
@@ -41,106 +122,128 @@ function ttLog(dbId: string, step: string, data?: Record<string, unknown>) {
   console.log(`[TikTok-Reply][${dbId}] ${step}`, data ? JSON.stringify(data) : "");
 }
 
-async function hasTikTokApp(boxHost: string, dbId: string): Promise<boolean> {
-  const result = await shell(boxHost, dbId, "pm list packages | grep musically");
-  const found = result.message.includes("com.zhiliaoapp.musically");
-  ttLog(dbId, `hasTikTokApp: ${found}`, { raw: result.message.trim() });
-  return found;
+/**
+ * Look for `text` inside any `EditText` node. Returns true only when our
+ * typed comment is *still* in the input — a positive signal that submit
+ * did not go through. Plain text rendered in the comments list shows up
+ * in `TextView`, not `EditText`, so this avoids the obvious false
+ * positive (our successfully posted comment appearing in the timeline).
+ */
+function isTextStuckInEditText(ui: string, text: string): boolean {
+  const re = /<node\s+[^>]*?class="android\.widget\.EditText"[^>]*?\btext="([^"]*)"/g;
+  for (const match of ui.matchAll(re)) {
+    if (match[1] === text) return true;
+  }
+  return false;
 }
 
 export async function postTikTokComment(
-  boxHost: string,
+  tunnelHostname: string,
   dbId: string,
   videoUrl: string,
   text: string,
 ): Promise<TikTokReplyResult> {
   const start = Date.now();
-
-  ttLog(dbId, "postTikTokComment START", { boxHost, videoUrl, textPreview: text.slice(0, 60) });
+  ttLog(dbId, "postTikTokComment START", { videoUrl, textPreview: text.slice(0, 60) });
 
   try {
-    const hasApp = await hasTikTokApp(boxHost, dbId);
-    if (!hasApp) {
-      throw new Error("TikTok app (com.zhiliaoapp.musically) not installed");
+    if (!(await isPackageInstalled(tunnelHostname, dbId, TIKTOK_PACKAGE))) {
+      throw new JobError(
+        "device_setup_required",
+        `TikTok app (${TIKTOK_PACKAGE}) not installed on device`,
+      );
     }
 
-    // --- Step 1: Wake device ---
-    ttLog(dbId, "step 1: wake device");
-    await wakeDevice(boxHost, dbId);
+    await wakeDevice(tunnelHostname, dbId);
 
-    // --- Step 2: Open video via deep link ---
-    ttLog(dbId, "step 2: open video via deep link", { url: videoUrl });
-    await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${videoUrl}`);
+    // Force-stop guarantees the deep link cold-starts on the target video
+    // instead of resuming a stale session on a different feed item.
+    await shell(tunnelHostname, dbId, `am force-stop ${TIKTOK_PACKAGE}`);
+    await sleep(TIMING.afterForceStop);
+
+    await shell(tunnelHostname, dbId, `am start -a android.intent.action.VIEW -d ${videoUrl}`);
     await sleep(TIMING.videoLoad);
 
-    // --- Step 3: Screenshot source (video loaded) ---
-    ttLog(dbId, "step 3: screenshot source");
-    const source = await screenshot(boxHost, dbId);
+    // Detect blocking states (consent dialog, login wall, deleted video)
+    // before we start interacting — fail fast with a typed cause.
+    const preUi = await tryUiDump(tunnelHostname, dbId);
+    if (preUi) {
+      const blocker = detectBlockingState(preUi);
+      if (blocker) throw blocker;
+    }
 
-    // --- Step 4: Tap comment button to open panel ---
-    ttLog(dbId, "step 4: tap comment button", { coords: COORDS.commentButton });
-    await shell(boxHost, dbId, `input tap ${COORDS.commentButton.x} ${COORDS.commentButton.y}`);
+    ttLog(dbId, "source screenshot");
+    const source = await screenshot(tunnelHostname, dbId);
+
+    // Open the comments panel
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.commentButton.x} ${COORDS.commentButton.y}`);
     await sleep(TIMING.panelSlide);
 
-    // --- Step 5: Tap comment field to get keyboard ---
-    ttLog(dbId, "step 5: tap comment field", { coords: COORDS.commentField });
-    await shell(boxHost, dbId, `input tap ${COORDS.commentField.x} ${COORDS.commentField.y}`);
-    await sleep(TIMING.afterTapField);
+    // Focus the field, swap to ADBKeyboard, refocus (the swap steals focus)
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.commentField.x} ${COORDS.commentField.y}`);
+    await sleep(TIMING.fieldFocus);
 
-    // --- Step 6: Activate ADBKeyboard ---
-    ttLog(dbId, "step 6: activate ADBKeyboard");
-    const kbReady = await ensureAdbKeyboard(boxHost, dbId);
-    if (!kbReady) throw new Error("ADBKeyboard activation failed");
+    await activateAdbKeyboard(tunnelHostname, dbId);
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.commentField.x} ${COORDS.commentField.y}`);
+    await sleep(TIMING.afterImeSwitch);
 
-    // --- Step 7: Re-tap field after IME switch (TikTok loses focus) ---
-    ttLog(dbId, "step 7: re-tap comment field after IME switch");
-    await shell(boxHost, dbId, `input tap ${COORDS.commentField.x} ${COORDS.commentField.y}`);
-    await sleep(500);
-
-    // --- Step 8: Type text ---
-    ttLog(dbId, "step 8: broadcast text input", { textLength: text.length });
-    const typed = await typeText(boxHost, dbId, text);
-    if (!typed) throw new Error("Text broadcast failed");
+    await typeText(tunnelHostname, dbId, text);
     await sleep(TIMING.afterType);
 
-    // --- Step 9: Tap send button ---
-    ttLog(dbId, "step 9: tap send button", { coords: COORDS.sendButton });
-    await shell(boxHost, dbId, `input tap ${COORDS.sendButton.x} ${COORDS.sendButton.y}`);
-    await sleep(TIMING.afterSend);
+    ttLog(dbId, "proof screenshot (composer ready)");
+    const proof = await screenshot(tunnelHostname, dbId);
+    await sleep(TIMING.beforeSubmit);
 
-    // --- Step 10: Screenshot proof (comment should be visible in panel) ---
-    ttLog(dbId, "step 10: screenshot proof");
-    const proof = await screenshot(boxHost, dbId);
+    // Submit. The composer stays on screen but the field clears on success.
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.sendButton.x} ${COORDS.sendButton.y}`);
+    await sleep(TIMING.postSubmit);
 
-    // --- Step 11: Restore Gboard + close panel ---
-    ttLog(dbId, "step 11: restore Gboard + back");
-    await restoreGboard(boxHost, dbId);
-    await shell(boxHost, dbId, "input keyevent KEYCODE_BACK");
+    // Verify: the typed text must no longer be inside the EditText. We
+    // only look at EditText nodes — our just-posted comment also appears
+    // in the comments list (rendered as a TextView) and we must not flag
+    // that as failure. The dump is best-effort: TikTok often returns no
+    // EditText in the compressed tree (Compose-style composer) or fails
+    // the idle wait outright, both of which we treat as inconclusive.
+    const postUi = await tryUiDump(tunnelHostname, dbId);
+    if (postUi && isTextStuckInEditText(postUi, text)) {
+      throw new JobError(
+        "rate_limited",
+        "Comment not submitted — typed text still present in input field (likely TikTok throttling or anti-spam)",
+      );
+    }
 
+    // Best-effort: collapse the comments panel so the device returns to feed.
+    await shellSafe(tunnelHostname, dbId, "input keyevent KEYCODE_BACK");
+
+    const durationMs = Date.now() - start;
     ttLog(dbId, "postTikTokComment SUCCESS", {
-      durationMs: Date.now() - start,
+      durationMs,
       sourceBytes: source.length,
       proofBytes: proof.length,
     });
-    return { success: true, source, proof, durationMs: Date.now() - start };
+    return { success: true, source, proof, durationMs };
   } catch (err) {
-    await restoreGboard(boxHost, dbId);
-    const error = err instanceof Error ? err.message : String(err);
-    ttLog(dbId, "postTikTokComment FAILED", { error, durationMs: Date.now() - start });
+    const error = encodeJobError(err);
+    const durationMs = Date.now() - start;
+    ttLog(dbId, "postTikTokComment FAILED", { error, durationMs });
     return {
       success: false,
       source: Buffer.alloc(0),
       proof: Buffer.alloc(0),
       error,
-      durationMs: Date.now() - start,
+      durationMs,
     };
   }
 }
 
+/**
+ * Toggle the on-screen pointer indicator. Helper kept for the calibration
+ * CLI script (`scripts/tiktok-reply.ts --calibrate`).
+ */
 export async function setPointerLocation(
-  boxHost: string,
+  tunnelHostname: string,
   dbId: string,
   enable: boolean,
 ): Promise<void> {
-  await shell(boxHost, dbId, `settings put system pointer_location ${enable ? 1 : 0}`);
+  await shell(tunnelHostname, dbId, `settings put system pointer_location ${enable ? 1 : 0}`);
 }

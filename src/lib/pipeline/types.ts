@@ -111,7 +111,6 @@ export interface SelectedAvatar {
 
 export interface ExecutionResult {
   success: boolean;
-  mode?: "app" | "chrome";
   sourceScreenshot?: Buffer;
   proofScreenshot?: Buffer;
   error?: string;

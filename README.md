@@ -86,3 +86,10 @@ with `--concurrency` on the install script.
 
 See `ADB-REFERENCE.md` (section 2 bis) for the full ADBKeyboard provisioning
 spec including the mandatory `pm enable` step.
+
+## For agents
+
+If you're an AI assistant being asked to modify this codebase, **read
+`AGENTS.md` first**. It points you to the right domain doc, lists the hard
+rules from the 18 April 2026 automation refactor, and tells you which
+patterns will get you bitten if you copy from older code.

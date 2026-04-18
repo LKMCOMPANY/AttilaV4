@@ -1,46 +1,107 @@
 /**
- * Post a reply on Twitter/X via ADB on VMOS containers.
+ * Post a reply on X/Twitter via the native Android app.
  *
- * Auto-detects whether the Twitter app is installed:
- *   - App installed  -> deep link opens tweet in app, reply field at bottom
- *   - No app         -> deep link opens Chrome, uses intent/post URL for compose
+ * Pre-conditions enforced by the caller (`pipeline/executor`):
+ *   - Container is fully booted (`ensureContainerReady`)
+ *   - Original IME captured for restore in the surrounding try/finally
  *
- * Both flows are fully deterministic. No LLM needed at execution time.
+ * Success contract:
+ *   - SOURCE screenshot is captured once the tweet detail activity is on
+ *     screen (proves we are looking at the right post).
+ *   - PROOF screenshot is captured with the composer open and the typed
+ *     comment visible (proves what is about to be sent).
+ *   - The post is considered successful only when, after tapping the post
+ *     button, focus returns to `TweetDetailActivity`. Any other state
+ *     (composer still up, error toast, app crash) throws.
  */
 
 import {
   shell,
   screenshot,
   sleep,
-  extractTweetId,
   wakeDevice,
-  ensureAdbKeyboard,
+  isPackageInstalled,
+  activateAdbKeyboard,
   typeText,
-  restoreGboard,
+  getCurrentFocus,
+  waitForFocus,
+  tryUiDump,
 } from "./adb-helpers";
+import { encodeJobError, JobError } from "./errors";
+
+const X_PACKAGE = "com.twitter.android";
+const TWEET_DETAIL_FOCUS_HINT = "TweetDetailActivity";
+
+/**
+ * Blocking states detected from the UI tree right after the tweet loads.
+ * Order matters: a "logged out" page also contains generic content, so we
+ * check explicit auth markers first. Patterns kept short and multilingual
+ * (FR/EN/ES seen in the wild on our avatar accounts).
+ */
+const X_LOGGED_OUT_MARKERS = [
+  "Connecte-toi",
+  "Crée un compte",
+  "Sign in to X",
+  "Sign in to Twitter",
+  "Log in to X",
+  "Inicia sesión",
+  "LoginActivity",
+  "OnboardingActivity",
+  "SsoActivity",
+];
+
+const X_CONTENT_UNAVAILABLE_MARKERS = [
+  "This Post is unavailable",
+  "This Tweet is unavailable",
+  "Cette publication n'est pas disponible",
+  "Ce post n'est pas disponible",
+  "Ce Tweet n'est pas disponible",
+  "Hmm...this page doesn't exist",
+  "Cette page n'existe pas",
+  "Account suspended",
+  "compte a été suspendu",
+];
+
+function detectBlockingState(ui: string): JobError | null {
+  if (X_LOGGED_OUT_MARKERS.some((m) => ui.includes(m))) {
+    return new JobError(
+      "account_logged_out",
+      "X session expired or no avatar logged in on this device — operator must sign in again",
+    );
+  }
+  if (X_CONTENT_UNAVAILABLE_MARKERS.some((m) => ui.includes(m))) {
+    return new JobError(
+      "content_unavailable",
+      "Tweet is deleted, private, suspended, or geo-blocked — skip this post",
+    );
+  }
+  return null;
+}
 
 const COORDS = {
-  app: {
-    replyField: { x: 540, y: 2277 },
-    replyButton: { x: 947, y: 2220 },
-  },
-  chrome: {
-    replyField: { x: 300, y: 1000 },
-    replyButton: { x: 920, y: 285 },
-  },
-};
+  // Reply field at the bottom of the tweet detail screen, opens composer.
+  replyField: { x: 540, y: 2277 },
+  // Active "Répondre/Reply" button inside the composer.
+  postButton: { x: 947, y: 2220 },
+} as const;
 
+// Timings tuned for a believable human pace AND to give VMOS' ~5 s
+// screenshot cache time to invalidate between source and proof shots.
+// `screenshot()` already retries on stale hashes; these durations make the
+// whole flow look natural even when the cache cooperates.
 const TIMING = {
-  pageLoad: 6000,
-  afterTapField: 1500,
-  afterType: 1000,
-  afterPost: 6000,
-  proofReload: 6000,
-};
+  afterForceStop: 800,
+  beforeSourceShot: 1800,    // simulate reading the tweet
+  composerOpen: 1500,
+  afterImeSwitch: 800,
+  afterType: 2000,           // reread before sending
+  beforeSubmit: 1200,        // pause before the decisive tap
+  postSubmit: 4000,
+  focusOpenTimeoutMs: 15_000,
+} as const;
 
 export interface ReplyResult {
   success: boolean;
-  mode: "app" | "chrome";
   source: Buffer;
   proof: Buffer;
   error?: string;
@@ -51,170 +112,108 @@ function xLog(dbId: string, step: string, data?: Record<string, unknown>) {
   console.log(`[X-Reply][${dbId}] ${step}`, data ? JSON.stringify(data) : "");
 }
 
-async function hasTwitterApp(boxHost: string, dbId: string): Promise<boolean> {
-  const result = await shell(boxHost, dbId, "pm list packages | grep twitter");
-  const found = result.message.includes("com.twitter.android");
-  xLog(dbId, `hasTwitterApp: ${found}`, { raw: result.message.trim() });
-  return found;
-}
-
-async function postReplyViaApp(
-  boxHost: string,
-  dbId: string,
-  tweetUrl: string,
-  text: string,
-): Promise<{ source: Buffer; proof: Buffer }> {
-  const c = COORDS.app;
-
-  // --- Step 1: Open tweet via deep link ---
-  xLog(dbId, "APP — open tweet via deep link", { url: tweetUrl });
-  await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(TIMING.pageLoad);
-
-  // --- Step 2: Screenshot source (tweet loaded) ---
-  xLog(dbId, "APP — screenshot source");
-  const source = await screenshot(boxHost, dbId);
-
-  // --- Step 3: Tap reply field ---
-  xLog(dbId, "APP — tap reply field", { coords: c.replyField });
-  await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
-  await sleep(TIMING.afterTapField);
-
-  // --- Step 4: Activate ADBKeyboard + re-tap field for focus ---
-  xLog(dbId, "APP — activate ADBKeyboard");
-  const kbReady = await ensureAdbKeyboard(boxHost, dbId);
-  if (!kbReady) throw new Error("ADBKeyboard activation failed");
-
-  xLog(dbId, "APP — re-tap reply field after IME switch");
-  await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
-  await sleep(500);
-
-  // --- Step 5: Type text ---
-  xLog(dbId, "APP — type text", { textLength: text.length });
-  const typed = await typeText(boxHost, dbId, text);
-  if (!typed) throw new Error("Text broadcast failed");
-  await sleep(TIMING.afterType);
-
-  // --- Step 6: Tap reply/post button ---
-  xLog(dbId, "APP — tap reply button", { coords: c.replyButton });
-  await shell(boxHost, dbId, `input tap ${c.replyButton.x} ${c.replyButton.y}`);
-  await sleep(TIMING.afterPost);
-
-  // --- Step 7: Reopen tweet + wait for reply to appear ---
-  xLog(dbId, "APP — reopen tweet for proof screenshot");
-  await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(TIMING.proofReload);
-
-  // --- Step 8: Screenshot proof ---
-  const proof = await screenshot(boxHost, dbId);
-  xLog(dbId, "APP — complete", { sourceBytes: source.length, proofBytes: proof.length });
-
-  return { source, proof };
-}
-
-async function postReplyViaChrome(
-  boxHost: string,
-  dbId: string,
-  tweetUrl: string,
-  tweetId: string,
-  text: string,
-): Promise<{ source: Buffer; proof: Buffer }> {
-  const c = COORDS.chrome;
-
-  // --- Step 1: Open tweet in browser ---
-  xLog(dbId, "CHROME — open tweet in browser", { url: tweetUrl });
-  await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(TIMING.pageLoad);
-
-  // --- Step 2: Screenshot source ---
-  xLog(dbId, "CHROME — screenshot source");
-  const source = await screenshot(boxHost, dbId);
-
-  // --- Step 3: Open reply intent page ---
-  xLog(dbId, "CHROME — open reply intent", { tweetId });
-  const intentUrl = `https://x.com/intent/post?in_reply_to=${tweetId}`;
-  await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${intentUrl}`);
-  await sleep(TIMING.pageLoad);
-
-  // --- Step 4: Tap reply field ---
-  xLog(dbId, "CHROME — tap reply field", { coords: c.replyField });
-  await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
-  await sleep(TIMING.afterTapField);
-
-  // --- Step 5: Activate ADBKeyboard + re-tap field ---
-  xLog(dbId, "CHROME — activate ADBKeyboard");
-  const kbReady = await ensureAdbKeyboard(boxHost, dbId);
-  if (!kbReady) throw new Error("ADBKeyboard activation failed");
-
-  xLog(dbId, "CHROME — re-tap reply field after IME switch");
-  await shell(boxHost, dbId, `input tap ${c.replyField.x} ${c.replyField.y}`);
-  await sleep(500);
-
-  // --- Step 6: Type text ---
-  xLog(dbId, "CHROME — type text", { textLength: text.length });
-  const typed = await typeText(boxHost, dbId, text);
-  if (!typed) throw new Error("Text broadcast failed");
-  await sleep(TIMING.afterType);
-
-  // --- Step 7: Tap reply button ---
-  xLog(dbId, "CHROME — tap reply button", { coords: c.replyButton });
-  await shell(boxHost, dbId, `input tap ${c.replyButton.x} ${c.replyButton.y}`);
-  await sleep(TIMING.afterPost);
-
-  // --- Step 8: Reopen tweet for proof ---
-  xLog(dbId, "CHROME — reopen tweet for proof screenshot");
-  await shell(boxHost, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-  await sleep(TIMING.proofReload);
-
-  // --- Step 9: Screenshot proof ---
-  const proof = await screenshot(boxHost, dbId);
-  xLog(dbId, "CHROME — complete", { sourceBytes: source.length, proofBytes: proof.length });
-
-  return { source, proof };
-}
-
 export async function postReply(
-  boxHost: string,
+  tunnelHostname: string,
   dbId: string,
   tweetUrl: string,
   text: string,
 ): Promise<ReplyResult> {
   const start = Date.now();
-  const tweetId = extractTweetId(tweetUrl);
-
-  xLog(dbId, "postReply START", { boxHost, tweetUrl, tweetId, textPreview: text.slice(0, 60) });
+  xLog(dbId, "postReply START", { tweetUrl, textPreview: text.slice(0, 60) });
 
   try {
-    await wakeDevice(boxHost, dbId);
+    if (!(await isPackageInstalled(tunnelHostname, dbId, X_PACKAGE))) {
+      throw new JobError(
+        "device_setup_required",
+        `X app (${X_PACKAGE}) not installed on device`,
+      );
+    }
 
-    const hasApp = await hasTwitterApp(boxHost, dbId);
-    const mode = hasApp ? "app" as const : "chrome" as const;
-    xLog(dbId, `Mode selected: ${mode}`);
+    await wakeDevice(tunnelHostname, dbId);
 
-    const { source, proof } = hasApp
-      ? await postReplyViaApp(boxHost, dbId, tweetUrl, text)
-      : await postReplyViaChrome(boxHost, dbId, tweetUrl, tweetId, text);
+    // Force-stop X to guarantee a clean entry point — avoids inheriting a
+    // stale composer or an unrelated tweet from a prior interrupted job.
+    await shell(tunnelHostname, dbId, `am force-stop ${X_PACKAGE}`);
+    await sleep(TIMING.afterForceStop);
 
-    await restoreGboard(boxHost, dbId);
+    // Open the tweet via deep link — Android routes x.com URLs to the app.
+    await shell(tunnelHostname, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
 
+    try {
+      await waitForFocus(tunnelHostname, dbId, TWEET_DETAIL_FOCUS_HINT, TIMING.focusOpenTimeoutMs);
+    } catch {
+      // The intent never reached the tweet detail screen. Either the app is
+      // stuck on a login wall or the URL routes to an error page.
+      const ui = await tryUiDump(tunnelHostname, dbId);
+      const blocker = ui ? detectBlockingState(ui) : null;
+      if (blocker) throw blocker;
+      throw new JobError(
+        "ui_unexpected",
+        `Tweet detail did not open within ${TIMING.focusOpenTimeoutMs / 1000}s after deep link`,
+      );
+    }
+    await sleep(TIMING.beforeSourceShot); // give content a beat to render
+
+    // Detect blocking states (login wall, deleted post, suspended account)
+    // before we start interacting — better to fail fast with a clear cause.
+    const preUi = await tryUiDump(tunnelHostname, dbId);
+    if (preUi) {
+      const blocker = detectBlockingState(preUi);
+      if (blocker) throw blocker;
+    }
+
+    xLog(dbId, "source screenshot");
+    const source = await screenshot(tunnelHostname, dbId);
+
+    // Open composer
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
+    await sleep(TIMING.composerOpen);
+
+    // Switch to ADBKeyboard so `am broadcast -a ADB_INPUT_TEXT` is honored.
+    // The X app loses focus during the IME swap so we re-tap the field after.
+    await activateAdbKeyboard(tunnelHostname, dbId);
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
+    await sleep(TIMING.afterImeSwitch);
+
+    await typeText(tunnelHostname, dbId, text);
+    await sleep(TIMING.afterType);
+
+    xLog(dbId, "proof screenshot (composer ready)");
+    const proof = await screenshot(tunnelHostname, dbId);
+    await sleep(TIMING.beforeSubmit);
+
+    // Submit
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.postButton.x} ${COORDS.postButton.y}`);
+    await sleep(TIMING.postSubmit);
+
+    // Verify: composer must close — focus returns to tweet detail. Anything
+    // else (composer still up, dialog, app crash) means the post did not go
+    // through (text too long, rate limit, network…).
+    const focus = await getCurrentFocus(tunnelHostname, dbId);
+    if (!focus.includes(TWEET_DETAIL_FOCUS_HINT)) {
+      throw new JobError(
+        "ui_unexpected",
+        `Post not submitted — focus did not return to tweet detail (current=${focus})`,
+      );
+    }
+
+    const durationMs = Date.now() - start;
     xLog(dbId, "postReply SUCCESS", {
-      mode,
-      durationMs: Date.now() - start,
+      durationMs,
       sourceBytes: source.length,
       proofBytes: proof.length,
     });
-    return { success: true, mode, source, proof, durationMs: Date.now() - start };
+    return { success: true, source, proof, durationMs };
   } catch (err) {
-    await restoreGboard(boxHost, dbId);
-    const error = err instanceof Error ? err.message : String(err);
-    xLog(dbId, "postReply FAILED", { error, durationMs: Date.now() - start });
+    const error = encodeJobError(err);
+    const durationMs = Date.now() - start;
+    xLog(dbId, "postReply FAILED", { error, durationMs });
     return {
       success: false,
-      mode: "chrome",
       source: Buffer.alloc(0),
       proof: Buffer.alloc(0),
       error,
-      durationMs: Date.now() - start,
+      durationMs,
     };
   }
 }

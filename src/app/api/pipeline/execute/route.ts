@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { broadcastCampaignEvent, broadcastAccountEvent } from "@/lib/supabase/realtime";
 import { executeJob, uploadProofScreenshot } from "@/lib/pipeline";
-import { ensureContainerRunning, stopContainerIfIdle } from "@/lib/box-api";
+import {
+  ensureContainerReady,
+  stopContainerIfIdle,
+  ContainerNotReadyError,
+} from "@/lib/box-api";
+import { encodeJobError, JobError } from "@/lib/automation/errors";
 
 /**
  * POST /api/pipeline/execute
@@ -119,41 +124,62 @@ export async function POST(req: NextRequest) {
   }));
 
   // -----------------------------------------------------------------------
-  // 5. Ensure container is running (start if stopped)
+  // 5. Ensure container is running AND Android has finished booting
   // -----------------------------------------------------------------------
-  const { running, wasStarted } = await ensureContainerRunning(tunnelHostname, device.db_id);
-
-  if (wasStarted && running) {
-    await supabase
-      .from("devices")
-      .update({ state: "running", last_seen: new Date().toISOString() })
-      .eq("id", job.device_id);
-    broadcastAccountEvent(job.account_id, "devices", { action: "state_changed" });
-  }
-
-  if (!running) {
+  try {
+    const { wasStarted } = await ensureContainerReady(tunnelHostname, device.db_id);
+    if (wasStarted) {
+      await supabase
+        .from("devices")
+        .update({ state: "running", last_seen: new Date().toISOString() })
+        .eq("id", job.device_id);
+      broadcastAccountEvent(job.account_id, "devices", { action: "state_changed" });
+    }
+  } catch (err) {
+    // Container failed to come up. Map to typed error so the dashboard
+    // shows it as transient infra rather than an unknown bug.
+    const wrapped = err instanceof ContainerNotReadyError
+      ? err
+      : new JobError(
+          "infrastructure",
+          err instanceof Error ? err.message : "Container readiness failed",
+        );
+    const error = encodeJobError(wrapped);
     await supabase
       .from("campaign_jobs")
-      .update({ status: "failed", error_message: "Container start timeout", completed_at: new Date().toISOString() })
+      .update({ status: "failed", error_message: error, completed_at: new Date().toISOString() })
       .eq("id", job.id);
     await supabase.rpc("increment_campaign_counter", { p_campaign_id: job.campaign_id, p_counter: "total_responses_failed" });
     broadcastCampaignEvent(job.campaign_id, "pipeline", { action: "job_completed", status: "failed" });
     broadcastCampaignEvent(job.campaign_id, "counters", { action: "failed" });
     broadcastAccountEvent(job.account_id, "jobs", { action: "job_completed" });
-    return NextResponse.json({ jobId: job.id, success: false, status: "failed", error: "Container start timeout" });
+    return NextResponse.json({ jobId: job.id, success: false, status: "failed", error });
   }
 
   // -----------------------------------------------------------------------
-  // 6. Execute ADB automation
+  // 6. Execute ADB automation. `executeJob` captures + restores the IME.
+  //    `ContainerNotReadyError` may bubble if the device dies mid-flow.
   // -----------------------------------------------------------------------
-  const result = await executeJob({
-    tunnelHostname,
-    dbId: device.db_id,
-    platform: job.platform,
-    postUrl: job.post_url,
-    commentText: job.comment_text,
-    jobId: job.id,
-  });
+  let result;
+  try {
+    result = await executeJob({
+      tunnelHostname,
+      dbId: device.db_id,
+      platform: job.platform,
+      postUrl: job.post_url,
+      commentText: job.comment_text,
+      jobId: job.id,
+    });
+  } catch (err) {
+    console.error(`[Execute] Job ${job.id} crashed`, {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    result = {
+      success: false,
+      error: encodeJobError(err),
+      durationMs: 0,
+    };
+  }
 
   const now = new Date().toISOString();
 
@@ -161,7 +187,6 @@ export async function POST(req: NextRequest) {
     success: result.success,
     error: result.error,
     durationMs: result.durationMs,
-    mode: result.mode,
   }));
 
   // -----------------------------------------------------------------------

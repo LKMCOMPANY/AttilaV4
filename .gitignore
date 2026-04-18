@@ -41,3 +41,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# CLI automation script artifacts (tmp screenshots saved to repo root)
+/screenshot_source_*.jpg
+/screenshot_proof_*.jpg
+/tiktok_source_*.jpg
+/tiktok_proof_*.jpg

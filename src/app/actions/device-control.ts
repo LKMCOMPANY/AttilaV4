@@ -3,7 +3,12 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
 import { broadcastAccountEvent } from "@/lib/supabase/realtime";
-import { boxFetch } from "@/lib/box-api";
+import {
+  ensureContainerReady,
+  shell,
+  shellSafe,
+  stopContainer as stopContainerVmos,
+} from "@/lib/box-api";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
@@ -60,21 +65,11 @@ export async function toggleScreenWake(
   try {
     const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
 
-    const stateRes = await boxFetch<{
-      code: number;
-      data: { message: string };
-    }>(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
-      method: "POST",
-      body: JSON.stringify({ cmd: "dumpsys power | grep mWakefulness" }),
-    });
-
-    const isAwake = stateRes.data?.message?.includes("Awake") ?? false;
+    const stateRes = await shell(tunnelHostname, dbId, "dumpsys power | grep mWakefulness");
+    const isAwake = stateRes.message.includes("Awake");
     const keyevent = isAwake ? 223 : 224; // 223=sleep, 224=wake
 
-    await boxFetch(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
-      method: "POST",
-      body: JSON.stringify({ cmd: `input keyevent ${keyevent}` }),
-    });
+    await shell(tunnelHostname, dbId, `input keyevent ${keyevent}`);
 
     return { error: null, awake: !isAwake };
   } catch (err) {
@@ -86,25 +81,23 @@ export async function toggleScreenWake(
 }
 
 // ---------------------------------------------------------------------------
-// Start container
+// Start container — waits for Android to finish booting before returning
+// so the operator never sees a "running" state on a half-booted device.
 // ---------------------------------------------------------------------------
 
 export async function startContainer(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const { dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { deviceId: id, dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
 
-    await boxFetch(tunnelHostname, "/container_api/v1/run", {
-      method: "POST",
-      body: JSON.stringify({ db_ids: [dbId] }),
-    });
+    await ensureContainerReady(tunnelHostname, dbId);
 
     const supabase = await createClient();
     await supabase
       .from("devices")
       .update({ state: "running", last_seen: new Date().toISOString() })
-      .eq("id", deviceId);
+      .eq("id", id);
 
     if (accountId) broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
     revalidatePath("/dashboard/operator");
@@ -115,25 +108,22 @@ export async function startContainer(
 }
 
 // ---------------------------------------------------------------------------
-// Stop container
+// Stop container — operator-initiated, unconditional
 // ---------------------------------------------------------------------------
 
 export async function stopContainer(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const { dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { deviceId: id, dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
 
-    await boxFetch(tunnelHostname, "/container_api/v1/stop", {
-      method: "POST",
-      body: JSON.stringify({ db_ids: [dbId] }),
-    });
+    await stopContainerVmos(tunnelHostname, dbId);
 
     const supabase = await createClient();
     await supabase
       .from("devices")
       .update({ state: "stopped", last_seen: new Date().toISOString() })
-      .eq("id", deviceId);
+      .eq("id", id);
 
     if (accountId) broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
     revalidatePath("/dashboard/operator");
@@ -144,7 +134,7 @@ export async function stopContainer(
 }
 
 // ---------------------------------------------------------------------------
-// Shell tap (for screenshot fallback click-to-tap)
+// Shell tap (used by the screenshot-mode click handler)
 // ---------------------------------------------------------------------------
 
 export async function shellTap(
@@ -154,12 +144,7 @@ export async function shellTap(
 ): Promise<{ error: string | null }> {
   try {
     const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
-
-    await boxFetch(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
-      method: "POST",
-      body: JSON.stringify({ cmd: `input tap ${Math.round(x)} ${Math.round(y)}` }),
-    });
-
+    await shell(tunnelHostname, dbId, `input tap ${Math.round(x)} ${Math.round(y)}`);
     return { error: null };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };
@@ -167,7 +152,8 @@ export async function shellTap(
 }
 
 // ---------------------------------------------------------------------------
-// Enable audio capture — starts a dedicated scrcpy audio process
+// Enable audio capture — starts a dedicated scrcpy audio process.
+// Uses shellSafe because the audio path is best-effort (UI tolerates absence).
 // ---------------------------------------------------------------------------
 
 // Mirrors the fallback logic in /data/local/scd.sh on the device:
@@ -192,35 +178,28 @@ export async function enableDeviceAudio(
   try {
     const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
 
-    const checkRes = await boxFetch<{
-      code: number;
-      data: { message: string };
-    }>(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
-      method: "POST",
-      body: JSON.stringify({
-        cmd: "netstat -tlnp 2>/dev/null | grep ':9998 ' | grep LISTEN || echo NO_AUDIO",
-      }),
-    });
+    const checkRes = await shellSafe(
+      tunnelHostname,
+      dbId,
+      "netstat -tlnp 2>/dev/null | grep ':9998 ' | grep LISTEN || echo NO_AUDIO",
+    );
 
-    if (!checkRes.data?.message?.includes("NO_AUDIO")) {
+    if (!checkRes || !checkRes.message.includes("NO_AUDIO")) {
       return { error: null };
     }
 
-    await boxFetch(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
-      method: "POST",
-      body: JSON.stringify({ cmd: SCRCPY_AUDIO_CMD }),
-    });
+    await shell(tunnelHostname, dbId, SCRCPY_AUDIO_CMD);
 
     // Wait for the audio port to start accepting connections (up to ~2.5s)
-    await boxFetch(tunnelHostname, `/android_api/v1/shell/${dbId}`, {
-      method: "POST",
-      body: JSON.stringify({
-        cmd: "for i in 1 2 3 4 5; do netstat -tlnp 2>/dev/null | grep ':9998 ' | grep -q LISTEN && break; sleep 0.5; done",
-      }),
-    });
+    await shell(
+      tunnelHostname,
+      dbId,
+      "for i in 1 2 3 4 5; do netstat -tlnp 2>/dev/null | grep ':9998 ' | grep -q LISTEN && break; sleep 0.5; done",
+    );
 
     return { error: null };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };
   }
 }
+

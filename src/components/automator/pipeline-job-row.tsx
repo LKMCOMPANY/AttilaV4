@@ -5,8 +5,9 @@ import { ExternalLink, User, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { DeviceScreenshot } from "./device-screenshot";
-import { JobStatusIcon, JobStatusLabel } from "./pipeline-status";
+import { JobErrorBadge, JobStatusIcon, JobStatusLabel } from "./pipeline-status";
 import { formatDistanceToNow, format } from "date-fns";
+import { parseJobError } from "@/lib/automation/errors";
 import type { CampaignJobWithAvatar, SocialPlatform } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -64,6 +65,12 @@ export function PipelineJobRow({
             </span>
           )}
         </div>
+
+        {job.status === "failed" && job.error_message && (
+          <div className="mt-1">
+            <JobErrorBadge errorMessage={job.error_message} />
+          </div>
+        )}
       </div>
 
       <JobStatusLabel status={job.status} />
@@ -116,16 +123,7 @@ export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
           </a>
         </div>
 
-        {job.error_message && (
-          <div>
-            <span className="text-[10px] font-medium uppercase text-destructive">
-              Error
-            </span>
-            <p className="mt-0.5 text-[11px] text-destructive/80">
-              {job.error_message}
-            </p>
-          </div>
-        )}
+        {job.error_message && <JobErrorDetail errorMessage={job.error_message} />}
 
         <div>
           <span className="text-caption">Timeline</span>
@@ -188,6 +186,40 @@ function DetailField({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+
+function JobErrorDetail({ errorMessage }: { errorMessage: string }) {
+  const parsed = parseJobError(errorMessage);
+  if (!parsed) return null;
+  const hint = HINT_BY_SEVERITY[parsed.severity];
+  return (
+    <div>
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] font-medium uppercase text-destructive">
+          Error
+        </span>
+        <JobErrorBadge errorMessage={errorMessage} />
+      </div>
+      <p className="mt-0.5 text-[11px] leading-snug text-destructive/80">
+        {parsed.message}
+      </p>
+      {hint && (
+        <p className="mt-0.5 text-[10px] italic leading-snug text-muted-foreground">
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const HINT_BY_SEVERITY: Record<string, string> = {
+  action_required:
+    "Open this device in the operator panel and resolve the dialog manually.",
+  transient:
+    "Will likely succeed on the next retry — leave the campaign running.",
+  terminal:
+    "This specific post will never succeed. The campaign will move on automatically.",
+  bug: "Unexpected state — share the screenshots with the dev team.",
+};
 
 function TimelineEntry({
   label,

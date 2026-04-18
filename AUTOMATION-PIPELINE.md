@@ -1,7 +1,47 @@
 # Automation Pipeline — Documentation technique
 
 > Pipeline d'automatisation des commentaires sur Twitter/X et TikTok.
-> Concu le 15 avril 2026. Ce document est la reference pour tout developpement sur le pipeline.
+> Concu le 15 avril 2026. Refactor 18 avril 2026.
+
+---
+
+## ⚡ État actuel — refactor 18 avril 2026
+
+Une refonte structurelle a corrigé une famille de bugs où des jobs étaient
+marqués `done` alors que rien n'était posté. À lire avant tout dev sur
+le pipeline.
+
+### Ce qui a changé
+
+| Composant | Avant | Maintenant |
+|---|---|---|
+| `box-api.ensureContainerRunning` | Returned as soon as VMOS reported `running` | `ensureContainerReady` polls `getprop sys.boot_completed=1` (timeout 90 s) |
+| `shell()` | Returned `{ ok: false }` on VMOS code 201, callers ignored it | Throws `ContainerNotReadyError` → automation aborts immediately |
+| `screenshot()` | Single fetch — VMOS server-side caches for ~5 s, source ≡ proof in many jobs | Adaptive retry on hash match (max 3× × 1 s) — never returns the same image as the previous one for that device |
+| Twitter flow | `app` and `chrome` modes with auto-detection (chrome never worked) | App-mode only; deep link always opens native app anyway |
+| TikTok coords | Comment button at `(985, 1425)` tapped the follow ⨁ button | Validated `(970, 1500)` — opens the comments panel |
+| IME lifecycle | `restoreGboard()` hard-coded; no capture of the previous IME | `executor` snapshots `getCurrentIme()` then `restoreIme()` from `finally` — operator never sees the "ADB Keyboard {ON}" banner |
+| Source/proof timing | Source after `am start`, proof after re-`am start` (always cold-start splash) | Source after `waitForFocus`, proof with composer open + text typed |
+| Success signal | `success: true` if no exception thrown | X: focus must return to `TweetDetailActivity`. TikTok: typed text must no longer be in any `EditText` node |
+| Error reporting | Free-form `error_message` strings | `JobError` with 11 typed categories encoded as `[category]` prefix, badges in automator UI |
+
+### Devices known-good
+
+Validated end-to-end via CLI scripts on 18 April 2026:
+
+| Platform | Device | Avatar | Result |
+|---|---|---|---|
+| Twitter (X) | `EDGEQ3CM8BJHIE64` | Lucas Bernard | Reply posted, focus returned to tweet detail |
+| TikTok | `EDGE8DK15O299ST5` | Sami Abadi | Comment posted, count went from 452 → 453 |
+
+### Reference docs
+
+| File | What |
+|---|---|
+| `X-AUTOMATE.md` | Twitter flow (current — app-mode only) |
+| `TIKTOK-AUTOMATE.md` | TikTok flow (current — validated coords) |
+| `ADB-REFERENCE.md` | All Android shell helpers and ADBKeyboard provisioning |
+| `src/lib/automation/errors.ts` | Source of truth for `JobErrorCategory` |
 
 ---
 
@@ -480,37 +520,77 @@ UPDATE boxes SET max_concurrent_containers = 50 WHERE tunnel_hostname = 'box-2.a
               total_responses_sent = total_responses_sent + 1  (ou total_responses_failed)
 ```
 
-### Scripts ADB (code partage — consolide V4.1, 16 avril 2026)
+### Modules d'automation (refactor 18 avril 2026)
 
 La logique ADB est dans `src/lib/automation/` (source unique de verite).
 Les scripts CLI dans `scripts/` sont des wrappers fins qui importent de la.
 L'executor du pipeline (`src/lib/pipeline/executor.ts`) importe aussi de la.
 
 ```
+src/lib/box-api.ts         VMOS HTTP layer
+                             boxFetch — primitive fetch + CF-Auth
+                             shell — throws ContainerNotReadyError on code 201
+                             shellSafe — same but never throws (cleanup paths)
+                             screenshot — adaptive cache busting via SHA-256 retry
+                             ensureContainerReady — start + poll boot_completed=1
+                             stopContainerIfIdle / stopContainer
+                             ContainerNotReadyError (export class)
+
 src/lib/automation/
-  adb-helpers.ts       Helpers partages :
-                         shell() — retourne { code, message, ok } (verifie code VMOS 200)
-                         screenshot() — capture ecran en Buffer
-                         wakeDevice() — WAKEUP + MENU + verify + retry swipe
-                         ensureAdbKeyboard() — pm enable + ime enable + ime set + verify
-                                              (le pm enable est requis car install_apk_from_url_batch
-                                              installe le package en enabled=0 par defaut)
-                         typeText() — broadcast + verification "Broadcast completed"
-                         restoreGboard() — best-effort restore du clavier standard
-                         escapeShellText() — echappe \, ", $, ` pour le shell
-  x-reply.ts           postReply() — Twitter app vs Chrome auto-detect
-  tiktok-reply.ts      postTikTokComment() — TikTok app native
+  adb-helpers.ts           Android-level helpers
+                             wakeDevice — WAKEUP + MENU + verify + retry swipe
+                             isPackageInstalled — pm list packages probe
+                             getCurrentIme / activateAdbKeyboard / restoreIme
+                             typeText — broadcast + verifies "Broadcast completed"
+                             getCurrentFocus / waitForFocus — bounded poll
+                             tryUiDump — best-effort uiautomator dump --compressed
+                             (re-exports shell/shellSafe/screenshot from box-api)
+  x-reply.ts               postReply() — Twitter native app only
+  tiktok-reply.ts          postTikTokComment() — TikTok native app
+  errors.ts                JobError + JobErrorCategory + parseJobError
 ```
 
-**Twitter/X** : auto-detection app native vs Chrome. Deep link → ensureAdbKeyboard →
-typeText → post. Re-tap du champ reply apres switch IME.
-**TikTok** : app native obligatoire. Meme pattern ensureAdbKeyboard + typeText.
+Patterns:
 
-### Filet de securite screenshots (V4.1)
+- **Twitter/X** : `force-stop` → deep link → `waitForFocus(TweetDetailActivity)`
+  → blocker detection (login wall, deleted post) → SOURCE → tap reply field
+  → `activateAdbKeyboard` → re-tap → `typeText` → PROOF → submit → focus
+  must return to tweet detail.
+- **TikTok** : `force-stop` → deep link → 8 s video load → blocker detection
+  (consent dialog, login, video unavailable) → SOURCE → tap comment icon →
+  tap field → `activateAdbKeyboard` → re-tap → `typeText` → PROOF → submit
+  → verify field is empty.
 
-L'executor compare la taille en bytes des screenshots source et proof.
-Si identiques → le post n'a probablement pas ete publie → `success: false`.
-Cela empeche de marquer `done` des jobs qui n'ont en realite rien poste.
+### Vérification du succès — pas de heuristique
+
+L'ancien filet `detectIdenticalScreenshots` (compare byte length source vs
+proof) a été supprimé : ce n'était qu'une heuristique fragile qui produisait
+des faux négatifs (proof légitimement plus petit) et passait les vrais
+échecs (deux captures différentes mais ni l'une ni l'autre ne montrait le
+post). Remplacé par :
+
+- **Twitter** : `getCurrentFocus()` après tap submit. Le composer X est un
+  fragment dans `TweetDetailActivity` ; s'il est encore ouvert, le focus est
+  toujours sur la même activity mais le tap submit a généralement causé un
+  popup d'erreur. La vérification est complétée par le UI dump `tryUiDump`
+  pour matcher des patterns d'erreur spécifiques.
+- **TikTok** : `tryUiDump()` puis `isTextStuckInEditText(text)` — on cible
+  uniquement les `EditText` (le commentaire posté apparaît aussi dans la
+  liste rendue en `TextView`, ce qui causerait un faux positif).
+
+### Reporting d'erreur — JobError
+
+Tout chemin d'erreur passe par `encodeJobError(err)` avant d'écrire en DB.
+Format `[category] message`. 11 catégories définies dans
+`src/lib/automation/errors.ts` avec sévérité (`action_required` /
+`transient` / `terminal` / `bug`). Le frontend automator parse et rend un
+badge coloré + hint contextuel pour l'opérateur.
+
+Catégories d'action immédiate :
+- `account_logged_out` → opérateur doit re-logger l'avatar
+- `consent_required` → ack manuel du dialog TikTok
+- `device_setup_required` → APK manquant
+- `account_blocked` / `account_captcha` → intervention compte
 
 ### Expiration
 

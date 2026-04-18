@@ -42,7 +42,7 @@ async function main() {
   const result = await postReply(boxHost, dbId, tweetUrl, text);
 
   if (result.success) {
-    console.log(`\nReply posted (${result.mode} mode) in ${result.durationMs}ms`);
+    console.log(`\nReply posted in ${result.durationMs}ms`);
 
     const fs = await import("fs");
     const timestamp = Date.now();
