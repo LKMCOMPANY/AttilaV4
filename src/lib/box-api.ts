@@ -108,10 +108,10 @@ interface VmosResponse<T> {
 }
 
 interface VmosShellData {
-  cmd: string;
-  db_id: string;
+  cmd?: string;       // present only when VMOS forwarded the command to Android
+  db_id?: string;
   host_ip: string;
-  message: string;
+  message?: string;   // command stdout, OR the Android exception text on cmd failure
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +203,18 @@ function logShell(dbId: string, ok: boolean, cmd: string, code: number, message:
  * Run a shell command on the device through VMOS. Throws
  * `ContainerNotReadyError` when VMOS reports the container is not running so
  * automation cannot silently proceed against a dead device.
+ *
+ * VMOS overloads code 201 for two very different cases:
+ *   1. Container not running — `data.cmd` is absent because VMOS never even
+ *      forwarded the request to Android. `msg` is something like
+ *      "实例未运行" / "instance not running".
+ *   2. Container running but the shell command itself failed (bad args,
+ *      Android-level exception, non-zero exit). `data.cmd` echoes the
+ *      command and `data.message` carries the stderr/exception text.
+ *
+ * Only case 1 is `ContainerNotReadyError`. Case 2 is returned as a normal
+ * result (with code 201) so the caller — which has the platform context —
+ * can decide how to react (typically wrap as a `JobError("ui_unexpected")`).
  */
 export async function shell(
   tunnelHostname: string,
@@ -224,7 +236,11 @@ export async function shell(
   const ms = Date.now() - start;
   logShell(dbId, code === 200, cmd, code, message, ms);
 
-  if (code === 201) throw new ContainerNotReadyError(dbId, cmd);
+  if (code === 201 && !res.data?.cmd) {
+    // VMOS never reached the device — container is down (or the request
+    // was malformed). Either way the automation cannot proceed.
+    throw new ContainerNotReadyError(dbId, cmd);
+  }
   return { code, message };
 }
 

@@ -80,14 +80,21 @@ const PREFIX_RE = /^\[([a-z_]+)\]\s*([\s\S]*)$/;
 
 /**
  * Render an error to the form persisted in `campaign_jobs.error_message`.
- * Plain `Error` falls back to category `unknown`.
+ * Recognises a few known error classes (without importing them, to avoid
+ * a circular dep with `box-api`) by their `name` field. Plain `Error`
+ * falls back to category `unknown`.
  */
 export function encodeJobError(err: unknown): string {
   if (err instanceof JobError) {
     return `[${err.category}] ${err.message}`;
   }
-  const message = err instanceof Error ? err.message : String(err);
-  return `[unknown] ${message}`;
+  if (err instanceof Error) {
+    if (err.name === "ContainerNotReadyError") {
+      return `[container_not_ready] ${err.message}`;
+    }
+    return `[unknown] ${err.message}`;
+  }
+  return `[unknown] ${String(err)}`;
 }
 
 export interface ParsedJobError {

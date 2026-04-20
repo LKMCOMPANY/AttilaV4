@@ -152,6 +152,13 @@ export async function postTikTokComment(
   let proof: Buffer = Buffer.alloc(0);
 
   try {
+    if (!videoUrl || !videoUrl.trim()) {
+      throw new JobError(
+        "ui_unexpected",
+        "Empty video URL — pipeline produced a job without a deep link target",
+      );
+    }
+
     if (!(await isPackageInstalled(tunnelHostname, dbId, TIKTOK_PACKAGE))) {
       throw new JobError(
         "device_setup_required",

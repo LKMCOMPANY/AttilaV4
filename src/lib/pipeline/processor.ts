@@ -276,14 +276,22 @@ function tweetToPost(row: Record<string, unknown>): PipelinePost {
 }
 
 function tiktokToPost(row: Record<string, unknown>): PipelinePost {
+  const author = row.author_username as string | null;
+  const videoId = row.video_id as string | null;
   return {
     id: String(row.id),
     zone_id: String(row.zone_id),
     account_id: String(row.account_id),
     platform: "tiktok",
-    post_url: row.share_url as string | null,
+    // Gorgone ingestion currently leaves `share_url` empty for every TikTok
+    // video. Reconstruct the canonical deep link from `video_id` +
+    // `author_username` so the automation receives a usable URL. If either
+    // is missing we fall back to `null` and the platform module will throw
+    // a typed `device_setup_required` error rather than `am start -d ` with
+    // an empty argument.
+    post_url: buildTikTokUrl(author, videoId),
     post_text: String(row.description ?? ""),
-    post_author: row.author_username as string | null,
+    post_author: author,
     author_followers: Number(row.author_followers ?? 0),
     author_verified: Boolean(row.author_verified),
     total_engagement: Number(row.total_engagement ?? 0),
@@ -300,6 +308,11 @@ function tiktokToPost(row: Record<string, unknown>): PipelinePost {
       total_engagement: row.total_engagement,
     },
   };
+}
+
+function buildTikTokUrl(author: string | null, videoId: string | null): string | null {
+  if (!author || !videoId) return null;
+  return `https://www.tiktok.com/@${author}/video/${videoId}`;
 }
 
 // ---------------------------------------------------------------------------

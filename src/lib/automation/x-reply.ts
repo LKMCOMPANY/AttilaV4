@@ -135,6 +135,13 @@ export async function postReply(
   let proof: Buffer = Buffer.alloc(0);
 
   try {
+    if (!tweetUrl || !tweetUrl.trim()) {
+      throw new JobError(
+        "ui_unexpected",
+        "Empty tweet URL — pipeline produced a job without a deep link target",
+      );
+    }
+
     if (!(await isPackageInstalled(tunnelHostname, dbId, X_PACKAGE))) {
       throw new JobError(
         "device_setup_required",
