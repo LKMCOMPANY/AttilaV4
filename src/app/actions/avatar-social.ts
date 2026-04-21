@@ -20,20 +20,14 @@ import { requireSession } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { SOCIAL_PLATFORMS, type SocialPlatform } from "@/types";
+import {
+  CREDENTIAL_FIELDS,
+  type CredentialField,
+} from "@/lib/constants/avatar";
 
 // ---------------------------------------------------------------------------
-// Constants & schemas
+// Schemas
 // ---------------------------------------------------------------------------
-
-export const CREDENTIAL_FIELDS = [
-  "handle",
-  "email",
-  "password",
-  "phone",
-  "user_id",
-] as const;
-
-export type CredentialField = (typeof CREDENTIAL_FIELDS)[number];
 
 const setEnabledSchema = z.object({
   avatarId: z.string().uuid(),

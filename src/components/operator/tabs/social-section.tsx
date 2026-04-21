@@ -13,13 +13,15 @@ import {
 import { Copy, Check, Pencil, X as XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { PLATFORM_LIST } from "@/lib/constants/avatar";
+import {
+  PLATFORM_LIST,
+  CREDENTIAL_FIELDS,
+  type CredentialField,
+} from "@/lib/constants/avatar";
 import { SocialIcon } from "@/components/icons/social-icons";
 import {
   setAvatarPlatformEnabled,
   setAvatarPlatformCredential,
-  CREDENTIAL_FIELDS,
-  type CredentialField,
 } from "@/app/actions/avatar-social";
 import type {
   AvatarWithRelations,

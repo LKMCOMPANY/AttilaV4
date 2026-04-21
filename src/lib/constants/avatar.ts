@@ -28,6 +28,19 @@ export const PLATFORM_LIST: PlatformConfig[] = [
   { id: "instagram", label: "Instagram", abbr: "IG", enabledKey: "instagram_enabled", credKey: "instagram_credentials", color: "text-[#E4405F]", bgColor: "bg-[#E4405F]/15" },
 ];
 
+// Credential fields stored inside each `<platform>_credentials` JSONB column.
+// Kept here (not in the "use server" action file) because Next.js forbids
+// non-function exports from server-action modules.
+export const CREDENTIAL_FIELDS = [
+  "handle",
+  "email",
+  "password",
+  "phone",
+  "user_id",
+] as const;
+
+export type CredentialField = (typeof CREDENTIAL_FIELDS)[number];
+
 // ---------------------------------------------------------------------------
 // Avatar Status
 // ---------------------------------------------------------------------------
