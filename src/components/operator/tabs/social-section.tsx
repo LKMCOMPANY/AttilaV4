@@ -15,16 +15,25 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { PLATFORM_LIST } from "@/lib/constants/avatar";
 import { SocialIcon } from "@/components/icons/social-icons";
-import { updateAvatar } from "@/app/actions/avatars";
-import type { AvatarWithRelations, SocialCredentials } from "@/types";
+import {
+  setAvatarPlatformEnabled,
+  setAvatarPlatformCredential,
+  CREDENTIAL_FIELDS,
+  type CredentialField,
+} from "@/app/actions/avatar-social";
+import type {
+  AvatarWithRelations,
+  SocialCredentials,
+  SocialPlatform,
+} from "@/types";
 
-const CREDENTIAL_FIELDS: { key: keyof SocialCredentials; label: string; masked?: boolean }[] = [
-  { key: "handle", label: "Handle" },
-  { key: "email", label: "Email" },
-  { key: "password", label: "Password", masked: true },
-  { key: "phone", label: "Phone" },
-  { key: "user_id", label: "User ID" },
-];
+const FIELD_LABELS: Record<CredentialField, { label: string; masked?: boolean }> = {
+  handle: { label: "Handle" },
+  email: { label: "Email" },
+  password: { label: "Password", masked: true },
+  phone: { label: "Phone" },
+  user_id: { label: "User ID" },
+};
 
 interface SocialSectionProps {
   avatar: AvatarWithRelations;
@@ -33,13 +42,14 @@ interface SocialSectionProps {
 
 export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
   const handleToggle = async (
-    enabledKey: string,
-    value: boolean
+    platform: SocialPlatform,
+    enabledKey: `${SocialPlatform}_enabled`,
+    value: boolean,
   ) => {
-    const prev = avatar[enabledKey as keyof AvatarWithRelations];
+    const prev = avatar[enabledKey] as boolean;
     onUpdated({ ...avatar, [enabledKey]: value } as AvatarWithRelations);
 
-    const { error } = await updateAvatar(avatar.id, { [enabledKey]: value });
+    const { error } = await setAvatarPlatformEnabled(avatar.id, platform, value);
     if (error) {
       toast.error(error);
       onUpdated({ ...avatar, [enabledKey]: prev } as AvatarWithRelations);
@@ -47,16 +57,28 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
   };
 
   const handleCredentialSave = async (
-    credKey: string,
-    field: keyof SocialCredentials,
-    value: string
+    platform: SocialPlatform,
+    credKey: `${SocialPlatform}_credentials`,
+    field: CredentialField,
+    value: string,
   ) => {
-    const current = (avatar[credKey as keyof AvatarWithRelations] ?? {}) as SocialCredentials;
-    const updated = { ...current, [field]: value || undefined };
+    const current = (avatar[credKey] ?? {}) as SocialCredentials;
+    const trimmed = value.trim();
+    if ((current[field] ?? "") === trimmed) return;
+
+    const updated: SocialCredentials = { ...current };
+    if (trimmed.length === 0) delete updated[field];
+    else updated[field] = trimmed;
 
     onUpdated({ ...avatar, [credKey]: updated } as AvatarWithRelations);
 
-    const { error } = await updateAvatar(avatar.id, { [credKey]: updated });
+    const { error } = await setAvatarPlatformCredential(
+      avatar.id,
+      platform,
+      field,
+      trimmed.length === 0 ? null : trimmed,
+    );
+
     if (error) {
       toast.error(error);
       onUpdated({ ...avatar, [credKey]: current } as AvatarWithRelations);
@@ -80,7 +102,7 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold",
                       platform.bgColor,
-                      platform.color
+                      platform.color,
                     )}
                   >
                     <SocialIcon platform={platform.id} className="h-3 w-3" />
@@ -90,19 +112,28 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
               </AccordionTrigger>
               <Switch
                 checked={enabled}
-                onCheckedChange={(v) => handleToggle(platform.enabledKey, v)}
+                onCheckedChange={(v) =>
+                  handleToggle(platform.id, platform.enabledKey, v)
+                }
                 size="sm"
               />
             </div>
             <AccordionContent>
               <div className="space-y-1 pb-2">
-                {CREDENTIAL_FIELDS.map(({ key, label, masked }) => (
+                {CREDENTIAL_FIELDS.map((field) => (
                   <CredentialRow
-                    key={key}
-                    label={label}
-                    value={creds[key]}
-                    masked={masked}
-                    onSave={(v) => handleCredentialSave(platform.credKey, key, v)}
+                    key={field}
+                    label={FIELD_LABELS[field].label}
+                    value={creds[field]}
+                    masked={FIELD_LABELS[field].masked}
+                    onSave={(v) =>
+                      handleCredentialSave(
+                        platform.id,
+                        platform.credKey,
+                        field,
+                        v,
+                      )
+                    }
                   />
                 ))}
               </div>
@@ -113,6 +144,10 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
     </Accordion>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Single credential row — inline edit / copy
+// ---------------------------------------------------------------------------
 
 function CredentialRow({
   label,
@@ -125,21 +160,22 @@ function CredentialRow({
   masked?: boolean;
   onSave: (value: string) => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value ?? "");
+  // `draft` is only allocated while editing — when not editing, the displayed
+  // value comes straight from props, so external updates are reflected
+  // immediately without any mirror-state effect.
+  const [draft, setDraft] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  const editing = draft !== null;
+
   const handleSave = () => {
-    if (draft !== (value ?? "")) {
+    if (draft !== null && draft !== (value ?? "")) {
       onSave(draft);
     }
-    setEditing(false);
+    setDraft(null);
   };
 
-  const handleCancel = () => {
-    setDraft(value ?? "");
-    setEditing(false);
-  };
+  const handleCancel = () => setDraft(null);
 
   const handleCopy = async () => {
     if (!value) return;
@@ -156,7 +192,7 @@ function CredentialRow({
             {label}
           </p>
           <Input
-            value={draft}
+            value={draft ?? ""}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") handleSave();
@@ -186,7 +222,12 @@ function CredentialRow({
         </p>
       </div>
       <div className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover/cred:opacity-100">
-        <Button variant="ghost" size="sm" onClick={() => { setDraft(value ?? ""); setEditing(true); }} className="h-5 w-5 p-0">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setDraft(value ?? "")}
+          className="h-5 w-5 p-0"
+        >
           <Pencil className="h-2.5 w-2.5 text-muted-foreground" />
         </Button>
         {value && (

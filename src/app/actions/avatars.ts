@@ -362,6 +362,10 @@ export async function createAvatar(
 // Update avatar columns
 // ---------------------------------------------------------------------------
 
+// NOTE: per-platform `*_enabled` and `*_credentials` columns are intentionally
+// excluded here. They have dedicated atomic actions in `avatar-social.ts` so
+// that toggling a network never touches credentials and editing one credential
+// field never overwrites its siblings (uses `jsonb_set` server-side).
 const updateAvatarSchema = z.object({
   first_name: z.string().min(1).max(50).optional(),
   last_name: z.string().min(1).max(50).optional(),
@@ -377,14 +381,6 @@ const updateAvatarSchema = z.object({
   personality_traits: z.array(z.string()).optional(),
   topics_expertise: z.array(z.string()).optional(),
   topics_avoid: z.array(z.string()).optional(),
-  twitter_enabled: z.boolean().optional(),
-  tiktok_enabled: z.boolean().optional(),
-  reddit_enabled: z.boolean().optional(),
-  instagram_enabled: z.boolean().optional(),
-  twitter_credentials: socialCredentialsSchema.optional(),
-  tiktok_credentials: socialCredentialsSchema.optional(),
-  reddit_credentials: socialCredentialsSchema.optional(),
-  instagram_credentials: socialCredentialsSchema.optional(),
   status: z.enum(AVATAR_STATUSES).optional(),
   tags: z.array(z.string()).optional(),
 }).refine((d) => Object.keys(d).length > 0, { message: "No fields to update" });
