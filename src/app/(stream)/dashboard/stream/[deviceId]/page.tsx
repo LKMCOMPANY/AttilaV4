@@ -1,4 +1,4 @@
-import { getSession } from "@/lib/auth/session";
+import { canUserAccessDevice, getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DetachedStream } from "@/components/operator/detached-stream";
@@ -22,12 +22,11 @@ export default async function StreamPage({
 
   if (!device) redirect("/dashboard");
 
-  if (
-    session.profile.role !== "admin" &&
-    device.account_id !== session.profile.account_id
-  ) {
-    redirect("/dashboard");
-  }
+  const allowed = await canUserAccessDevice(session, {
+    box_id: device.box_id,
+    account_id: device.account_id,
+  });
+  if (!allowed) redirect("/dashboard");
 
   return (
     <DetachedStream

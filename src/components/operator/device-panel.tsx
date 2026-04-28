@@ -40,15 +40,12 @@ interface DevicePanelProps {
 
 export function DevicePanel({ avatar }: DevicePanelProps) {
   const device = avatar?.device;
+  const deviceId = device?.id ?? null;
   const serverState = device?.state;
 
   const [optimisticState, setOptimisticState] = useState<string | null>(null);
   const deviceState = optimisticState ?? serverState;
   const isRunning = deviceState === "running";
-
-  useEffect(() => {
-    setOptimisticState(null);
-  }, [serverState]);
 
   const [webCodecs] = useState(() =>
     typeof window !== "undefined" ? isWebCodecsSupported() : true
@@ -57,6 +54,17 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
     webCodecs ? "stream" : "screenshot"
   );
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Reset transient interaction state whenever the underlying device changes
+  // OR when the server confirms a new state. Without the device-id branch the
+  // optimistic state from a previous avatar's Stop click leaks into the next
+  // avatar (since "running" → "running" doesn't trigger the effect), and the
+  // toggle on the new panel would be stuck on the wrong value until the user
+  // clicks away and comes back.
+  useEffect(() => {
+    setOptimisticState(null);
+    setActionLoading(null);
+  }, [deviceId, serverState]);
 
   const {
     status,
@@ -82,19 +90,31 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
   const handleWake = useCallback(async () => {
     if (!device) return;
     setActionLoading("wake");
-    await toggleScreenWake(device.id);
+    const result = await toggleScreenWake(device.id);
+    if (result.error) {
+      toast.error("Failed to toggle screen", { description: result.error });
+    }
     setActionLoading(null);
   }, [device]);
 
   const handlePower = useCallback(async () => {
     if (!device) return;
+    const target = isRunning ? "stopped" : "running";
     setActionLoading("power");
-    if (isRunning) {
-      setOptimisticState("stopped");
-      await stopContainer(device.id);
-    } else {
-      setOptimisticState("running");
-      await startContainer(device.id);
+    setOptimisticState(target);
+    const result = isRunning
+      ? await stopContainer(device.id)
+      : await startContainer(device.id);
+    if (result.error) {
+      // Revert optimism so the UI doesn't lie about a failed start/stop.
+      // The next realtime broadcast (or the action's own DB write on retry)
+      // will converge `serverState` back to truth, but until then we show
+      // the previous known state instead of a fake one.
+      setOptimisticState(null);
+      toast.error(
+        `Failed to ${target === "running" ? "start" : "stop"} device`,
+        { description: result.error },
+      );
     }
     setActionLoading(null);
   }, [device, isRunning]);

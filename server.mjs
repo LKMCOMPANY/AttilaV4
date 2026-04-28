@@ -122,14 +122,26 @@ async function validateSession(cookieHeader, boxId) {
 
   if (!profile) return null;
   if (profile.role === "admin") return profile;
+  if (!profile.account_id) return null;
 
-  const { count } = await supabase
-    .from("devices")
-    .select("*", { count: "exact", head: true })
-    .eq("box_id", boxId)
-    .eq("account_id", profile.account_id);
+  // Mirror `canUserAccessBox` (src/lib/auth/session.ts): box-level share via
+  // `account_boxes`, OR at least one device on the box assigned directly to
+  // the account. Without the box-level branch, every WebSocket attempt for a
+  // box-only-shared device 401s and the operator UI never streams.
+  const [boxLink, deviceLink] = await Promise.all([
+    supabase
+      .from("account_boxes")
+      .select("box_id", { count: "exact", head: true })
+      .eq("box_id", boxId)
+      .eq("account_id", profile.account_id),
+    supabase
+      .from("devices")
+      .select("id", { count: "exact", head: true })
+      .eq("box_id", boxId)
+      .eq("account_id", profile.account_id),
+  ]);
 
-  if (!count || count === 0) return null;
+  if ((boxLink.count ?? 0) === 0 && (deviceLink.count ?? 0) === 0) return null;
   return profile;
 }
 

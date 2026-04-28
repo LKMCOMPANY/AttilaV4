@@ -1,7 +1,7 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { requireSession } from "@/lib/auth/session";
+import { canUserAccessDevice, requireSession } from "@/lib/auth/session";
 import { boxFetch } from "@/lib/box-api";
 import { z } from "zod";
 import type { ContentItem } from "@/types";
@@ -164,13 +164,17 @@ export async function pushContentToDevice(
     const box = device.boxes as unknown as { tunnel_hostname: string } | null;
     if (!box) return { error: "Box not found" };
 
-    if (session.profile.role !== "admin") {
-      if (device.account_id !== session.profile.account_id) {
-        return { error: "Forbidden" };
-      }
-      if (item.account_id !== session.profile.account_id) {
-        return { error: "Forbidden" };
-      }
+    const deviceAllowed = await canUserAccessDevice(session, {
+      box_id: device.box_id,
+      account_id: device.account_id as string | null,
+    });
+    if (!deviceAllowed) return { error: "Forbidden" };
+
+    if (
+      session.profile.role !== "admin" &&
+      item.account_id !== session.profile.account_id
+    ) {
+      return { error: "Forbidden" };
     }
 
     const { data: signedUrl } = await supabase.storage

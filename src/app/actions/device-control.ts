@@ -1,8 +1,9 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { requireSession } from "@/lib/auth/session";
+import { canUserAccessDevice, requireSession } from "@/lib/auth/session";
 import { broadcastAccountEvent } from "@/lib/supabase/realtime";
+import { createAdminClient } from "@/lib/supabase/admin";
 import {
   ensureContainerReady,
   shell,
@@ -13,17 +14,19 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
-// Internal: validate device access and return box info
+// Internal: resolve a device, validate access, return everything needed for
+// VMOS calls + downstream realtime fan-out.
 // ---------------------------------------------------------------------------
 
 interface DeviceAccess {
   deviceId: string;
   dbId: string;
   accountId: string | null;
+  boxId: string;
   tunnelHostname: string;
 }
 
-async function requireDeviceAccess(deviceId: string): Promise<DeviceAccess> {
+async function resolveDeviceAccess(deviceId: string): Promise<DeviceAccess> {
   const session = await requireSession();
   const parsed = z.string().uuid().safeParse(deviceId);
   if (!parsed.success) throw new Error("Invalid device ID");
@@ -40,19 +43,54 @@ async function requireDeviceAccess(deviceId: string): Promise<DeviceAccess> {
   const box = device.boxes as unknown as { tunnel_hostname: string } | null;
   if (!box) throw new Error("Box not found for device");
 
-  if (
-    session.profile.role !== "admin" &&
-    device.account_id !== session.profile.account_id
-  ) {
-    throw new Error("Forbidden: no access to this device");
-  }
+  const allowed = await canUserAccessDevice(session, {
+    box_id: device.box_id,
+    account_id: device.account_id as string | null,
+  });
+  if (!allowed) throw new Error("Forbidden: no access to this device");
 
   return {
     deviceId: device.id,
     dbId: device.db_id,
     accountId: device.account_id as string | null,
+    boxId: device.box_id,
     tunnelHostname: box.tunnel_hostname,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Realtime fan-out — notify every account that has visibility on the device.
+// A device with `account_id = NULL` is shared via `account_boxes`; in that
+// case the direct broadcast is skipped and we must fan out to all accounts
+// that own the box, otherwise nobody (operator UI included) is told the
+// state changed and the toggle stays stuck on the optimistic value.
+// Uses the admin client because cross-account `account_boxes` rows are
+// invisible under the caller's RLS.
+// ---------------------------------------------------------------------------
+
+async function fanOutDeviceStateChange(
+  boxId: string,
+  primaryAccountId: string | null,
+): Promise<void> {
+  const targets = new Set<string>();
+  if (primaryAccountId) targets.add(primaryAccountId);
+
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("account_boxes")
+      .select("account_id")
+      .eq("box_id", boxId);
+    for (const row of data ?? []) {
+      if (row.account_id) targets.add(row.account_id as string);
+    }
+  } catch {
+    // Best-effort: fall through to whatever account_id we already have.
+  }
+
+  for (const accountId of targets) {
+    broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -63,7 +101,7 @@ export async function toggleScreenWake(
   deviceId: string
 ): Promise<{ error: string | null; awake: boolean | null }> {
   try {
-    const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { dbId, tunnelHostname } = await resolveDeviceAccess(deviceId);
 
     const stateRes = await shell(tunnelHostname, dbId, "dumpsys power | grep mWakefulness");
     const isAwake = stateRes.message.includes("Awake");
@@ -89,7 +127,8 @@ export async function startContainer(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const { deviceId: id, dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { deviceId: id, dbId, accountId, boxId, tunnelHostname } =
+      await resolveDeviceAccess(deviceId);
 
     await ensureContainerReady(tunnelHostname, dbId);
 
@@ -99,7 +138,7 @@ export async function startContainer(
       .update({ state: "running", last_seen: new Date().toISOString() })
       .eq("id", id);
 
-    if (accountId) broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
+    await fanOutDeviceStateChange(boxId, accountId);
     revalidatePath("/dashboard/operator");
     return { error: null };
   } catch (err) {
@@ -115,7 +154,8 @@ export async function stopContainer(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const { deviceId: id, dbId, accountId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { deviceId: id, dbId, accountId, boxId, tunnelHostname } =
+      await resolveDeviceAccess(deviceId);
 
     await stopContainerVmos(tunnelHostname, dbId);
 
@@ -125,7 +165,7 @@ export async function stopContainer(
       .update({ state: "stopped", last_seen: new Date().toISOString() })
       .eq("id", id);
 
-    if (accountId) broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
+    await fanOutDeviceStateChange(boxId, accountId);
     revalidatePath("/dashboard/operator");
     return { error: null };
   } catch (err) {
@@ -143,7 +183,7 @@ export async function shellTap(
   y: number
 ): Promise<{ error: string | null }> {
   try {
-    const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { dbId, tunnelHostname } = await resolveDeviceAccess(deviceId);
     await shell(tunnelHostname, dbId, `input tap ${Math.round(x)} ${Math.round(y)}`);
     return { error: null };
   } catch (err) {
@@ -176,7 +216,7 @@ export async function enableDeviceAudio(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const { dbId, tunnelHostname } = await requireDeviceAccess(deviceId);
+    const { dbId, tunnelHostname } = await resolveDeviceAccess(deviceId);
 
     const checkRes = await shellSafe(
       tunnelHostname,
