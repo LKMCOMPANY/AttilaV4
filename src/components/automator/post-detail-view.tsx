@@ -198,12 +198,14 @@ export function PostDetailView({
             />
           </Section>
 
-          {/* Responses — only proof screenshot per response */}
+          {/* Responses — text on top, proof screenshot directly below */}
           {responses.length > 0 && (
             <Section label={`Responses (${responses.length})`}>
-              <div className="space-y-3">
+              <div className="divide-y divide-border/60">
                 {responses.map((job) => (
-                  <ResponseDetailCard key={job.id} job={job} />
+                  <div key={job.id} className="py-3 first:pt-0 last:pb-0">
+                    <ResponseDetailCard job={job} />
+                  </div>
                 ))}
               </div>
             </Section>
@@ -215,55 +217,46 @@ export function PostDetailView({
 }
 
 // ---------------------------------------------------------------------------
-// Response detail card
+// Response detail card — mirrors the source-post layout: avatar attribution
+// + the comment text sit on top, the proof screenshot is directly below it
+// (no nested padding/borders so the text/screenshot pair reads as one unit).
 // ---------------------------------------------------------------------------
 
 function ResponseDetailCard({ job }: { job: CampaignJobWithAvatar }) {
   return (
-    <div className="rounded-md border p-2.5">
-      {/* Header */}
-      <div className="flex items-center gap-1.5">
-        <JobStatusIcon status={job.status} />
-        {job.avatar_name ? (
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium">
-            <User className="h-2.5 w-2.5 text-muted-foreground/60" />
-            {job.avatar_name}
-          </span>
-        ) : (
-          <span className="text-[11px] text-muted-foreground">
-            Unknown avatar
-          </span>
-        )}
-        <JobStatusLabel status={job.status} />
-        {job.duration_ms != null && (
-          <span className="ml-auto text-[9px] tabular-nums text-muted-foreground">
-            {(job.duration_ms / 1000).toFixed(1)}s
-          </span>
-        )}
-      </div>
+    <div className="space-y-2">
+      <div className="flex items-start gap-2">
+        <JobStatusIcon status={job.status} className="mt-0.5" />
+        <div className="min-w-0 flex-1">
+          <p className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+            <User className="h-2.5 w-2.5 text-primary/70" />
+            {job.avatar_name ?? "Unknown avatar"}
+          </p>
+          <p className="mt-0.5 text-xs leading-relaxed text-foreground">
+            {job.comment_text}
+          </p>
 
-      {/* Comment */}
-      <p className="mt-1.5 text-[11px] leading-relaxed text-foreground">
-        {job.comment_text}
-      </p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
+            <JobStatusLabel status={job.status} />
+            {job.duration_ms != null && (
+              <span className="tabular-nums">
+                {(job.duration_ms / 1000).toFixed(1)}s
+              </span>
+            )}
+          </div>
 
-      {/* Error */}
-      {job.error_message && (
-        <p className="mt-1 text-[10px] text-destructive">
-          {job.error_message}
-        </p>
-      )}
-
-      {/* Proof screenshot — full width */}
-      <div className="mt-2">
-        <span className="text-caption">Proof</span>
-        <div className="mt-1">
-          <DeviceScreenshot
-            url={job.proof_screenshot}
-            alt={`Proof: ${job.avatar_name ?? "response"}`}
-          />
+          {job.error_message && (
+            <p className="mt-1 text-[10px] text-destructive">
+              {job.error_message}
+            </p>
+          )}
         </div>
       </div>
+
+      <DeviceScreenshot
+        url={job.proof_screenshot}
+        alt={`Proof: ${job.avatar_name ?? "response"}`}
+      />
     </div>
   );
 }

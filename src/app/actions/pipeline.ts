@@ -10,9 +10,50 @@ import type { PipelinePost } from "@/lib/pipeline/types";
 
 // ---------------------------------------------------------------------------
 // Read — Campaign posts and jobs (session-scoped)
+//
+// Both list endpoints are paginated with a composite (created_at, id) keyset
+// cursor:
+//   - `limit`         controls the page size (server-bounded by MAX_PAGE_SIZE)
+//   - `before` (opt)  the {created_at, id} of the oldest row on the previous
+//                     page; the next call returns rows strictly "older" than
+//                     that cursor.
+//
+// The composite cursor is required because the pipeline inserts multiple jobs
+// in a single transaction — those rows share the exact same `created_at`. A
+// pure `created_at` cursor would skip every row tied at the page boundary.
+// Ordering by (created_at DESC, id DESC) gives a stable, total order.
 // ---------------------------------------------------------------------------
 
-export async function getCampaignPosts(campaignId: string): Promise<CampaignPost[]> {
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+export interface KeysetCursor {
+  /** ISO timestamp from the row's `created_at`. */
+  createdAt: string;
+  /** Row id (UUID). */
+  id: string;
+}
+
+interface ListPaginationOptions {
+  limit?: number;
+  before?: KeysetCursor;
+}
+
+function clampLimit(value: number | undefined): number {
+  if (!value || value <= 0) return DEFAULT_PAGE_SIZE;
+  return Math.min(value, MAX_PAGE_SIZE);
+}
+
+/** Builds the PostgREST `or()` filter for a "strictly before" composite cursor. */
+function beforeCursorFilter({ createdAt, id }: KeysetCursor): string {
+  // (created_at < cursor.created_at) OR (created_at = cursor.created_at AND id < cursor.id)
+  return `created_at.lt.${createdAt},and(created_at.eq.${createdAt},id.lt.${id})`;
+}
+
+export async function getCampaignPosts(
+  campaignId: string,
+  options: ListPaginationOptions = {},
+): Promise<CampaignPost[]> {
   const session = await requireSession();
   const supabase = createAdminClient();
 
@@ -21,7 +62,12 @@ export async function getCampaignPosts(campaignId: string): Promise<CampaignPost
     .select("*")
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
-    .limit(100);
+    .order("id", { ascending: false })
+    .limit(clampLimit(options.limit));
+
+  if (options.before) {
+    query = query.or(beforeCursorFilter(options.before));
+  }
 
   if (session.profile.role !== "admin") {
     query = query.eq("account_id", session.profile.account_id);
@@ -31,9 +77,13 @@ export async function getCampaignPosts(campaignId: string): Promise<CampaignPost
   return (data ?? []) as CampaignPost[];
 }
 
+interface JobListOptions extends ListPaginationOptions {
+  statusFilter?: string[];
+}
+
 export async function getCampaignJobs(
   campaignId: string,
-  statusFilter?: string[],
+  options: JobListOptions = {},
 ): Promise<CampaignJobWithAvatar[]> {
   const session = await requireSession();
   const supabase = createAdminClient();
@@ -43,14 +93,19 @@ export async function getCampaignJobs(
     .select("*, avatars:avatar_id(first_name, last_name)")
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
-    .limit(200);
+    .order("id", { ascending: false })
+    .limit(clampLimit(options.limit));
+
+  if (options.before) {
+    query = query.or(beforeCursorFilter(options.before));
+  }
 
   if (session.profile.role !== "admin") {
     query = query.eq("account_id", session.profile.account_id);
   }
 
-  if (statusFilter && statusFilter.length > 0) {
-    query = query.in("status", statusFilter);
+  if (options.statusFilter && options.statusFilter.length > 0) {
+    query = query.in("status", options.statusFilter);
   }
 
   const { data } = await query;

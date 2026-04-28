@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -13,19 +13,19 @@ import {
   RotateCcw,
 } from "lucide-react";
 import {
-  getCampaignPosts,
-  getCampaignJobs,
   purgeQueue,
   purgeAwaitingPosts,
   retryAwaitingPost,
 } from "@/app/actions/pipeline";
 import { toast } from "sonner";
+import { useInfiniteScroll } from "@/hooks/use-infinite-scroll";
 import { PipelineJobRow, PipelineJobDetail } from "./pipeline-job-row";
 import { PipelinePostRow } from "./pipeline-post-row";
+import { PipelineToolbar } from "./pipeline-toolbar";
 import { PostDetailView } from "./post-detail-view";
+import { filterJobs, filterPosts, type PlatformFilter } from "./post-filters";
+import { usePipelineData } from "./use-pipeline-data";
 import type { Campaign, CampaignPost, CampaignJobWithAvatar } from "@/types";
-
-const FALLBACK_POLL_INTERVAL = 120_000;
 
 interface PipelineActivityProps {
   campaign: Campaign;
@@ -36,43 +36,26 @@ export function PipelineActivity({
   campaign,
   pipelineVersion,
 }: PipelineActivityProps) {
-  const [posts, setPosts] = useState<CampaignPost[]>([]);
-  const [jobs, setJobs] = useState<CampaignJobWithAvatar[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    posts,
+    jobs,
+    loading,
+    postsHasMore,
+    jobsHasMore,
+    postsLoadingMore,
+    jobsLoadingMore,
+    loadMorePosts,
+    loadMoreJobs,
+    refresh,
+  } = usePipelineData({ campaignId: campaign.id, pipelineVersion });
+
+  // NOTE: This component is mounted with `key={campaign.id}` by
+  // CampaignDetailPanel, which resets all of the state below whenever the
+  // operator switches to another campaign — no effect-based reset needed.
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedPostIndex, setSelectedPostIndex] = useState<number | null>(null);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    const [p, j] = await Promise.all([
-      getCampaignPosts(campaign.id),
-      getCampaignJobs(campaign.id),
-    ]);
-    setPosts(p);
-    setJobs(j);
-    setLoading(false);
-  }, [campaign.id]);
-
-  // Initial load
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  // Realtime-triggered refresh
-  useEffect(() => {
-    if (pipelineVersion && pipelineVersion > 0) refresh();
-  }, [pipelineVersion, refresh]);
-
-  // Long-interval fallback poll
-  useEffect(() => {
-    const interval = setInterval(refresh, FALLBACK_POLL_INTERVAL);
-    return () => clearInterval(interval);
-  }, [refresh]);
-
-  useEffect(() => {
-    setSelectedPostIndex(null);
-    setSelectedJobId(null);
-  }, [campaign.id]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [platformFilter, setPlatformFilter] = useState<PlatformFilter>("all");
 
   const handlePurge = async () => {
     const count = await purgeQueue(campaign.id);
@@ -96,11 +79,40 @@ export function PipelineActivity({
     refresh();
   };
 
-  const queuedJobs = jobs.filter((j) => j.status === "ready" || j.status === "executing");
-  const completedJobs = jobs.filter((j) => j.status === "done" || j.status === "failed");
-  const awaitingPosts = posts.filter((p) => p.status === "awaiting_avatars");
+  const filters = useMemo(
+    () => ({ query: searchQuery, platform: platformFilter }),
+    [searchQuery, platformFilter],
+  );
+
+  const postsById = useMemo(() => {
+    const map = new Map<string, CampaignPost>();
+    for (const post of posts) map.set(post.id, post);
+    return map;
+  }, [posts]);
+
+  const filteredPosts = useMemo(
+    () => filterPosts(posts, filters),
+    [posts, filters],
+  );
+
+  const filteredJobs = useMemo(
+    () => filterJobs(jobs, filters, postsById),
+    [jobs, filters, postsById],
+  );
+
+  const queuedJobs = filteredJobs.filter(
+    (j) => j.status === "ready" || j.status === "executing",
+  );
+  const completedJobs = filteredJobs.filter(
+    (j) => j.status === "done" || j.status === "failed",
+  );
+  const awaitingPosts = filteredPosts.filter(
+    (p) => p.status === "awaiting_avatars",
+  );
   const selectedJob = selectedJobId ? jobs.find((j) => j.id === selectedJobId) : null;
 
+  // Index by post id from the unfiltered job list so a post detail always shows
+  // every response, even if the active filter would hide some of them.
   const jobsByPostId = useMemo(() => {
     const map = new Map<string, CampaignJobWithAvatar[]>();
     for (const job of jobs) {
@@ -114,28 +126,48 @@ export function PipelineActivity({
   const toggleJob = (id: string) =>
     setSelectedJobId((prev) => (prev === id ? null : id));
 
+  // Detail overlay browses the filtered list so its navigation arrows match the
+  // posts the operator currently sees in the panel.
   const handleSelectPost = useCallback(
     (postId: string) => {
-      const idx = posts.findIndex((p) => p.id === postId);
+      const idx = filteredPosts.findIndex((p) => p.id === postId);
       if (idx !== -1) setSelectedPostIndex(idx);
     },
-    [posts]
+    [filteredPosts],
   );
+
+  // If filters shrink the list while the overlay is open, clamp the displayed
+  // index. We compute it lazily during render rather than syncing state in an
+  // effect (React 19 idiom — derived state belongs in render).
+  const safePostIndex = useMemo(() => {
+    if (selectedPostIndex === null) return null;
+    if (selectedPostIndex >= filteredPosts.length) {
+      return filteredPosts.length > 0 ? 0 : null;
+    }
+    return selectedPostIndex;
+  }, [selectedPostIndex, filteredPosts.length]);
 
   const handleNavigatePost = useCallback(
     (delta: -1 | 1) => {
-      setSelectedPostIndex((prev) => {
-        if (prev === null) return null;
-        const next = prev + delta;
-        if (next < 0 || next >= posts.length) return prev;
-        return next;
-      });
+      if (safePostIndex === null) return;
+      const next = safePostIndex + delta;
+      if (next < 0 || next >= filteredPosts.length) return;
+      setSelectedPostIndex(next);
     },
-    [posts.length]
+    [safePostIndex, filteredPosts.length],
   );
 
   return (
     <div className="relative flex h-full flex-col">
+      <PipelineToolbar
+        posts={posts}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        platformFilter={platformFilter}
+        onPlatformFilterChange={setPlatformFilter}
+        availablePlatforms={campaign.platforms}
+      />
+
       <Tabs defaultValue="posts" className="flex min-h-0 flex-1 flex-col">
         {/* Tab bar */}
         <div className="flex shrink-0 items-center overflow-x-auto border-b px-3 scrollbar-hide">
@@ -144,7 +176,7 @@ export function PipelineActivity({
               <MessageSquare className="h-3 w-3" />
               Posts
               <span className="text-[10px] tabular-nums text-muted-foreground">
-                {posts.length}
+                {filteredPosts.length}
               </span>
             </TabsTrigger>
             <TabsTrigger value="queue" className="gap-1.5 text-[11px]">
@@ -203,11 +235,17 @@ export function PipelineActivity({
           <TabsContent value="posts" className="h-full p-0">
             <ScrollArea className="h-full">
               <div className="space-y-px p-2">
-                {loading && posts.length === 0 && <LoadingState />}
-                {!loading && posts.length === 0 && (
-                  <EmptyState message="No posts processed yet" />
+                {loading && filteredPosts.length === 0 && <LoadingState />}
+                {!loading && filteredPosts.length === 0 && (
+                  <EmptyState
+                    message={
+                      posts.length === 0
+                        ? "No posts processed yet"
+                        : "No posts match the current filters"
+                    }
+                  />
                 )}
-                {posts.map((post) => (
+                {filteredPosts.map((post) => (
                   <PipelinePostRow
                     key={post.id}
                     post={post}
@@ -215,6 +253,11 @@ export function PipelineActivity({
                     onSelect={() => handleSelectPost(post.id)}
                   />
                 ))}
+                <LoadMoreSentinel
+                  hasMore={postsHasMore}
+                  loading={postsLoadingMore}
+                  onLoadMore={loadMorePosts}
+                />
               </div>
             </ScrollArea>
           </TabsContent>
@@ -234,6 +277,11 @@ export function PipelineActivity({
                     onSelect={() => toggleJob(job.id)}
                   />
                 ))}
+                <LoadMoreSentinel
+                  hasMore={jobsHasMore}
+                  loading={jobsLoadingMore}
+                  onLoadMore={loadMoreJobs}
+                />
               </div>
             </ScrollArea>
           </TabsContent>
@@ -264,6 +312,11 @@ export function PipelineActivity({
                     </button>
                   </div>
                 ))}
+                <LoadMoreSentinel
+                  hasMore={postsHasMore}
+                  loading={postsLoadingMore}
+                  onLoadMore={loadMorePosts}
+                />
               </div>
             </ScrollArea>
           </TabsContent>
@@ -283,6 +336,11 @@ export function PipelineActivity({
                     onSelect={() => toggleJob(job.id)}
                   />
                 ))}
+                <LoadMoreSentinel
+                  hasMore={jobsHasMore}
+                  loading={jobsLoadingMore}
+                  onLoadMore={loadMoreJobs}
+                />
               </div>
             </ScrollArea>
           </TabsContent>
@@ -298,10 +356,10 @@ export function PipelineActivity({
       )}
 
       {/* Post detail overlay — covers the entire panel */}
-      {selectedPostIndex !== null && posts[selectedPostIndex] && (
+      {safePostIndex !== null && filteredPosts[safePostIndex] && (
         <PostDetailView
-          posts={posts}
-          currentIndex={selectedPostIndex}
+          posts={filteredPosts}
+          currentIndex={safePostIndex}
           jobsByPostId={jobsByPostId}
           onClose={() => setSelectedPostIndex(null)}
           onNavigate={handleNavigatePost}
@@ -328,6 +386,40 @@ function EmptyState({ message }: { message: string }) {
   return (
     <div className="py-8 text-center text-xs text-muted-foreground">
       {message}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sentinel — observed by IntersectionObserver to trigger cursor-based paging.
+// Disabled while a fetch is in flight to avoid duplicate triggers.
+// ---------------------------------------------------------------------------
+
+function LoadMoreSentinel({
+  hasMore,
+  loading,
+  onLoadMore,
+}: {
+  hasMore: boolean;
+  loading: boolean;
+  onLoadMore: () => void;
+}) {
+  const ref = useInfiniteScroll<HTMLDivElement>({
+    enabled: hasMore && !loading,
+    onLoadMore,
+  });
+
+  if (!hasMore && !loading) return null;
+
+  return (
+    <div
+      ref={ref}
+      className="flex items-center justify-center gap-1.5 py-4 text-[10px] text-muted-foreground"
+    >
+      {loading && <Loader2 className="h-3 w-3 animate-spin" />}
+      <span className="opacity-70">
+        {loading ? "Loading more…" : "Scroll to load more"}
+      </span>
     </div>
   );
 }
