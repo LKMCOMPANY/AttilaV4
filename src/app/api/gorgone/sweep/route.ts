@@ -10,9 +10,9 @@ import { runSweepCycle } from "@/lib/gorgone";
  * same pattern used by `/api/pipeline/process` and `/api/pipeline/execute`).
  *
  * Idempotent: safe to call concurrently from multiple workers because
- * row insertion uses `UNIQUE (gorgone_id) DO NOTHING` and the cursor
- * advance uses `MAX (collected_at, id)` — no race window where data
- * could be lost or double-counted.
+ * `enqueue_gorgone_job` uses `ON CONFLICT (gorgone_post_id) DO NOTHING`
+ * and the cursor is read from `MAX(collected_at)` per (zone, network) —
+ * no race window where data could be lost or double-counted.
  *
  * Protected by `CRON_SECRET` so it can also be triggered externally if
  * the in-process worker is unavailable.
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     const report = await runSweepCycle(createAdminClient());
     return NextResponse.json({
       ok: true,
-      action: report.total_ingested === 0 ? "idle" : "swept",
+      action: report.total_enqueued === 0 ? "idle" : "swept",
       ...report,
     });
   } catch (err) {

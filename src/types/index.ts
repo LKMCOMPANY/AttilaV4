@@ -210,58 +210,91 @@ export interface Army {
 // ---------------------------------------------------------------------------
 // Gorgone Integration
 // ---------------------------------------------------------------------------
+// Attila currently surfaces only Twitter + TikTok in the UI because the
+// avatar-automation modules only exist for those two networks. The DB and
+// the ingestion layer accept all five Gorgone V4 networks so adding a new
+// surface (Reddit / Instagram / YouTube) is a UI-only change.
 
-export type GorgonePlatform = "twitter" | "tiktok";
-export type GorgoneEventSource = "webhook" | "sweep";
+export const GORGONE_NETWORKS = [
+  "twitter",
+  "tiktok",
+  "instagram",
+  "youtube",
+  "reddit",
+] as const;
+export type GorgoneNetwork = (typeof GORGONE_NETWORKS)[number];
 
+/** Networks Attila exposes to operators today. Subset of GorgoneNetwork. */
+export const SUPPORTED_GORGONE_NETWORKS = ["twitter", "tiktok"] as const;
+export type SupportedGorgoneNetwork = (typeof SUPPORTED_GORGONE_NETWORKS)[number];
+
+/** Alias kept for legacy call sites — equivalent to SupportedGorgoneNetwork. */
+export type GorgonePlatform = SupportedGorgoneNetwork;
+
+export type GorgoneJobStatus =
+  | "pending"
+  | "processing"
+  | "processed"
+  | "filtered_out"
+  | "error"
+  | "expired";
+
+export type GorgoneDeliverySource = "webhook" | "sweep";
+export type GorgonePostKind = "post" | "reply" | "repost" | "comment";
+
+/** Attila ↔ Gorgone V4 account link. */
 export interface GorgoneLink {
   id: string;
   account_id: string;
-  gorgone_client_id: string;
+  /** Gorgone V4 account UUID (canonical name post-V4). */
+  gorgone_account_id: string;
+  /** Display name copied from Gorgone `accounts.name` at link time. */
   gorgone_client_name: string;
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Legacy: matches gorgone_account_id during the transitional period —
+  // dropped in the cleanup migration once nothing reads it.
+  gorgone_client_id?: string;
 }
 
-export interface GorgoneZoneState {
-  id: string;
-  gorgone_link_id: string;
+/** Per-job ledger row (replaces V3 gorgone_tweets / gorgone_tiktok_videos). */
+export interface GorgonePostJob {
+  gorgone_post_id: string;
+  gorgone_post_posted_at: string;
   account_id: string;
   zone_id: string;
-  zone_name: string;
-  platform: GorgonePlatform;
-
-  // Composite cursor used by the sweep reconciler.
-  last_event_at: string | null;
-  last_event_id: string | null;
-  last_event_source: GorgoneEventSource | null;
-
-  // Last activity timestamps per delivery channel.
-  last_webhook_at: string | null;
-  last_sweep_at: string | null;
-
-  // Counters.
-  total_received: number;
-  total_via_webhook: number;
-  total_via_sweep: number;
-
+  network: GorgoneNetwork;
+  collected_at: string;
+  total_engagement: number;
+  kind: GorgonePostKind;
+  status: GorgoneJobStatus;
+  status_changed_at: string;
+  campaign_id: string | null;
+  error_message: string | null;
+  delivery_source: GorgoneDeliverySource;
+  attempts: number;
   created_at: string;
   updated_at: string;
 }
 
 /**
- * A Gorgone link enriched with the per-zone activation flag (read live
- * from Gorgone via `getZonePushStates`) plus the Attila-side ingestion
- * state. Zones declared by Gorgone but never seen by Attila yet appear
- * here with `state: null`.
+ * One row per (zone, network) the link's Gorgone subscription declares.
+ * Used by the admin UI; combines Gorgone's per-zone subscription state
+ * with the most recent ingestion stats from Attila's ledger.
  */
 export interface GorgoneZoneRow {
   zone_id: string;
   zone_name: string;
-  platform: GorgonePlatform;
-  push_to_attila: boolean;
-  state: GorgoneZoneState | null;
+  network: GorgoneNetwork;
+  /** Live from Gorgone's `attila_zone_subscriptions.is_active`. */
+  is_subscribed: boolean;
+  /** True when the zone has at least one active rule on this network. */
+  has_active_rule: boolean;
+  /** Last ingestion timestamp from Attila's ledger (null = never). */
+  last_event_at: string | null;
+  /** Total enqueued for (zone, network). */
+  total_received: number;
 }
 
 export interface GorgoneLinkWithZones extends GorgoneLink {
@@ -360,8 +393,16 @@ export interface CampaignPost {
   id: string;
   campaign_id: string;
   account_id: string;
-  source_table: "gorgone_tweets" | "gorgone_tiktok_videos";
+  /**
+   * Source table the post originated from. New rows always use
+   * `gorgone_post_jobs`. Legacy values (`gorgone_tweets`,
+   * `gorgone_tiktok_videos`) are kept readable for historical
+   * campaign analytics until the V3 cleanup migration runs.
+   */
+  source_table: "gorgone_post_jobs" | "gorgone_tweets" | "gorgone_tiktok_videos";
   source_id: string;
+  /** Network the source post was collected on. */
+  source_network: GorgoneNetwork | null;
   platform: CampaignPlatform;
   post_url: string | null;
   post_text: string;

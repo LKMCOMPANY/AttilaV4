@@ -47,11 +47,21 @@ export function buildAnalystUserPrompt(post: PipelinePost): string {
     `Author: @${post.post_author ?? "unknown"} (${post.author_followers} followers${post.author_verified ? ", verified" : ""})`,
     `Engagement: ${post.total_engagement}`,
     `Language: ${post.language ?? "unknown"}`,
-    "",
-    "POST:",
-    post.post_text,
   ];
 
+  // V4 enrichments — surface Gorgone's pre-computed signals so the analyst
+  // doesn't have to re-derive what's already known. The model is free to
+  // ignore them; we just provide context.
+  if (post.sentiment_label && post.sentiment_score != null) {
+    lines.push(
+      `Pre-computed sentiment: ${post.sentiment_label} (confidence ${post.sentiment_score.toFixed(2)})`,
+    );
+  }
+  if (post.translation_text && post.translation_lang) {
+    lines.push(`Translated to ${post.translation_lang}: ${post.translation_text}`);
+  }
+
+  lines.push("", "POST:", post.post_text);
   return lines.join("\n");
 }
 

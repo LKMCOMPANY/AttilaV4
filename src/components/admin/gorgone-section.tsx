@@ -13,14 +13,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Database, Loader2, RefreshCw, Unlink, Zap } from "lucide-react";
+import { Database, Loader2, Unlink, Zap } from "lucide-react";
 import { GorgoneLinkDialog } from "./gorgone-link-dialog";
 import { GorgoneZoneGroup } from "./gorgone-zone-item";
 import { GorgoneWebhookConfig } from "./gorgone-webhook-config";
 import {
   getGorgoneLinks,
-  unlinkGorgoneClient,
-  refreshGorgoneZones,
+  unlinkGorgoneAccount,
   runSweepNow,
 } from "@/app/actions/gorgone";
 import { toast } from "sonner";
@@ -46,7 +45,6 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
   const [links, setLinks] = useState<GorgoneLinkWithZones[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [unlinkTarget, setUnlinkTarget] = useState<string | null>(null);
-  const [refreshingLinkId, setRefreshingLinkId] = useState<string | null>(null);
   const [isSweeping, startSweepTransition] = useTransition();
   const [, startTransition] = useTransition();
 
@@ -65,29 +63,13 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
     refresh();
   }, [refresh]);
 
-  function handleRefreshZones(linkId: string) {
-    setRefreshingLinkId(linkId);
-    startTransition(async () => {
-      const result = await refreshGorgoneZones({ linkId });
-      if (result.error) {
-        toast.error(result.error);
-      } else if (result.added > 0) {
-        toast.success(`${result.added} new zone(s) registered`);
-      } else {
-        toast.info("All zones already registered");
-      }
-      setRefreshingLinkId(null);
-      refresh();
-    });
-  }
-
   function handleUnlink(linkId: string) {
     startTransition(async () => {
-      const result = await unlinkGorgoneClient({ linkId });
+      const result = await unlinkGorgoneAccount({ linkId });
       if (result.error) {
         toast.error(result.error);
       } else {
-        toast.success("Client unlinked");
+        toast.success("Account unlinked");
       }
       setUnlinkTarget(null);
       refresh();
@@ -101,14 +83,16 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
         toast.error(report.error);
       } else {
         toast.success(
-          `Sweep done: ${report.total_ingested} ingested across ${report.zones_with_data} zone(s) in ${report.duration_ms}ms`,
+          `Sweep done: ${report.total_enqueued} enqueued across ${report.zones_with_data} zone(s) in ${report.duration_ms}ms`,
         );
       }
       refresh();
     });
   }
 
-  const existingClientIds = links.map((l) => l.gorgone_client_id);
+  const existingAccountIds = links
+    .map((l) => l.gorgone_account_id ?? l.gorgone_client_id)
+    .filter((id): id is string => Boolean(id));
 
   if (isLoading) {
     return (
@@ -155,7 +139,7 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
           )}
           <GorgoneLinkDialog
             accountId={accountId}
-            existingClientIds={existingClientIds}
+            existingAccountIds={existingAccountIds}
             onLinked={refresh}
           />
         </div>
@@ -166,7 +150,7 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
       {links.length === 0 ? (
         <div className="rounded-lg border border-dashed p-6 text-center">
           <p className="text-sm text-muted-foreground">
-            No Gorgone clients linked. Link a client to receive monitoring data.
+            No Gorgone account linked. Link an account to receive monitoring data.
           </p>
         </div>
       ) : (
@@ -189,21 +173,6 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 text-xs text-muted-foreground"
-                    onClick={() => handleRefreshZones(link.id)}
-                    disabled={refreshingLinkId === link.id}
-                    title="Discover new zones from Gorgone"
-                  >
-                    {refreshingLinkId === link.id ? (
-                      <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                    ) : (
-                      <RefreshCw className="mr-1 h-3 w-3" />
-                    )}
-                    Refresh
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
                     className="h-7 text-xs text-muted-foreground hover:text-destructive"
                     onClick={() => setUnlinkTarget(link.id)}
                   >
@@ -215,7 +184,7 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
 
               {link.zones.length === 0 ? (
                 <p className="px-1 text-xs text-muted-foreground">
-                  No zones available for this client.
+                  No zones available for this account. Create a zone in Gorgone to start.
                 </p>
               ) : (
                 <div className="space-y-1.5">
@@ -242,14 +211,12 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
       >
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
-            <AlertDialogTitle>Unlink Gorgone Client</AlertDialogTitle>
+            <AlertDialogTitle>Unlink Gorgone Account</AlertDialogTitle>
             <AlertDialogDescription>
-              This removes the link and all per-zone state. Push toggles
-              ({" "}
-              <code>push_to_attila</code>
-              ) on Gorgone are <strong>not</strong> reset and need to be turned
-              off manually if you want to fully detach. Already-ingested data
-              is preserved.
+              This removes the Attila ↔ Gorgone link. Subscriptions on Gorgone
+              are <strong>not</strong> reset and need to be turned off
+              manually if you want to fully detach. Already-ingested jobs are
+              preserved.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

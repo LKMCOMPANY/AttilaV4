@@ -3,9 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
-import { fetchGorgoneZones, getZonePushStates } from "@/lib/gorgone";
-import type { Campaign, CampaignFilters, CampaignPlatform, CapacityParams, GorgoneZoneState } from "@/types";
-import type { GorgoneZone } from "@/lib/gorgone";
+import { fetchGorgoneZoneDirectory } from "@/lib/gorgone";
+import {
+  SUPPORTED_GORGONE_NETWORKS,
+  type Campaign,
+  type CampaignFilters,
+  type CampaignPlatform,
+  type CapacityParams,
+  type GorgoneLink,
+  type SupportedGorgoneNetwork,
+} from "@/types";
 
 // ---------------------------------------------------------------------------
 // Read
@@ -63,15 +70,22 @@ export async function getCampaign(
 export interface AccountZone {
   zone_id: string;
   zone_name: string;
+  /** Networks Attila supports today AND that have at least one signal:
+   * either an active rule on Gorgone or an active subscription. */
   platforms: ("twitter" | "tiktok")[];
   gorgone_client_name: string;
   /**
-   * Mirror of `zones.push_to_attila` (live from Gorgone). When `false`,
-   * the campaign creation UI surfaces a clear warning so users don't
-   * configure a campaign on a zone that won't ever push data.
+   * True when the zone has an active Attila subscription declaring at
+   * least one of the supported platforms. When false, the campaign
+   * creation UI warns the operator that no posts will arrive even after
+   * the campaign is launched.
    */
   push_enabled: boolean;
 }
+
+const SUPPORTED: ReadonlySet<SupportedGorgoneNetwork> = new Set(
+  SUPPORTED_GORGONE_NETWORKS,
+);
 
 export async function getAccountZones(
   accountId: string
@@ -89,68 +103,60 @@ export async function getAccountZones(
 
   const { data: links, error } = await supabase
     .from("gorgone_links")
-    .select("*, gorgone_zone_state(*)")
+    .select("id, account_id, gorgone_account_id, gorgone_client_id, gorgone_client_name, is_active")
     .eq("account_id", accountId)
     .eq("is_active", true);
 
   if (error) throw new Error(error.message);
 
-  interface LinkRow {
-    id: string;
-    account_id: string;
-    gorgone_client_id: string;
-    gorgone_client_name: string;
-    is_active: boolean;
-    gorgone_zone_state: GorgoneZoneState[];
-  }
+  const typedLinks = (links ?? []) as Pick<
+    GorgoneLink,
+    "id" | "account_id" | "gorgone_account_id" | "gorgone_client_id" | "gorgone_client_name" | "is_active"
+  >[];
 
-  const typedLinks = (links ?? []) as unknown as LinkRow[];
   const zoneMap = new Map<string, AccountZone>();
 
   for (const link of typedLinks) {
-    const states = link.gorgone_zone_state ?? [];
-    let zones: GorgoneZone[] = [];
-    let pushStates: Map<string, boolean> = new Map();
+    const gorgoneAccountId = link.gorgone_account_id ?? link.gorgone_client_id ?? null;
+    if (!gorgoneAccountId) continue;
 
+    let directory: Awaited<ReturnType<typeof fetchGorgoneZoneDirectory>> = [];
     try {
-      zones = await fetchGorgoneZones(link.gorgone_client_id);
-      pushStates = await getZonePushStates(zones.map((z) => z.id));
-    } catch {
-      // Gorgone unreachable: fall back to whatever zones we've previously
-      // seen events from (stored locally in gorgone_zone_state). We can't
-      // know push state from here, so we mark them as "unknown" → false.
-      for (const state of states) {
-        const existing = zoneMap.get(state.zone_id);
-        if (existing) {
-          if (!existing.platforms.includes(state.platform)) {
-            existing.platforms.push(state.platform);
-          }
-        } else {
-          zoneMap.set(state.zone_id, {
-            zone_id: state.zone_id,
-            zone_name: state.zone_name,
-            platforms: [state.platform],
-            gorgone_client_name: link.gorgone_client_name,
-            push_enabled: false,
-          });
-        }
-      }
+      directory = await fetchGorgoneZoneDirectory(gorgoneAccountId);
+    } catch (err) {
+      // Gorgone unreachable: the screen shows nothing rather than stale
+      // data. We log and continue so the page still renders.
+      console.warn("[campaigns] zone directory fetch failed:", err);
       continue;
     }
 
-    for (const zone of zones) {
-      if (!zone.is_active) continue;
-      const platforms: ("twitter" | "tiktok")[] = [];
-      if (zone.data_sources?.twitter) platforms.push("twitter");
-      if (zone.data_sources?.tiktok) platforms.push("tiktok");
-      if (platforms.length === 0) continue;
+    for (const dir of directory) {
+      if (!dir.zone_is_active) continue;
 
-      zoneMap.set(zone.id, {
-        zone_id: zone.id,
-        zone_name: zone.name,
+      // Surface a zone if at least one supported platform has either an
+      // active rule (Gorgone is collecting) OR an active subscription
+      // (Attila is configured to receive).
+      const supportedActive = [
+        ...dir.active_rule_networks,
+        ...dir.subscribed_networks,
+      ].filter((n): n is SupportedGorgoneNetwork =>
+        SUPPORTED.has(n as SupportedGorgoneNetwork),
+      );
+      if (supportedActive.length === 0) continue;
+
+      const platforms = [...new Set(supportedActive)];
+      const pushEnabled =
+        dir.subscription_is_active === true &&
+        dir.subscribed_networks.some((n) =>
+          SUPPORTED.has(n as SupportedGorgoneNetwork),
+        );
+
+      zoneMap.set(dir.zone_id, {
+        zone_id: dir.zone_id,
+        zone_name: dir.zone_name,
         platforms,
         gorgone_client_name: link.gorgone_client_name,
-        push_enabled: pushStates.get(zone.id) ?? false,
+        push_enabled: pushEnabled,
       });
     }
   }

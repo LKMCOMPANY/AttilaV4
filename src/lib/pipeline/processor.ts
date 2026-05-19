@@ -1,74 +1,94 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { broadcastCampaignEvent, broadcastAccountEvent } from "@/lib/supabase/realtime";
-import type { Campaign, CampaignPlatform } from "@/types";
+import { fetchFullGorgonePost } from "@/lib/gorgone";
+import {
+  SUPPORTED_GORGONE_NETWORKS,
+  type Campaign,
+  type CampaignPlatform,
+  type GorgoneNetwork,
+} from "@/types";
 import type { PipelinePost, PipelineResult, PipelineTiming } from "./types";
 import { pipelineLog, pipelineError } from "./types";
 import { applyFilters } from "./filter";
 import { analyzePost } from "./analyst";
 import { selectAvatars } from "./avatar-selector";
 import { generateComments, buildJobRows } from "./job-builder";
+import type { FullGorgonePost } from "@/lib/gorgone";
 
 /**
- * Process the next pending post. Returns null if no posts are available.
- * This is the core "pipe" — one post, end to end.
+ * Process the next pending job from `gorgone_post_jobs`. Returns null when
+ * no jobs are available.
  *
- * Stale cleanup (posts stuck in 'processing') is NOT done here because the
- * gorgone tables lack a processing_started_at column — using collected_at
- * would incorrectly reset freshly-claimed old posts. Cleanup will be handled
- * at worker startup in the long-running worker (Option B).
+ * Flow (V4):
+ *   1. CLEANUP — expire stale `awaiting_avatars` campaign_posts.
+ *   2. CLAIM   — `claim_pending_job` RPC atomically picks the highest-
+ *                engagement pending row and marks it 'processing'.
+ *   3. FETCH   — re-fetch the full Gorgone post (with author + extras +
+ *                AI sidecars) so the pipeline has everything it needs in
+ *                one place. ~3-5 ms intra-Frankfurt.
+ *   4. MATCH   — find the active campaign for the (account, zone, platform).
+ *   5. FILTER  — apply rule-based campaign filters.
+ *   6. ANALYST — LLM relevance check (skipped on high-confidence sentiment).
+ *   7. SELECTOR/WRITER/INSERT — unchanged from V3.
+ *
+ * If the upstream post is gone (deleted_at), we mark the job 'expired' and
+ * skip — same code path as 'filtered_out' but with a typed reason.
  */
 export async function processNext(): Promise<PipelineResult | null> {
   const timing: PipelineTiming = { totalMs: 0 };
   const totalStart = Date.now();
   const supabase = createAdminClient();
 
-  // -------------------------------------------------------------------------
-  // Phase: CLEANUP — expire old awaiting_avatars posts (> queue_max_age)
-  // -------------------------------------------------------------------------
   await expireAwaitingPosts(supabase);
 
-  // -------------------------------------------------------------------------
-  // Phase: CLAIM — find and lock a pending post
-  // -------------------------------------------------------------------------
-  const claimed = await claimNextPost(supabase);
-  if (!claimed) return null;
+  const claim = await claimNextJob(supabase);
+  if (!claim) return null;
 
-  const { post, platform } = claimed;
-  pipelineLog("claim", post.id, `Claimed ${platform} post`, {
-    author: post.post_author,
-    engagement: post.total_engagement,
-  });
+  const { jobId, postedAt, network, accountId } = claim;
+
+  pipelineLog("claim", jobId, `Claimed job network=${network}`);
 
   try {
-    // -----------------------------------------------------------------------
-    // Phase: MATCH — find active campaign for this zone
-    // -----------------------------------------------------------------------
-    const campaign = await findCampaignForPost(supabase, post, platform);
-    if (!campaign) {
-      await markPostStatus(supabase, post, platform, "filtered_out");
-      return result("skipped", post.id, null, 0, timing, totalStart);
+    // FETCH — re-fetch full payload from Gorgone (single source of truth)
+    const fullPost = await fetchFullGorgonePost(jobId, postedAt);
+    if (!fullPost) {
+      pipelineLog("claim", jobId, "Upstream post gone — marking expired");
+      await markJob(supabase, jobId, "expired", null, "post deleted upstream");
+      return result("skipped", jobId, null, 0, timing, totalStart);
     }
 
-    pipelineLog("match", post.id, `Matched campaign: ${campaign.name}`, { campaignId: campaign.id });
+    // Only twitter / tiktok have automation modules today; everything else
+    // is filtered out cheaply at this stage.
+    const platform = networkToPlatform(network);
+    if (!platform) {
+      await markJob(supabase, jobId, "filtered_out", null, "platform not supported");
+      return result("filtered_rules", jobId, null, 0, timing, totalStart);
+    }
 
-    // -----------------------------------------------------------------------
-    // Phase: FILTER — apply rule-based filters
-    // -----------------------------------------------------------------------
+    const post = fullPostToPipelinePost(fullPost, accountId, platform);
+
+    // MATCH — active campaign for this (account, zone, platform)
+    const campaign = await findCampaignForPost(supabase, post);
+    if (!campaign) {
+      await markJob(supabase, jobId, "filtered_out", null, "no active campaign for zone");
+      return result("skipped", jobId, null, 0, timing, totalStart);
+    }
+    pipelineLog("match", jobId, `Matched campaign: ${campaign.name}`, { campaignId: campaign.id });
+
+    // FILTER
     const filterStart = Date.now();
     const filterResult = applyFilters(post, campaign.filters);
     timing.filterMs = Date.now() - filterStart;
 
     if (!filterResult.passed) {
-      pipelineLog("filter", post.id, `Filtered out: ${filterResult.reason}`);
-      await markPostStatus(supabase, post, platform, "filtered_out");
+      pipelineLog("filter", jobId, `Filtered out: ${filterResult.reason}`);
+      await markJob(supabase, jobId, "filtered_out", campaign.id, filterResult.reason ?? null);
       await incrementCampaignCounter(supabase, campaign.id, "total_posts_filtered");
       broadcastCampaignEvent(campaign.id, "counters", { action: "filtered" });
-      return result("filtered_rules", post.id, campaign.id, 0, timing, totalStart);
+      return result("filtered_rules", jobId, campaign.id, 0, timing, totalStart);
     }
 
-    // -----------------------------------------------------------------------
-    // Phase: ANALYST — AI decides relevance + avatar count
-    // -----------------------------------------------------------------------
+    // ANALYST — LLM relevance check (skipped on high-confidence Gorgone sentiment)
     const analystStart = Date.now();
     const decision = await analyzePost(post, {
       operational_context: campaign.operational_context,
@@ -78,16 +98,14 @@ export async function processNext(): Promise<PipelineResult | null> {
     timing.analystMs = Date.now() - analystStart;
 
     if (!decision.relevant) {
-      pipelineLog("analyst", post.id, `AI filtered: ${decision.reason}`);
-      await markPostStatus(supabase, post, platform, "filtered_out");
+      pipelineLog("analyst", jobId, `AI filtered: ${decision.reason}`);
+      await markJob(supabase, jobId, "filtered_out", campaign.id, decision.reason ?? null);
       await incrementCampaignCounter(supabase, campaign.id, "total_posts_filtered");
       broadcastCampaignEvent(campaign.id, "counters", { action: "filtered" });
-      return result("filtered_ai", post.id, campaign.id, 0, timing, totalStart);
+      return result("filtered_ai", jobId, campaign.id, 0, timing, totalStart);
     }
 
-    // -----------------------------------------------------------------------
-    // Phase: SELECTOR — pick available avatars
-    // -----------------------------------------------------------------------
+    // SELECTOR
     const selectorStart = Date.now();
     const platformParams = campaign.capacity_params[platform];
     const selected = await selectAvatars({
@@ -100,13 +118,13 @@ export async function processNext(): Promise<PipelineResult | null> {
     timing.selectorMs = Date.now() - selectorStart;
 
     if (selected.length === 0) {
-      pipelineLog("selector", post.id, "No avatars available — saving as awaiting_avatars");
-
+      pipelineLog("selector", jobId, "No avatars available — saving as awaiting_avatars");
       await supabase.from("campaign_posts").insert({
         campaign_id: campaign.id,
         account_id: campaign.account_id,
-        source_table: platform === "twitter" ? "gorgone_tweets" : "gorgone_tiktok_videos",
-        source_id: post.id,
+        source_table: "gorgone_post_jobs",
+        source_id: jobId,
+        source_network: network,
         platform,
         post_url: post.post_url,
         post_text: post.post_text,
@@ -116,39 +134,33 @@ export async function processNext(): Promise<PipelineResult | null> {
         status: "awaiting_avatars",
         processed_at: new Date().toISOString(),
       });
-
-      await markPostStatus(supabase, post, platform, "processed");
+      await markJob(supabase, jobId, "processed", campaign.id, null);
       broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_awaiting" });
-      return result("no_avatars", post.id, campaign.id, 0, timing, totalStart);
+      return result("no_avatars", jobId, campaign.id, 0, timing, totalStart);
     }
 
-    // -----------------------------------------------------------------------
-    // Phase: WRITER — generate comments sequentially (cumulative context)
-    // -----------------------------------------------------------------------
+    // WRITER
     const writerStart = Date.now();
     const guideline = {
       operational_context: campaign.operational_context,
       strategy: campaign.strategy,
       key_messages: campaign.key_messages,
     };
-
     const generatedComments = await generateComments({
       post, selected, platform, guideline, supabase,
     });
     timing.writerMs = Date.now() - writerStart;
 
-    // -----------------------------------------------------------------------
-    // Phase: INSERT — create campaign_posts + campaign_jobs
-    // -----------------------------------------------------------------------
+    // INSERT
     const insertStart = Date.now();
-
     const { data: campaignPost } = await supabase
       .from("campaign_posts")
       .insert({
         campaign_id: campaign.id,
         account_id: campaign.account_id,
-        source_table: platform === "twitter" ? "gorgone_tweets" : "gorgone_tiktok_videos",
-        source_id: post.id,
+        source_table: "gorgone_post_jobs",
+        source_id: jobId,
+        source_network: network,
         platform,
         post_url: post.post_url,
         post_text: post.post_text,
@@ -178,32 +190,32 @@ export async function processNext(): Promise<PipelineResult | null> {
 
     timing.insertMs = Date.now() - insertStart;
 
-    // Mark source post as responded
-    await markPostStatus(supabase, post, platform, "processed");
+    await markJob(supabase, jobId, "processed", campaign.id, null);
     await incrementCampaignCounter(supabase, campaign.id, "total_posts_ingested");
 
     broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_created", jobsCreated: jobs.length });
     broadcastCampaignEvent(campaign.id, "counters", { action: "ingested" });
     broadcastAccountEvent(campaign.account_id, "jobs", { action: "jobs_created" });
 
-    pipelineLog("insert", post.id, "Pipeline complete", {
+    pipelineLog("insert", jobId, "Pipeline complete", {
       campaignId: campaign.id,
       jobsCreated: jobs.length,
       totalMs: Date.now() - totalStart,
     });
 
-    return result("responded", post.id, campaign.id, jobs.length, timing, totalStart);
+    return result("responded", jobId, campaign.id, jobs.length, timing, totalStart);
   } catch (err) {
     const phase = getPhaseFromTiming(timing);
-    pipelineError(phase, post.id, "Pipeline failed", err);
-    await markPostStatus(supabase, post, platform, "error");
+    pipelineError(phase, jobId, "Pipeline failed", err);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    await markJob(supabase, jobId, "error", null, errMsg);
     return {
       success: false,
       action: "error",
-      postId: post.id,
+      postId: jobId,
       campaignId: null,
       jobsCreated: 0,
-      error: err instanceof Error ? err.message : String(err),
+      error: errMsg,
       phase,
       timing: { ...timing, totalMs: Date.now() - totalStart },
     };
@@ -211,108 +223,105 @@ export async function processNext(): Promise<PipelineResult | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Claim — atomic post selection with FOR UPDATE SKIP LOCKED via RPC
+// Claim — claim_pending_job RPC (FOR UPDATE SKIP LOCKED)
 // ---------------------------------------------------------------------------
 
-async function claimNextPost(
-  supabase: ReturnType<typeof createAdminClient>,
-): Promise<{ post: PipelinePost; platform: CampaignPlatform } | null> {
-  // Try Twitter first, then TikTok
-  const tweet = await claimFromTable(supabase, "gorgone_tweets", "twitter");
-  if (tweet) return tweet;
-
-  return claimFromTable(supabase, "gorgone_tiktok_videos", "tiktok");
+interface ClaimedJob {
+  jobId: string;
+  postedAt: string;
+  accountId: string;
+  zoneId: string;
+  network: GorgoneNetwork;
 }
 
-async function claimFromTable(
+async function claimNextJob(
   supabase: ReturnType<typeof createAdminClient>,
-  table: "gorgone_tweets" | "gorgone_tiktok_videos",
-  platform: CampaignPlatform,
-): Promise<{ post: PipelinePost; platform: CampaignPlatform } | null> {
-  // Use raw SQL for FOR UPDATE SKIP LOCKED (not supported by PostgREST)
-  const { data, error } = await supabase.rpc("claim_pending_post", {
-    p_table: table,
+): Promise<ClaimedJob | null> {
+  const { data, error } = await supabase.rpc("claim_pending_job", {
+    p_zone_ids: null,
+    // Only platforms with an avatar-automation module today.
+    p_networks: [...SUPPORTED_GORGONE_NETWORKS],
   });
 
   if (error || !data || data.length === 0) return null;
 
-  const row = data[0];
-  const post = platform === "twitter"
-    ? tweetToPost(row)
-    : tiktokToPost(row);
-
-  return { post, platform };
-}
-
-function tweetToPost(row: Record<string, unknown>): PipelinePost {
-  const isReply = Boolean(row.is_reply);
-  const text = String(row.text ?? "");
-  const isRetweet = text.startsWith("RT @");
+  const row = data[0] as {
+    gorgone_post_id: string;
+    gorgone_post_posted_at: string;
+    account_id: string;
+    zone_id: string;
+    network: GorgoneNetwork;
+  };
 
   return {
-    id: String(row.id),
-    zone_id: String(row.zone_id),
-    account_id: String(row.account_id),
-    platform: "twitter",
-    post_url: row.tweet_url as string | null,
-    post_text: text,
-    post_author: row.author_username as string | null,
-    author_followers: Number(row.author_followers ?? 0),
-    author_verified: Boolean(row.author_verified),
-    total_engagement: Number(row.total_engagement ?? 0),
-    language: row.lang as string | null,
-    collected_at: String(row.collected_at),
+    jobId: row.gorgone_post_id,
+    postedAt: row.gorgone_post_posted_at,
+    accountId: row.account_id,
+    zoneId: row.zone_id,
+    network: row.network,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mapping: full Gorgone post -> pipeline-shape post
+// ---------------------------------------------------------------------------
+
+function networkToPlatform(network: GorgoneNetwork): CampaignPlatform | null {
+  if (network === "twitter" || network === "tiktok") return network;
+  return null;
+}
+
+function fullPostToPipelinePost(
+  full: FullGorgonePost,
+  accountId: string,
+  platform: CampaignPlatform,
+): PipelinePost {
+  const isReply = full.is_reply;
+  const isRepost = full.is_repost;
+
+  const rawMetrics: Record<string, unknown> = platform === "twitter"
+    ? {
+        retweet_count: full.retweets,
+        reply_count: full.replies,
+        like_count: full.likes,
+        quote_count: full.quotes,
+        view_count: full.views,
+        total_engagement: full.total_engagement,
+      }
+    : {
+        // TikTok column mapping (V4 stores plays as `views`, diggs as `likes`,
+        // comments as `replies`, shares as `retweets` on the unified posts row).
+        play_count: full.views,
+        digg_count: full.likes,
+        comment_count: full.replies,
+        share_count: full.retweets,
+        total_engagement: full.total_engagement,
+      };
+
+  return {
+    id: full.id,
+    posted_at: full.posted_at,
+    zone_id: full.zone_id,
+    account_id: accountId,
+    platform,
+    post_url: full.post_url,
+    post_text: full.text,
+    post_author: full.author_handle,
+    author_followers: full.author_followers,
+    author_verified: full.author_verified,
+    total_engagement: full.total_engagement,
+    language: full.lang,
+    collected_at: full.first_seen_at,
     is_reply: isReply,
-    post_type: isReply ? "reply" : isRetweet ? "retweet" : "post",
-    raw_metrics: {
-      retweet_count: row.retweet_count,
-      reply_count: row.reply_count,
-      like_count: row.like_count,
-      quote_count: row.quote_count,
-      view_count: row.view_count,
-      total_engagement: row.total_engagement,
-    },
+    is_ad: full.is_ad,
+    author_is_private: full.author_is_private,
+    post_type: isReply ? "reply" : isRepost ? "retweet" : "post",
+    sentiment_label: full.sentiment_label,
+    sentiment_score: full.sentiment_score,
+    translation_text: full.translation_text,
+    translation_lang: full.translation_lang,
+    raw_metrics: rawMetrics,
   };
-}
-
-function tiktokToPost(row: Record<string, unknown>): PipelinePost {
-  const author = row.author_username as string | null;
-  const videoId = row.video_id as string | null;
-  return {
-    id: String(row.id),
-    zone_id: String(row.zone_id),
-    account_id: String(row.account_id),
-    platform: "tiktok",
-    // Gorgone ingestion currently leaves `share_url` empty for every TikTok
-    // video. Reconstruct the canonical deep link from `video_id` +
-    // `author_username` so the automation receives a usable URL. If either
-    // is missing we fall back to `null` and the platform module will throw
-    // a typed `device_setup_required` error rather than `am start -d ` with
-    // an empty argument.
-    post_url: buildTikTokUrl(author, videoId),
-    post_text: String(row.description ?? ""),
-    post_author: author,
-    author_followers: Number(row.author_followers ?? 0),
-    author_verified: Boolean(row.author_verified),
-    total_engagement: Number(row.total_engagement ?? 0),
-    language: row.language as string | null,
-    collected_at: String(row.collected_at),
-    is_ad: Boolean(row.is_ad),
-    author_is_private: Boolean(row.author_is_private),
-    raw_metrics: {
-      play_count: row.play_count,
-      digg_count: row.digg_count,
-      comment_count: row.comment_count,
-      share_count: row.share_count,
-      collect_count: row.collect_count,
-      total_engagement: row.total_engagement,
-    },
-  };
-}
-
-function buildTikTokUrl(author: string | null, videoId: string | null): string | null {
-  if (!author || !videoId) return null;
-  return `https://www.tiktok.com/@${author}/video/${videoId}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +331,6 @@ function buildTikTokUrl(author: string | null, videoId: string | null): string |
 async function findCampaignForPost(
   supabase: ReturnType<typeof createAdminClient>,
   post: PipelinePost,
-  platform: CampaignPlatform,
 ): Promise<Campaign | null> {
   const { data } = await supabase
     .from("campaigns")
@@ -330,25 +338,32 @@ async function findCampaignForPost(
     .eq("status", "active")
     .eq("gorgone_zone_id", post.zone_id)
     .eq("account_id", post.account_id)
-    .contains("platforms", [platform])
+    .contains("platforms", [post.platform])
     .limit(1)
-    .single();
+    .maybeSingle();
 
-  return data as Campaign | null;
+  return (data as Campaign | null) ?? null;
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function markPostStatus(
+async function markJob(
   supabase: ReturnType<typeof createAdminClient>,
-  post: PipelinePost,
-  platform: CampaignPlatform,
-  status: string,
+  jobId: string,
+  status: "processed" | "filtered_out" | "error" | "expired",
+  campaignId: string | null,
+  errorMessage: string | null,
 ) {
-  const table = platform === "twitter" ? "gorgone_tweets" : "gorgone_tiktok_videos";
-  await supabase.from(table).update({ status }).eq("id", post.id);
+  await supabase
+    .from("gorgone_post_jobs")
+    .update({
+      status,
+      campaign_id: campaignId,
+      error_message: errorMessage,
+    })
+    .eq("gorgone_post_id", jobId);
 }
 
 async function incrementCampaignCounter(
@@ -356,7 +371,6 @@ async function incrementCampaignCounter(
   campaignId: string,
   counter: "total_posts_ingested" | "total_posts_filtered" | "total_responses_sent" | "total_responses_failed",
 ) {
-  // Atomic increment via raw SQL
   await supabase.rpc("increment_campaign_counter", {
     p_campaign_id: campaignId,
     p_counter: counter,

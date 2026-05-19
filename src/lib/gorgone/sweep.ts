@@ -1,71 +1,49 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createGorgoneClient } from "./client";
-import { ingestTweet, ingestTiktok } from "./ingest";
-import type { TweetPayloadData, TiktokPayloadData } from "./webhook-payload";
+import { enqueueGorgoneJob } from "./ingest";
+import type { GorgoneNetwork } from "@/types";
 
 /**
- * Sweep reconciler — safety net for the webhook pipeline.
+ * Sweep reconciler — safety net behind the `posts_after_insert_attila`
+ * webhook trigger.
  *
  * Webhooks are the primary delivery channel; this loop runs every
- * `SWEEP_INTERVAL_MS` and pulls anything Gorgone may have failed to
- * push (Attila down during deploy, transient 5xx, network hiccup).
+ * `GORGONE_SWEEP_INTERVAL_MS` (default 60 s) and pulls posts Gorgone may
+ * have failed to push (Attila down during deploy, transient 5xx, network
+ * hiccup). We use a per (account, zone, network) cursor that advances on
+ * `posts.first_seen_at` (Gorgone's "moment we observed it") to ensure
+ * monotonic forward progress.
  *
- * For each `(account, zone, platform)` row in `gorgone_zone_state` we:
- *   1. Query Gorgone for new rows since `(last_event_at, last_event_id)`
- *      using a composite cursor — safe even when many rows share the
- *      same `collected_at` second.
- *   2. Map each Gorgone row to the same payload shape used by the
- *      webhook handler.
- *   3. Call the same `ingestTweet` / `ingestTiktok` functions used by
- *      the webhook (zero divergence, idempotent via UNIQUE gorgone_id).
+ * The cursor lives in `gorgone_post_jobs` itself: we read `MAX(collected_at)
+ * WHERE zone_id = ? AND network = ?` per cursor. No separate state table
+ * needed (V3 had `gorgone_zone_state`; the ledger collapses both roles).
  *
- * Cost: at most one short query per active `(zone, platform)` per
- * `SWEEP_INTERVAL_MS`, regardless of volume.
+ * Cost: at most one short query per active (zone, network) tuple per
+ * sweep tick, regardless of volume. Empty zones don't pay anything.
  */
 
 const SWEEP_BATCH_SIZE = 200;
-
-const TWEET_SELECT = `
-  id, zone_id, tweet_id, conversation_id, text, lang,
-  twitter_created_at, collected_at,
-  retweet_count, reply_count, like_count, quote_count, view_count,
-  total_engagement, is_reply, in_reply_to_tweet_id, tweet_url,
-  author:twitter_profiles!author_profile_id(
-    username, name, followers_count, is_verified, is_blue_verified, profile_picture_url
-  )
-`.trim();
-
-const TIKTOK_SELECT = `
-  id, zone_id, video_id, description, language,
-  tiktok_created_at, collected_at,
-  play_count, digg_count, comment_count, share_count, collect_count,
-  total_engagement, share_url, is_ad,
-  author:tiktok_profiles!author_profile_id(
-    username, nickname, follower_count, is_verified, is_private, avatar_thumb
-  )
-`.trim();
-
-interface ZoneCursor {
-  account_id: string;
-  zone_id: string;
-  zone_name: string;
-  platform: "twitter" | "tiktok";
-  last_event_at: string | null;
-  last_event_id: string | null;
-  client_id: string;
-}
+// How far back to look on the very first sweep for a freshly-subscribed
+// (zone, network). Not needed during steady state because the trigger
+// fires synchronously — this is purely a graceful-onboarding window.
+const FIRST_SWEEP_WINDOW_MIN = 5;
 
 export interface SweepReport {
   cursors_processed: number;
   zones_with_data: number;
-  total_ingested: number;
+  total_enqueued: number;
   errors: string[];
   duration_ms: number;
 }
 
-/**
- * Runs a single sweep cycle across all active links + zone states.
- */
+interface ActiveCursor {
+  account_id: string;
+  zone_id: string;
+  network: GorgoneNetwork;
+  /** Most recent `collected_at` we've already enqueued for this cursor. */
+  cursor_at: string | null;
+}
+
 export async function runSweepCycle(
   attila: SupabaseClient,
 ): Promise<SweepReport> {
@@ -73,7 +51,7 @@ export async function runSweepCycle(
   const report: SweepReport = {
     cursors_processed: 0,
     zones_with_data: 0,
-    total_ingested: 0,
+    total_enqueued: 0,
     errors: [],
     duration_ms: 0,
   };
@@ -83,14 +61,14 @@ export async function runSweepCycle(
 
   for (const cursor of cursors) {
     try {
-      const ingested = await sweepCursor(attila, cursor);
-      if (ingested > 0) {
+      const enqueued = await sweepCursor(attila, cursor);
+      if (enqueued > 0) {
         report.zones_with_data += 1;
-        report.total_ingested += ingested;
+        report.total_enqueued += enqueued;
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      report.errors.push(`${cursor.zone_name}/${cursor.platform}: ${msg}`);
+      report.errors.push(`${cursor.zone_id}/${cursor.network}: ${msg}`);
     }
   }
 
@@ -99,216 +77,155 @@ export async function runSweepCycle(
 }
 
 /**
- * Loads cursors for every (account, zone, platform) state attached to an
- * active link. Resolves the Gorgone client_id along the way so the sweep
- * doesn't need to round-trip through it.
+ * Resolves the (account, zone, network) tuples that need to be swept by
+ * cross-referencing:
+ *   - active `gorgone_links` (Attila side)
+ *   - active `attila_zone_subscriptions` (Gorgone side, via the directory view)
+ *
+ * Then materialises one cursor per (zone, network) pair the subscription
+ * declares, with the latest `collected_at` we've already enqueued.
  */
-async function loadActiveCursors(attila: SupabaseClient): Promise<ZoneCursor[]> {
-  const { data, error } = await attila
-    .from("gorgone_zone_state")
-    .select(`
-      account_id, zone_id, zone_name, platform,
-      last_event_at, last_event_id,
-      gorgone_links!inner(gorgone_client_id, is_active)
-    `)
-    .eq("gorgone_links.is_active", true);
+async function loadActiveCursors(
+  attila: SupabaseClient,
+): Promise<ActiveCursor[]> {
+  // 1) Fetch active links Attila ↔ Gorgone account
+  const { data: links, error: linkErr } = await attila
+    .from("gorgone_links")
+    .select("account_id, gorgone_account_id")
+    .eq("is_active", true);
 
-  if (error) throw new Error(`load cursors: ${error.message}`);
+  if (linkErr) throw new Error(`load links: ${linkErr.message}`);
 
-  type Row = {
-    account_id: string;
+  type LinkRow = { account_id: string; gorgone_account_id: string };
+  const linkRows = (links ?? []) as LinkRow[];
+  if (linkRows.length === 0) return [];
+
+  // Map Gorgone account_id → Attila account_id
+  const accountByGorgone = new Map<string, string>();
+  for (const row of linkRows) {
+    if (row.gorgone_account_id) {
+      accountByGorgone.set(row.gorgone_account_id, row.account_id);
+    }
+  }
+  if (accountByGorgone.size === 0) return [];
+
+  // 2) Fetch active subscriptions on Gorgone side (per-zone networks[])
+  const gorgone = createGorgoneClient();
+  const { data: subs, error: subErr } = await gorgone
+    .from("attila_zone_subscriptions")
+    .select("zone_id, account_id, networks, is_active")
+    .eq("is_active", true)
+    .in("account_id", [...accountByGorgone.keys()]);
+
+  if (subErr) throw new Error(`load subscriptions: ${subErr.message}`);
+
+  type SubRow = {
     zone_id: string;
-    zone_name: string;
-    platform: "twitter" | "tiktok";
-    last_event_at: string | null;
-    last_event_id: string | null;
-    // PostgREST returns the joined relation as an array even with !inner.
-    gorgone_links: { gorgone_client_id: string }[];
+    account_id: string;
+    networks: GorgoneNetwork[];
+    is_active: boolean;
   };
+  const subRows = (subs ?? []) as SubRow[];
 
-  return ((data ?? []) as unknown as Row[]).map((row) => ({
-    account_id: row.account_id,
-    zone_id: row.zone_id,
-    zone_name: row.zone_name,
-    platform: row.platform,
-    last_event_at: row.last_event_at,
-    last_event_id: row.last_event_id,
-    client_id: row.gorgone_links[0]?.gorgone_client_id ?? "",
-  })).filter((c) => c.client_id !== "");
+  // 3) Build cursor list with latest collected_at from the ledger
+  const cursors: ActiveCursor[] = [];
+  for (const sub of subRows) {
+    const attilaAccount = accountByGorgone.get(sub.account_id);
+    if (!attilaAccount) continue;
+    for (const network of sub.networks) {
+      const cursor_at = await readCursor(attila, sub.zone_id, network);
+      cursors.push({
+        account_id: attilaAccount,
+        zone_id: sub.zone_id,
+        network,
+        cursor_at,
+      });
+    }
+  }
+  return cursors;
+}
+
+async function readCursor(
+  attila: SupabaseClient,
+  zoneId: string,
+  network: GorgoneNetwork,
+): Promise<string | null> {
+  const { data } = await attila
+    .from("gorgone_post_jobs")
+    .select("collected_at")
+    .eq("zone_id", zoneId)
+    .eq("network", network)
+    .order("collected_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return (data?.collected_at as string | undefined) ?? null;
 }
 
 /**
- * Sweep a single (zone, platform) cursor.
- * Returns the number of rows newly ingested.
+ * Sweeps a single (zone, network) cursor — fetches recent posts from
+ * Gorgone and enqueues them into Attila's ledger via `enqueueGorgoneJob`.
  */
-async function sweepCursor(attila: SupabaseClient, cursor: ZoneCursor): Promise<number> {
+async function sweepCursor(
+  attila: SupabaseClient,
+  cursor: ActiveCursor,
+): Promise<number> {
   const gorgone = createGorgoneClient();
-  const isFirstSweep = cursor.last_event_at == null;
+  const horizon =
+    cursor.cursor_at ??
+    new Date(Date.now() - FIRST_SWEEP_WINDOW_MIN * 60 * 1000).toISOString();
 
-  const baseQuery = (table: string, select: string) => {
-    let q = gorgone
-      .from(table)
-      .select(select)
-      .eq("zone_id", cursor.zone_id)
-      .order("collected_at", { ascending: true })
-      .order("id", { ascending: true })
-      .limit(SWEEP_BATCH_SIZE);
+  const { data, error } = await gorgone
+    .from("posts")
+    .select("id, posted_at, account_id, zone_id, network, kind, first_seen_at, likes, retweets, replies, quotes")
+    .eq("zone_id", cursor.zone_id)
+    .eq("network", cursor.network)
+    .gte("first_seen_at", horizon)
+    .is("deleted_at", null)
+    .order("first_seen_at", { ascending: true })
+    .limit(SWEEP_BATCH_SIZE);
 
-    if (isFirstSweep) {
-      // First sweep ever for this zone: only consider rows from the last
-      // 5 minutes (a sane "recent" window). Webhooks handle the rest.
-      const horizon = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      q = q.gte("collected_at", horizon);
-    } else {
-      // Composite tuple comparison: (collected_at, id) > (cursor)
-      // PostgREST doesn't support row-tuple comparisons natively, so we
-      // approximate: collected_at >= cursor (and dedup at upsert time).
-      // Combined with UNIQUE(gorgone_id) ON CONFLICT NOOP, this is safe.
-      q = q.gte("collected_at", cursor.last_event_at as string);
-    }
+  if (error) throw new Error(`gorgone posts read: ${error.message}`);
 
-    return q;
+  type Row = {
+    id: string;
+    posted_at: string;
+    account_id: string;
+    zone_id: string;
+    network: GorgoneNetwork;
+    kind: string | null;
+    first_seen_at: string;
+    likes: number | null;
+    retweets: number | null;
+    replies: number | null;
+    quotes: number | null;
   };
 
-  if (cursor.platform === "twitter") {
-    const { data, error } = await baseQuery("twitter_tweets", TWEET_SELECT);
-    if (error) throw new Error(`gorgone twitter: ${error.message}`);
-
-    const rows = (data ?? []) as unknown as RawTweetRow[];
-    let count = 0;
-    for (const row of rows) {
-      const payload = mapRawTweetToPayload(row, cursor);
-      const result = await ingestTweet(attila, payload, "sweep");
-      if (result.inserted) count += 1;
-    }
-    return count;
-  }
-
-  const { data, error } = await baseQuery("tiktok_videos", TIKTOK_SELECT);
-  if (error) throw new Error(`gorgone tiktok: ${error.message}`);
-
-  const rows = (data ?? []) as unknown as RawTiktokRow[];
+  const rows = (data ?? []) as Row[];
   let count = 0;
+
   for (const row of rows) {
-    const payload = mapRawTiktokToPayload(row, cursor);
-    const result = await ingestTiktok(attila, payload, "sweep");
+    const totalEngagement =
+      (row.likes ?? 0) +
+      (row.retweets ?? 0) +
+      (row.replies ?? 0) +
+      (row.quotes ?? 0);
+
+    const result = await enqueueGorgoneJob(
+      attila,
+      {
+        post_id: row.id,
+        post_posted_at: row.posted_at,
+        account_id: row.account_id,
+        zone_id: row.zone_id,
+        network: row.network,
+        kind: (row.kind ?? "post") as "post" | "reply" | "repost" | "comment",
+        collected_at: row.first_seen_at,
+        total_engagement: totalEngagement,
+      },
+      "sweep",
+    );
     if (result.inserted) count += 1;
   }
+
   return count;
-}
-
-// ---------------------------------------------------------------------------
-// Mapping: Gorgone raw row -> webhook payload shape (so we share ingestTweet)
-// ---------------------------------------------------------------------------
-
-interface RawTweetRow {
-  id: string;
-  zone_id: string;
-  tweet_id: string;
-  conversation_id: string | null;
-  text: string;
-  lang: string | null;
-  twitter_created_at: string;
-  collected_at: string;
-  retweet_count: number | null;
-  reply_count: number | null;
-  like_count: number | null;
-  quote_count: number | null;
-  view_count: number | null;
-  total_engagement: number | null;
-  is_reply: boolean | null;
-  in_reply_to_tweet_id: string | null;
-  tweet_url: string | null;
-  author: {
-    username: string | null;
-    name: string | null;
-    followers_count: number | null;
-    is_verified: boolean | null;
-    is_blue_verified: boolean | null;
-    profile_picture_url: string | null;
-  } | null;
-}
-
-interface RawTiktokRow {
-  id: string;
-  zone_id: string;
-  video_id: string;
-  description: string | null;
-  language: string | null;
-  tiktok_created_at: string;
-  collected_at: string;
-  play_count: number | null;
-  digg_count: number | null;
-  comment_count: number | null;
-  share_count: number | null;
-  collect_count: number | null;
-  total_engagement: number | null;
-  share_url: string | null;
-  is_ad: boolean | null;
-  author: {
-    username: string | null;
-    nickname: string | null;
-    follower_count: number | null;
-    is_verified: boolean | null;
-    is_private: boolean | null;
-    avatar_thumb: string | null;
-  } | null;
-}
-
-function mapRawTweetToPayload(row: RawTweetRow, cursor: ZoneCursor): TweetPayloadData {
-  return {
-    gorgone_id: row.id,
-    zone_id: row.zone_id,
-    zone_name: cursor.zone_name,
-    client_id: cursor.client_id,
-    tweet_id: row.tweet_id,
-    conversation_id: row.conversation_id,
-    text: row.text,
-    lang: row.lang,
-    twitter_created_at: row.twitter_created_at,
-    collected_at: row.collected_at,
-    retweet_count: row.retweet_count ?? 0,
-    reply_count: row.reply_count ?? 0,
-    like_count: row.like_count ?? 0,
-    quote_count: row.quote_count ?? 0,
-    view_count: row.view_count ?? 0,
-    total_engagement: row.total_engagement ?? 0,
-    is_reply: row.is_reply ?? false,
-    in_reply_to_tweet_id: row.in_reply_to_tweet_id,
-    tweet_url: row.tweet_url,
-    author_username: row.author?.username ?? null,
-    author_name: row.author?.name ?? null,
-    author_followers: row.author?.followers_count ?? 0,
-    author_verified:
-      Boolean(row.author?.is_verified) || Boolean(row.author?.is_blue_verified),
-    author_profile_picture: row.author?.profile_picture_url ?? null,
-  };
-}
-
-function mapRawTiktokToPayload(row: RawTiktokRow, cursor: ZoneCursor): TiktokPayloadData {
-  return {
-    gorgone_id: row.id,
-    zone_id: row.zone_id,
-    zone_name: cursor.zone_name,
-    client_id: cursor.client_id,
-    video_id: row.video_id,
-    description: row.description,
-    language: row.language,
-    tiktok_created_at: row.tiktok_created_at,
-    collected_at: row.collected_at,
-    play_count: row.play_count ?? 0,
-    digg_count: row.digg_count ?? 0,
-    comment_count: row.comment_count ?? 0,
-    share_count: row.share_count ?? 0,
-    collect_count: row.collect_count ?? 0,
-    total_engagement: row.total_engagement ?? 0,
-    share_url: row.share_url,
-    is_ad: row.is_ad ?? false,
-    author_username: row.author?.username ?? null,
-    author_nickname: row.author?.nickname ?? null,
-    author_followers: row.author?.follower_count ?? 0,
-    author_verified: Boolean(row.author?.is_verified),
-    author_is_private: Boolean(row.author?.is_private),
-    author_avatar: row.author?.avatar_thumb ?? null,
-  };
 }

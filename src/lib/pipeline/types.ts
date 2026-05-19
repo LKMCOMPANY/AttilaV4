@@ -1,27 +1,37 @@
 import type { CampaignPlatform, AnalystDecision, Avatar } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Source post (unified shape from gorgone_tweets / gorgone_tiktok_videos)
+// Source post — unified shape derived from a Gorgone V4 `posts` row
 // ---------------------------------------------------------------------------
+// Built by the pipeline after claiming a `gorgone_post_jobs` ledger row and
+// re-fetching the full payload via `fetchFullGorgonePost`. The shape is
+// network-agnostic with optional fields for network-specific filters.
 
 export interface PipelinePost {
-  id: string;
+  id: string;                     // gorgone posts.id
+  posted_at: string;              // gorgone posts.posted_at (composite PK partner)
   zone_id: string;
-  account_id: string;
-  platform: CampaignPlatform;
+  account_id: string;             // Attila account_id (resolved via gorgone_links)
+  platform: CampaignPlatform;     // 'twitter' | 'tiktok'
   post_url: string | null;
   post_text: string;
-  post_author: string | null;
+  post_author: string | null;     // social_users.handle
   author_followers: number;
   author_verified: boolean;
   total_engagement: number;
   language: string | null;
-  collected_at: string;
+  collected_at: string;           // posts.first_seen_at (when Gorgone observed it)
 
   is_reply?: boolean;
   is_ad?: boolean;
   author_is_private?: boolean;
   post_type?: "post" | "reply" | "retweet";
+
+  // V4 bonuses (null when AI hasn't run yet — pipeline tolerates absence)
+  sentiment_label?: "positive" | "negative" | "neutral" | string | null;
+  sentiment_score?: number | null;
+  translation_text?: string | null;
+  translation_lang?: string | null;
 
   raw_metrics: Record<string, unknown>;
 }

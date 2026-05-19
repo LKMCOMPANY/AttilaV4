@@ -11,8 +11,8 @@ import { toast } from "sonner";
 
 /**
  * Tiny status row that surfaces the current webhook config stored in
- * Gorgone's `integration_config` and lets the admin push Attila's env
- * (URL + secret) to it. Used for first-time wiring and secret rotation.
+ * Gorgone's `attila_integration_config` and lets the admin push Attila's
+ * env (URL + secret) to it. Used for first-time wiring and secret rotation.
  */
 export function GorgoneWebhookConfig({
   expectedUrlSuffix = "/api/gorgone/webhook",

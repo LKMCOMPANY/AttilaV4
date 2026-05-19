@@ -1,104 +1,52 @@
 import { z } from "zod";
 
 /**
- * Webhook payload schemas — v2.
+ * Webhook payload schema — v3 (Gorgone V4 → Attila).
  *
- * These describe the JSON body sent by the Gorgone Postgres triggers
- * (`notify_attila_new_tweet` / `notify_attila_new_tiktok`) to
- * `POST /api/gorgone/webhook`.
+ * The Gorgone trigger (`notify_attila_new_post`) emits a *minimal* payload:
+ * just IDs + ordering metadata. The pipeline re-fetches the full content
+ * (text, author, network extras, sentiment, translation) from Gorgone when
+ * it claims the job. This keeps the trigger fast (no synchronous joins),
+ * the payload tiny (no PII drift between Gorgone and the wire), and
+ * Gorgone the single source of truth for content.
  *
- * The shape is intentionally rich: every field needed by the campaign
- * filters (see `src/lib/pipeline/filter.ts`) is included so the pipeline
- * never needs to query Gorgone again after ingestion.
- *
- * Versioned via the `version` field so future schema migrations can be
- * negotiated end-to-end without breaking existing payloads.
+ * Versioning: the wire format is versioned via `version`; bumping it on
+ * Gorgone's side requires updating this schema in the same change. We
+ * accept v3 only — v2 (the fat V3 payload) is rejected with 400.
  */
 
 const isoDate = z.string().datetime({ offset: true });
 const uuid = z.string().uuid();
 
-const tweetData = z.object({
-  // Identity
-  gorgone_id: uuid,
-  zone_id: uuid,
-  zone_name: z.string(),
-  client_id: uuid,
-  tweet_id: z.string(),
-  conversation_id: z.string().nullable(),
-
-  // Content
-  text: z.string(),
-  lang: z.string().nullable(),
-  is_reply: z.boolean(),
-  in_reply_to_tweet_id: z.string().nullable(),
-  tweet_url: z.string().nullable(),
-
-  // Timestamps
-  twitter_created_at: isoDate,
-  collected_at: isoDate,
-
-  // Engagement
-  retweet_count: z.number().int().nonnegative(),
-  reply_count: z.number().int().nonnegative(),
-  like_count: z.number().int().nonnegative(),
-  quote_count: z.number().int().nonnegative(),
-  view_count: z.number().int().nonnegative(),
-  total_engagement: z.number().int().nonnegative(),
-
-  // Author (denormalized at trigger time)
-  author_username: z.string().nullable(),
-  author_name: z.string().nullable(),
-  author_followers: z.number().int().nonnegative(),
-  author_verified: z.boolean(),
-  author_profile_picture: z.string().nullable(),
-});
-
-const tiktokData = z.object({
-  gorgone_id: uuid,
-  zone_id: uuid,
-  zone_name: z.string(),
-  client_id: uuid,
-  video_id: z.string(),
-
-  description: z.string().nullable(),
-  language: z.string().nullable(),
-  share_url: z.string().nullable(),
-  is_ad: z.boolean(),
-
-  tiktok_created_at: isoDate,
-  collected_at: isoDate,
-
-  play_count: z.number().int().nonnegative(),
-  digg_count: z.number().int().nonnegative(),
-  comment_count: z.number().int().nonnegative(),
-  share_count: z.number().int().nonnegative(),
-  collect_count: z.number().int().nonnegative(),
-  total_engagement: z.number().int().nonnegative(),
-
-  author_username: z.string().nullable(),
-  author_nickname: z.string().nullable(),
-  author_followers: z.number().int().nonnegative(),
-  author_verified: z.boolean(),
-  author_is_private: z.boolean(),
-  author_avatar: z.string().nullable(),
-});
-
-export const webhookPayloadSchema = z.discriminatedUnion("event", [
-  z.object({
-    version: z.literal(2),
-    event: z.literal("tweet.created"),
-    delivered_at: isoDate,
-    data: tweetData,
-  }),
-  z.object({
-    version: z.literal(2),
-    event: z.literal("tiktok.created"),
-    delivered_at: isoDate,
-    data: tiktokData,
-  }),
+export const networkEnum = z.enum([
+  "twitter",
+  "tiktok",
+  "instagram",
+  "youtube",
+  "reddit",
 ]);
 
+export const postKindEnum = z.enum(["post", "reply", "repost", "comment"]);
+
+const postCreatedData = z.object({
+  post_id: uuid,
+  post_posted_at: isoDate,
+  account_id: uuid,
+  zone_id: uuid,
+  network: networkEnum,
+  kind: postKindEnum,
+  collected_at: isoDate,
+  total_engagement: z.number().int().nonnegative(),
+});
+
+export const webhookPayloadSchema = z.object({
+  version: z.literal(3),
+  event: z.literal("post.created"),
+  delivered_at: isoDate,
+  data: postCreatedData,
+});
+
 export type WebhookPayload = z.infer<typeof webhookPayloadSchema>;
-export type TweetPayloadData = z.infer<typeof tweetData>;
-export type TiktokPayloadData = z.infer<typeof tiktokData>;
+export type PostCreatedData = z.infer<typeof postCreatedData>;
+export type GorgoneWebhookNetwork = z.infer<typeof networkEnum>;
+export type GorgonePostKind = z.infer<typeof postKindEnum>;

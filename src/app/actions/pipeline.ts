@@ -268,6 +268,7 @@ export async function retryAwaitingPost(
 
   const pipelinePost: PipelinePost = {
     id: post.source_id,
+    posted_at: post.processed_at ?? post.created_at,
     zone_id: campaign.gorgone_zone_id,
     account_id: campaign.account_id,
     platform,

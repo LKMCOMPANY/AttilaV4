@@ -3,16 +3,16 @@
 import { useTransition } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { setZonePushEnabled } from "@/app/actions/gorgone";
+import { setZoneSubscription } from "@/app/actions/gorgone";
 import { XIcon, TikTokIcon } from "@/components/icons/social-icons";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import type { GorgoneZoneRow } from "@/types";
+import type { GorgoneZoneRow, GorgoneNetwork } from "@/types";
 
-const PLATFORM_ICON = {
+const PLATFORM_ICON: Partial<Record<GorgoneNetwork, typeof XIcon>> = {
   twitter: XIcon,
   tiktok: TikTokIcon,
-} as const;
+};
 
 function formatTimeAgo(dateStr: string | null): string {
   if (!dateStr) return "—";
@@ -33,21 +33,34 @@ function formatCount(n: number): string {
 
 interface ZoneRowProps {
   row: GorgoneZoneRow;
+  /**
+   * Other (network) rows for the same zone — needed because the toggle
+   * writes the whole `networks[]` array on the Gorgone subscription;
+   * we have to know what's currently active to avoid wiping siblings.
+   */
+  zoneRows: GorgoneZoneRow[];
   onUpdated: () => void;
 }
 
-function ZoneRow({ row, onUpdated }: ZoneRowProps) {
+function ZoneRow({ row, zoneRows, onUpdated }: ZoneRowProps) {
   const [isToggling, startToggle] = useTransition();
-  const Icon = PLATFORM_ICON[row.platform];
-  const total = row.state?.total_received ?? 0;
-  const lastEventAt = row.state?.last_event_at ?? null;
-  const lastSource = row.state?.last_event_source;
+  const Icon = PLATFORM_ICON[row.network];
+  const total = row.total_received;
 
   function handleToggle(checked: boolean) {
+    // Recompute the full networks array we want on Gorgone side.
+    const currentlyActive = new Set(
+      zoneRows.filter((r) => r.is_subscribed).map((r) => r.network),
+    );
+    if (checked) currentlyActive.add(row.network);
+    else currentlyActive.delete(row.network);
+    const networks = [...currentlyActive];
+
     startToggle(async () => {
-      const result = await setZonePushEnabled({
+      const result = await setZoneSubscription({
         zoneId: row.zone_id,
-        enabled: checked,
+        isActive: networks.length > 0,
+        networks,
       });
       if (result.error) {
         toast.error(result.error);
@@ -62,43 +75,53 @@ function ZoneRow({ row, onUpdated }: ZoneRowProps) {
     <div
       className={cn(
         "flex items-center gap-2 py-1 transition-opacity",
-        !row.push_to_attila && "opacity-60"
+        !row.is_subscribed && "opacity-60",
       )}
     >
-      <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+      {Icon ? (
+        <Icon className="h-3 w-3 shrink-0 text-muted-foreground" />
+      ) : (
+        <span className="h-3 w-3 shrink-0" />
+      )}
 
       <Badge
-        variant={row.push_to_attila ? "default" : "outline"}
+        variant={row.is_subscribed ? "default" : "outline"}
         className="h-4 shrink-0 px-1.5 text-[9px] uppercase tracking-wide"
       >
-        {row.push_to_attila ? "Live" : "Off"}
+        {row.is_subscribed ? "Live" : "Off"}
       </Badge>
+
+      {!row.has_active_rule && (
+        <Badge
+          variant="outline"
+          className="h-4 shrink-0 border-warning/40 px-1.5 text-[9px] uppercase tracking-wide text-warning"
+          title="No active monitoring rule on Gorgone for this network"
+          aria-label={`No active rule on Gorgone for ${row.network}`}
+        >
+          No rule
+        </Badge>
+      )}
 
       <span
         className={cn(
           "text-xs tabular-nums",
-          total > 0 ? "text-foreground" : "text-muted-foreground/40"
+          total > 0 ? "text-foreground" : "text-muted-foreground/40",
         )}
       >
         {formatCount(total)}
       </span>
 
       <span className="text-xs text-muted-foreground/70">
-        {formatTimeAgo(lastEventAt)}
+        {formatTimeAgo(row.last_event_at)}
       </span>
-
-      {lastSource && (
-        <span className="rounded bg-muted px-1 text-[9px] uppercase tracking-wide text-muted-foreground/70">
-          {lastSource}
-        </span>
-      )}
 
       <div className="ml-auto">
         <Switch
           size="sm"
-          checked={row.push_to_attila}
+          checked={row.is_subscribed}
           onCheckedChange={handleToggle}
           disabled={isToggling}
+          aria-label={`${row.is_subscribed ? "Disable" : "Enable"} ${row.network} push for ${row.zone_name}`}
         />
       </div>
     </div>
@@ -112,7 +135,7 @@ interface GorgoneZoneGroupProps {
 }
 
 export function GorgoneZoneGroup({ zoneName, rows, onUpdated }: GorgoneZoneGroupProps) {
-  const liveCount = rows.filter((r) => r.push_to_attila).length;
+  const liveCount = rows.filter((r) => r.is_subscribed).length;
 
   return (
     <div className="rounded-md border px-3 py-2">
@@ -127,8 +150,9 @@ export function GorgoneZoneGroup({ zoneName, rows, onUpdated }: GorgoneZoneGroup
       <div className="mt-1 divide-y">
         {rows.map((row) => (
           <ZoneRow
-            key={`${row.zone_id}:${row.platform}`}
+            key={`${row.zone_id}:${row.network}`}
             row={row}
+            zoneRows={rows}
             onUpdated={onUpdated}
           />
         ))}

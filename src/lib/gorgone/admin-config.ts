@@ -1,42 +1,55 @@
 import { createGorgoneClient } from "./client";
+import type { GorgoneNetwork } from "@/types";
 
 /**
- * Admin operations against Gorgone's `integration_config` and
- * `zones.push_to_attila` columns.
+ * Admin operations against Gorgone V4's integration tables:
+ *   - `attila_integration_config`  (kv: webhook_url, webhook_secret)
+ *   - `attila_zone_subscriptions`  (per-zone activation + networks[])
  *
  * Source of truth for the webhook secret is Attila's environment
- * (`GORGONE_WEBHOOK_SECRET`); we mirror it into Gorgone via these
- * functions so the trigger can sign outgoing requests.
+ * (`GORGONE_WEBHOOK_SECRET`). We mirror it into Gorgone via these
+ * functions so the AFTER INSERT trigger on `posts` can sign the
+ * outgoing pg_net request.
  *
- * To rotate the secret: change `GORGONE_WEBHOOK_SECRET` in Attila's
- * environment, then call `syncWebhookConfigToGorgone()`. Both sides
- * are updated atomically.
+ * Subscriptions replace V3's `zones.push_to_attila` boolean. The new
+ * shape is richer: per-zone `is_active` + `networks[]`, so a single
+ * zone can stream Twitter only OR Twitter + TikTok with one row.
+ *
+ * Both tables have RLS enabled with NO policies = service-role only.
+ * That's intentional — the consumer (Attila) holds the service-role
+ * key for Gorgone and never exposes these to authenticated users.
  */
 
-const KEY_URL = "attila_webhook_url";
-const KEY_SECRET = "attila_webhook_secret";
-
-interface IntegrationConfigRow {
-  key: string;
-  value: string;
-}
+const KEY_URL = "webhook_url";
+const KEY_SECRET = "webhook_secret";
 
 export interface AttilaWebhookConfig {
   url: string | null;
   secret: string | null;
 }
 
+export interface ZoneSubscription {
+  zone_id: string;
+  account_id: string;
+  is_active: boolean;
+  networks: GorgoneNetwork[];
+}
+
+// ---------------------------------------------------------------------------
+// Webhook config
+// ---------------------------------------------------------------------------
+
 export async function getAttilaWebhookConfig(): Promise<AttilaWebhookConfig> {
   const gorgone = createGorgoneClient();
   const { data, error } = await gorgone
-    .from("integration_config")
+    .from("attila_integration_config")
     .select("key, value")
     .in("key", [KEY_URL, KEY_SECRET]);
 
-  if (error) throw new Error(`gorgone integration_config: ${error.message}`);
+  if (error) throw new Error(`gorgone integration_config read: ${error.message}`);
 
   const map = new Map<string, string>();
-  for (const row of (data ?? []) as IntegrationConfigRow[]) {
+  for (const row of (data ?? []) as { key: string; value: string }[]) {
     map.set(row.key, row.value);
   }
   return {
@@ -46,8 +59,8 @@ export async function getAttilaWebhookConfig(): Promise<AttilaWebhookConfig> {
 }
 
 /**
- * Pushes Attila's webhook URL + secret to Gorgone's `integration_config`.
- * Uses upsert so it's safe to call repeatedly.
+ * Pushes Attila's webhook URL + secret to Gorgone's `attila_integration_config`.
+ * Idempotent (PK upsert).
  */
 export async function syncWebhookConfigToGorgone(input: {
   url: string;
@@ -62,7 +75,7 @@ export async function syncWebhookConfigToGorgone(input: {
 
   const gorgone = createGorgoneClient();
   const { error } = await gorgone
-    .from("integration_config")
+    .from("attila_integration_config")
     .upsert(
       [
         { key: KEY_URL, value: input.url },
@@ -74,44 +87,65 @@ export async function syncWebhookConfigToGorgone(input: {
   if (error) throw new Error(`gorgone integration_config upsert: ${error.message}`);
 }
 
-/**
- * Toggles Gorgone's `zones.push_to_attila` flag — the master on/off
- * switch for ingestion of a given zone. When `true`, every INSERT on
- * `twitter_tweets` / `tiktok_videos` for this zone fires the webhook.
- */
-export async function setZonePushToAttila(
-  zoneId: string,
-  enabled: boolean,
-): Promise<void> {
-  const gorgone = createGorgoneClient();
-  const { error } = await gorgone
-    .from("zones")
-    .update({ push_to_attila: enabled })
-    .eq("id", zoneId);
+// ---------------------------------------------------------------------------
+// Zone subscriptions
+// ---------------------------------------------------------------------------
+// NOTE: read access goes through the `attila_zone_directory` view (see
+// `directory.ts::fetchGorgoneZoneDirectory`) which joins zones with
+// subscriptions and active rule networks in a single round-trip. Direct
+// reads of `attila_zone_subscriptions` from outside that view aren't
+// needed today and a duplicate fetcher would be code we don't run.
 
-  if (error) throw new Error(`gorgone zones.push_to_attila: ${error.message}`);
+/**
+ * Upserts the subscription for a zone. Pass an empty `networks` array OR
+ * `is_active: false` to disable forwarding.
+ *
+ * Note: Gorgone's `accounts` table is the source of truth for `account_id`
+ * — we re-resolve it from the zone instead of trusting the caller (defence
+ * in depth on top of RLS).
+ */
+export async function upsertZoneSubscription(input: {
+  zoneId: string;
+  isActive: boolean;
+  networks: GorgoneNetwork[];
+}): Promise<void> {
+  const gorgone = createGorgoneClient();
+
+  const { data: zone, error: zoneErr } = await gorgone
+    .from("zones")
+    .select("id, account_id")
+    .eq("id", input.zoneId)
+    .single();
+
+  if (zoneErr || !zone) {
+    throw new Error(`zone ${input.zoneId} not found in Gorgone`);
+  }
+
+  const { error } = await gorgone
+    .from("attila_zone_subscriptions")
+    .upsert(
+      {
+        zone_id: input.zoneId,
+        account_id: zone.account_id,
+        is_active: input.isActive,
+        networks: input.networks,
+      },
+      { onConflict: "zone_id" },
+    );
+
+  if (error) throw new Error(`gorgone subscription upsert: ${error.message}`);
 }
 
 /**
- * Reads the current `push_to_attila` state for a set of zones.
- * Returned as a Map for cheap lookup in the admin UI.
+ * Removes the subscription for a zone. Equivalent to disabling all networks,
+ * but cleaner — used when an admin unlinks an entire account.
  */
-export async function getZonePushStates(
-  zoneIds: string[],
-): Promise<Map<string, boolean>> {
-  if (zoneIds.length === 0) return new Map();
-
+export async function deleteZoneSubscription(zoneId: string): Promise<void> {
   const gorgone = createGorgoneClient();
-  const { data, error } = await gorgone
-    .from("zones")
-    .select("id, push_to_attila")
-    .in("id", zoneIds);
+  const { error } = await gorgone
+    .from("attila_zone_subscriptions")
+    .delete()
+    .eq("zone_id", zoneId);
 
-  if (error) throw new Error(`gorgone zones read: ${error.message}`);
-
-  const map = new Map<string, boolean>();
-  for (const row of (data ?? []) as { id: string; push_to_attila: boolean | null }[]) {
-    map.set(row.id, Boolean(row.push_to_attila));
-  }
-  return map;
+  if (error) throw new Error(`gorgone subscription delete: ${error.message}`);
 }
