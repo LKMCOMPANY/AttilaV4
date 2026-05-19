@@ -90,19 +90,73 @@ export async function syncWebhookConfigToGorgone(input: {
 // ---------------------------------------------------------------------------
 // Zone subscriptions
 // ---------------------------------------------------------------------------
-// NOTE: read access goes through the `attila_zone_directory` view (see
-// `directory.ts::fetchGorgoneZoneDirectory`) which joins zones with
+// Lifecycle (DWIM — Do What I Mean):
+//   1. linkGorgoneAccount       → ensureZoneSubscriptions for every existing
+//                                  zone of the linked Gorgone account
+//                                  (defaults: active + supported networks).
+//   2. getGorgoneLinks (refresh) → ensureZoneSubscriptions for any zone the
+//                                  admin sees that doesn't yet have a row
+//                                  (covers zones created in Gorgone after
+//                                  the link was set up).
+//   3. setZoneSubscription      → admin opt-out: UPDATEs the existing row
+//                                  to is_active=false / networks=[]. We do
+//                                  NOT delete the row, so step 2 won't
+//                                  resurrect a sub the admin disabled
+//                                  intentionally.
+//   4. unlinkGorgoneAccount     → deleteZoneSubscriptionsForAccount wipes
+//                                  every sub of the account (no orphans).
+//
+// NOTE on read access: it goes through the `attila_zone_directory` view
+// (see `directory.ts::fetchGorgoneZoneDirectory`) which joins zones with
 // subscriptions and active rule networks in a single round-trip. Direct
 // reads of `attila_zone_subscriptions` from outside that view aren't
-// needed today and a duplicate fetcher would be code we don't run.
+// needed today.
 
 /**
- * Upserts the subscription for a zone. Pass an empty `networks` array OR
- * `is_active: false` to disable forwarding.
+ * Idempotent insert of subscriptions for a set of zones.
+ * Existing rows are preserved (ON CONFLICT DO NOTHING) — that's how an
+ * admin who turned a zone OFF keeps it off across page refreshes.
  *
- * Note: Gorgone's `accounts` table is the source of truth for `account_id`
- * — we re-resolve it from the zone instead of trusting the caller (defence
- * in depth on top of RLS).
+ * Returns the number of NEW rows inserted (zones that had no sub yet).
+ */
+export async function ensureZoneSubscriptions(input: {
+  gorgoneAccountId: string;
+  zoneIds: string[];
+  defaultNetworks: GorgoneNetwork[];
+}): Promise<number> {
+  if (input.zoneIds.length === 0) return 0;
+
+  const gorgone = createGorgoneClient();
+
+  const rows = input.zoneIds.map((zoneId) => ({
+    zone_id: zoneId,
+    account_id: input.gorgoneAccountId,
+    is_active: true,
+    networks: input.defaultNetworks,
+  }));
+
+  const { data, error } = await gorgone
+    .from("attila_zone_subscriptions")
+    .upsert(rows, { onConflict: "zone_id", ignoreDuplicates: true })
+    .select("zone_id");
+
+  if (error) {
+    throw new Error(`gorgone subscriptions ensure: ${error.message}`);
+  }
+  return data?.length ?? 0;
+}
+
+/**
+ * UPDATE the subscription row for a zone.
+ *
+ * - When `isActive=true && networks.length > 0` → forwards posts on those
+ *   networks.
+ * - When `isActive=false || networks=[]`        → row stays in place but
+ *   the trigger early-returns. Crucial: we keep the row so the next
+ *   `ensureZoneSubscriptions` pass doesn't resurrect it.
+ *
+ * This is the explicit admin override path (the "kill switch" toggle in
+ * the UI). For the bulk auto-fill path, use `ensureZoneSubscriptions`.
  */
 export async function upsertZoneSubscription(input: {
   zoneId: string;
@@ -137,15 +191,22 @@ export async function upsertZoneSubscription(input: {
 }
 
 /**
- * Removes the subscription for a zone. Equivalent to disabling all networks,
- * but cleaner — used when an admin unlinks an entire account.
+ * Drops every subscription tied to a Gorgone account. Used when the
+ * admin unlinks the account from Attila — leaves no orphan rows that
+ * would keep the trigger firing for posts no one consumes anymore.
  */
-export async function deleteZoneSubscription(zoneId: string): Promise<void> {
+export async function deleteZoneSubscriptionsForAccount(
+  gorgoneAccountId: string,
+): Promise<number> {
   const gorgone = createGorgoneClient();
-  const { error } = await gorgone
+  const { data, error } = await gorgone
     .from("attila_zone_subscriptions")
     .delete()
-    .eq("zone_id", zoneId);
+    .eq("account_id", gorgoneAccountId)
+    .select("zone_id");
 
-  if (error) throw new Error(`gorgone subscription delete: ${error.message}`);
+  if (error) {
+    throw new Error(`gorgone subscriptions delete: ${error.message}`);
+  }
+  return data?.length ?? 0;
 }

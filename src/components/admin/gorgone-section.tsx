@@ -188,6 +188,10 @@ export function GorgoneSection({ accountId }: GorgoneSectionProps) {
                 </p>
               ) : (
                 <div className="space-y-1.5">
+                  <p className="px-1 text-[11px] text-muted-foreground/70">
+                    Zones are auto-enabled on link. Toggle off to exclude a
+                    specific (zone × network) from this account.
+                  </p>
                   {groupZonesByName(link.zones).map(([zoneName, rows]) => (
                     <GorgoneZoneGroup
                       key={zoneName}

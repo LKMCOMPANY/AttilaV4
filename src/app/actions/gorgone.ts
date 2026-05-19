@@ -9,7 +9,8 @@ import {
   fetchGorgoneAccounts,
   fetchGorgoneZoneDirectory,
   upsertZoneSubscription,
-  deleteZoneSubscription,
+  ensureZoneSubscriptions,
+  deleteZoneSubscriptionsForAccount,
   syncWebhookConfigToGorgone,
   getAttilaWebhookConfig,
   runSweepCycle,
@@ -19,11 +20,17 @@ import {
 } from "@/lib/gorgone";
 import {
   GORGONE_NETWORKS,
+  SUPPORTED_GORGONE_NETWORKS,
   type GorgoneNetwork,
   type GorgoneLink,
   type GorgoneLinkWithZones,
   type GorgoneZoneRow,
 } from "@/types";
+
+// Default networks the auto-subscribe layer activates on every newly-
+// linked or newly-discovered zone. Restricted to networks Attila has an
+// avatar-automation module for.
+const DEFAULT_AUTO_NETWORKS: GorgoneNetwork[] = [...SUPPORTED_GORGONE_NETWORKS];
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -73,9 +80,28 @@ export async function getGorgoneLinks(
     const gorgoneAccountId = link.gorgone_account_id ?? link.gorgone_client_id ?? null;
 
     let zoneRows: GorgoneZoneRow[] = [];
-    if (gorgoneAccountId) {
+    if (gorgoneAccountId && link.is_active) {
       try {
-        const directory = await fetchGorgoneZoneDirectory(gorgoneAccountId);
+        let directory = await fetchGorgoneZoneDirectory(gorgoneAccountId);
+
+        // DWIM auto-fill: any active zone that doesn't yet have a sub row
+        // gets one with default supported networks. Existing rows
+        // (including admin-disabled ones) are left untouched.
+        const orphanZoneIds = directory
+          .filter((d) => d.zone_is_active && d.subscription_is_active === null)
+          .map((d) => d.zone_id);
+        if (orphanZoneIds.length > 0) {
+          await ensureZoneSubscriptions({
+            gorgoneAccountId,
+            zoneIds: orphanZoneIds,
+            defaultNetworks: DEFAULT_AUTO_NETWORKS,
+          }).catch((err) =>
+            console.warn("[gorgone] auto-subscribe orphan zones failed:", err),
+          );
+          // Reload so the freshly-created subs surface in the UI right away.
+          directory = await fetchGorgoneZoneDirectory(gorgoneAccountId);
+        }
+
         const stats = await readLedgerStats(
           adminSupabase,
           directory.map((d) => d.zone_id),
@@ -162,6 +188,27 @@ export async function linkGorgoneAccount(
     return { data: null, error: linkError.message };
   }
 
+  // DWIM: auto-subscribe every existing active zone of the linked account
+  // with the default supported networks. The admin can then opt-out
+  // individual (zone, network) pairs from the UI as a kill switch.
+  // Soft-fail: a failure here never aborts the link itself — the next
+  // `getGorgoneLinks` page load will retry the auto-fill.
+  try {
+    const directory = await fetchGorgoneZoneDirectory(parsed.data.gorgoneAccountId);
+    const activeZoneIds = directory
+      .filter((d) => d.zone_is_active)
+      .map((d) => d.zone_id);
+    if (activeZoneIds.length > 0) {
+      await ensureZoneSubscriptions({
+        gorgoneAccountId: parsed.data.gorgoneAccountId,
+        zoneIds: activeZoneIds,
+        defaultNetworks: DEFAULT_AUTO_NETWORKS,
+      });
+    }
+  } catch (err) {
+    console.warn("[gorgone] auto-subscribe at link failed:", err);
+  }
+
   revalidatePath("/admin/accounts");
   return { data: link as GorgoneLink, error: null };
 }
@@ -174,11 +221,31 @@ export async function unlinkGorgoneAccount(
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const supabase = await createClient();
+
+  // Look up which Gorgone account this link points at BEFORE deleting it,
+  // so we can clean up the matching subscriptions on the Gorgone side.
+  const { data: link, error: readErr } = await supabase
+    .from("gorgone_links")
+    .select("gorgone_account_id, gorgone_client_id")
+    .eq("id", parsed.data.linkId)
+    .maybeSingle();
+
+  if (readErr) return { error: readErr.message };
+
   const { error } = await supabase
     .from("gorgone_links")
     .delete()
     .eq("id", parsed.data.linkId);
   if (error) return { error: error.message };
+
+  // Soft-fail cleanup: a failure here never aborts the unlink. Orphan
+  // subscriptions can be cleaned up manually later if needed.
+  const gorgoneAccountId = link?.gorgone_account_id ?? link?.gorgone_client_id;
+  if (gorgoneAccountId) {
+    await deleteZoneSubscriptionsForAccount(gorgoneAccountId).catch((err) =>
+      console.warn("[gorgone] subscription cleanup at unlink failed:", err),
+    );
+  }
 
   revalidatePath("/admin/accounts");
   return { error: null };
@@ -195,16 +262,15 @@ export async function setZoneSubscription(
   const parsed = subscriptionSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
+  // Always upsert (never delete). The row is the persisted record of the
+  // admin's intent — if we deleted on toggle-off, the next page refresh
+  // would auto-recreate the sub via `ensureZoneSubscriptions`.
   try {
-    if (!parsed.data.isActive || parsed.data.networks.length === 0) {
-      await deleteZoneSubscription(parsed.data.zoneId);
-    } else {
-      await upsertZoneSubscription({
-        zoneId: parsed.data.zoneId,
-        isActive: parsed.data.isActive,
-        networks: parsed.data.networks,
-      });
-    }
+    await upsertZoneSubscription({
+      zoneId: parsed.data.zoneId,
+      isActive: parsed.data.isActive,
+      networks: parsed.data.networks,
+    });
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Failed to update subscription" };
   }

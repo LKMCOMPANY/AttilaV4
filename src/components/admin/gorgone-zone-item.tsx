@@ -115,7 +115,14 @@ function ZoneRow({ row, zoneRows, onUpdated }: ZoneRowProps) {
         {formatTimeAgo(row.last_event_at)}
       </span>
 
-      <div className="ml-auto">
+      <div
+        className="ml-auto"
+        title={
+          row.is_subscribed
+            ? `Disable ${row.network} push for this zone (kill switch)`
+            : `Re-enable ${row.network} push for this zone`
+        }
+      >
         <Switch
           size="sm"
           checked={row.is_subscribed}

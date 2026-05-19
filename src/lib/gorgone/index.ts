@@ -43,7 +43,8 @@ export {
   getAttilaWebhookConfig,
   syncWebhookConfigToGorgone,
   upsertZoneSubscription,
-  deleteZoneSubscription,
+  ensureZoneSubscriptions,
+  deleteZoneSubscriptionsForAccount,
   type AttilaWebhookConfig,
   type ZoneSubscription,
 } from "./admin-config";
