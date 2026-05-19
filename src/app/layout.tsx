@@ -23,8 +23,10 @@ export const metadata: Metadata = {
   },
   description: "Social network management for brands",
   icons: {
-    icon: "/logo.svg",
-    apple: "/logo.svg",
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/favicon.svg",
   },
   openGraph: {
     title: "ATTILA",
