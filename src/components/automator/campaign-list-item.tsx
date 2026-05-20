@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { Crosshair } from "lucide-react";
+import { Crosshair, Sparkles } from "lucide-react";
 import { XIcon, TikTokIcon } from "@/components/icons/social-icons";
 import { CAMPAIGN_STATUS_CONFIG } from "@/components/campaigns/types";
 import type { Campaign } from "@/types";
@@ -51,6 +51,12 @@ export function CampaignListItem({
               CAMPAIGN_STATUS_CONFIG[campaign.status].dot
             )}
           />
+          {campaign.guidelines_auto_update && (
+            <Sparkles
+              className="h-2.5 w-2.5 shrink-0 text-primary/70"
+              aria-label="Guidelines auto-update enabled"
+            />
+          )}
         </div>
         <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted-foreground">
           <span className="capitalize">{campaign.mode}</span>

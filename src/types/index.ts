@@ -374,6 +374,20 @@ export interface Campaign {
   total_posts_filtered: number;
   total_responses_sent: number;
   total_responses_failed: number;
+  /**
+   * Timestamp of the last AI-driven write to (operational_context,
+   * strategy, key_messages). Null when the guidelines have never
+   * been AI-generated. Used by the UI for a stale indicator and by
+   * the auto-update cron to skip campaigns whose guidelines have
+   * been manually edited since the last AI write.
+   */
+  guidelines_generated_at: string | null;
+  /**
+   * Opt-in flag for the daily auto-regeneration cron. Default false
+   * — the AI only writes on explicit operator click unless this is
+   * flipped.
+   */
+  guidelines_auto_update: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;

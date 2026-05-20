@@ -1,5 +1,6 @@
 import { generateText } from "ai";
 import { getAleriaModel } from "@/lib/ai/client";
+import { parseAleriaJSON } from "@/lib/ai/aleria-json";
 import type { AnalystDecision } from "@/types";
 import type { PipelinePost } from "./types";
 import { pipelineLog, pipelineError, withTimeout } from "./types";
@@ -62,11 +63,3 @@ export async function analyzePost(
   }
 }
 
-function parseAleriaJSON<T>(content: string): T {
-  const cleaned = content
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-  return JSON.parse(cleaned);
-}
