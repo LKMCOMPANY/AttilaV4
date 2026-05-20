@@ -60,15 +60,26 @@ const LOG_PREFIX = "[guideline-gen]";
  */
 const GENERATION_TIMEOUT_MS = 300_000;
 /**
- * 8000 tokens. Bumped from 3000 on 2026-05-20 after production runs
- * truncated mid-JSON at ~1300 chars (visible in Render logs). The
- * three guideline blocks together can run 1500–2400 words ≈ 2000–
- * 3500 output tokens, ON TOP OF whatever reasoning budget Aleria
- * consumes internally for a synthesis task this complex. 8000 gives
- * a comfortable margin (≈ 2× the worst-case visible output) so a
- * reasoning-heavy run still finishes its JSON cleanly.
+ * 16 000 tokens. Successive bumps as we learnt more about Aleria's
+ * reasoning behaviour on this synthesis task:
+ *   - 3 000 (initial)  → JSON truncated mid-string (~1.3 KB out)
+ *   - 8 000            → "empty content — reasoning consumed all"
+ *                         (the chain-of-thought ate the whole budget)
+ *   - 16 000 (this)    → ≈ 4× the worst-case visible output
+ *                         (3 fields × 4 000 chars ≈ 3 000 tokens),
+ *                         leaving 13 000 for the reasoning chain.
+ *
+ * Aleria is hosted on our own workers — there's no $-per-token
+ * pressure. The only reason not to set this even higher is that an
+ * unbounded budget would make a hung reasoning loop visible only as
+ * a timeout instead of an OOM. 16 K is comfortable today; bump
+ * again if production logs show another empty-content run.
+ *
+ * `analyst.ts` keeps 2 000 because its output is one tiny JSON
+ * (`{relevant, reason, count}`) — the orders of magnitude are
+ * intentionally different.
  */
-const MAX_OUTPUT_TOKENS = 8_000;
+const MAX_OUTPUT_TOKENS = 16_000;
 
 export interface GenerateCampaignGuidelinesInput {
   campaign: Pick<Campaign, "id" | "name" | "platforms" | "gorgone_zone_id">;
