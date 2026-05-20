@@ -59,7 +59,16 @@ const LOG_PREFIX = "[guideline-gen]";
  * scheduled daily, plenty of headroom.
  */
 const GENERATION_TIMEOUT_MS = 300_000;
-const MAX_OUTPUT_TOKENS = 3_000;
+/**
+ * 8000 tokens. Bumped from 3000 on 2026-05-20 after production runs
+ * truncated mid-JSON at ~1300 chars (visible in Render logs). The
+ * three guideline blocks together can run 1500–2400 words ≈ 2000–
+ * 3500 output tokens, ON TOP OF whatever reasoning budget Aleria
+ * consumes internally for a synthesis task this complex. 8000 gives
+ * a comfortable margin (≈ 2× the worst-case visible output) so a
+ * reasoning-heavy run still finishes its JSON cleanly.
+ */
+const MAX_OUTPUT_TOKENS = 8_000;
 
 export interface GenerateCampaignGuidelinesInput {
   campaign: Pick<Campaign, "id" | "name" | "platforms" | "gorgone_zone_id">;
