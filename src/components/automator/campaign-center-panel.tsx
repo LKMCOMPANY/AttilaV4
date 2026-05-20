@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Crosshair, BookOpen, Target, MessageSquare } from "lucide-react";
@@ -33,9 +33,13 @@ export function CampaignCenterPanel({
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Top half — 3D campaign cartography */}
+      {/* Top half — 3D campaign cartography. `key={campaign.id}` resets
+          the map's selected-node + camera state when the operator
+          switches between campaigns (React 19 idiomatic — avoids the
+          set-state-in-effect anti-pattern). */}
       <div className="flex-1 border-b">
         <CampaignNetworkMap
+          key={campaign.id}
           campaignId={campaign.id}
           pipelineVersion={pipelineVersion}
         />
@@ -158,8 +162,15 @@ function GuidelineEditor({
   placeholder: string;
   onCommit: (value: string) => void;
 }) {
+  // React 19 idiom for syncing a local edit buffer with an upstream prop:
+  // compare in render against a `prevValue` shadow and reset together.
+  // Avoids the `set-state-in-effect` cascade flagged by the lint.
   const [local, setLocal] = useState(value);
-  useEffect(() => setLocal(value), [value]);
+  const [prevValue, setPrevValue] = useState(value);
+  if (prevValue !== value) {
+    setPrevValue(value);
+    setLocal(value);
+  }
 
   const commit = () => {
     if (local.trim() !== value.trim()) onCommit(local.trim());

@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useCallback, useTransition, useEffect, useRef } from "react";
+import { useId, useState, useCallback, useTransition, useEffect, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { formatCount, formatRate } from "@/lib/format";
 import {
   BarChart3,
   RefreshCw,
@@ -14,6 +15,7 @@ import {
   TrendingDown,
   AlertTriangle,
   CheckCircle2,
+  CircleSlash,
   Clock,
   Calendar,
   Loader2,
@@ -203,7 +205,11 @@ function PlatformBlock({
   const { Icon, label } = PLATFORM_LABELS[platform];
   const cap = r.capacity;
 
-  const status = getCapacityStatus(cap.avatars_missing, cap.available_avatars);
+  const status = getCapacityStatus(
+    cap.avatars_missing,
+    cap.available_avatars,
+    cap.responses_needed_per_hour,
+  );
   const passRatePct = (r.filtered.filter_pass_rate * 100).toFixed(1);
 
   const handleChange = (field: string, value: number) => {
@@ -235,46 +241,39 @@ function PlatformBlock({
           <span className="text-[11px] font-medium">{label}</span>
         </div>
         <div className="flex items-center gap-1">
-          {status === "ok" ? (
-            <CheckCircle2 className="h-3 w-3 text-success" />
-          ) : (
-            <AlertTriangle
-              className={cn(
-                "h-3 w-3",
-                status === "warning" ? "text-warning" : "text-destructive"
-              )}
-            />
-          )}
+          <StatusIcon status={status} />
           <Badge
-            variant={
-              status === "ok"
-                ? "secondary"
-                : status === "warning"
-                  ? "outline"
-                  : "destructive"
-            }
-            className="h-4 px-1.5 text-[9px]"
+            variant={STATUS_BADGE_VARIANT[status]}
+            className={cn(
+              "h-4 px-1.5 text-[9px]",
+              status === "idle" && "border-muted-foreground/30 text-muted-foreground",
+            )}
           >
             {status === "ok"
               ? "Sufficient"
-              : status === "warning"
-                ? "Tight"
-                : `${cap.avatars_missing} missing`}
+              : status === "idle"
+                ? "Idle — no traffic"
+                : status === "warning"
+                  ? "Tight"
+                  : `${cap.avatars_missing} missing`}
           </Badge>
         </div>
       </div>
 
-      {/* Volume metrics */}
+      {/* Volume metrics — `formatRate` keeps a fractional decimal under 1k
+          so the on-screen arithmetic stays self-consistent
+          (e.g. "3.5/h × 1.5 = 5.3/h" instead of misleading
+          "4 × 1.5 = 5"). */}
       <div className="grid grid-cols-3 gap-1.5">
-        <Metric label="Raw / h" value={formatNumber(r.volume.avg_per_hour)} />
+        <Metric label="Raw / h" value={formatRate(r.volume.avg_per_hour)} />
         <Metric
           label="Filtered / h"
-          value={formatNumber(r.filtered.filtered_per_hour)}
+          value={formatRate(r.filtered.filtered_per_hour)}
           sub={`${passRatePct}% pass`}
         />
         <Metric
           label="Resp. / h"
-          value={formatNumber(cap.responses_needed_per_hour)}
+          value={formatRate(cap.responses_needed_per_hour)}
           sub={`avg ${cap.avg_avatars_per_post}/post`}
         />
       </div>
@@ -332,24 +331,25 @@ function PlatformBlock({
 
       <div className="border-t border-border/50" />
 
-      {/* Avatar capacity results */}
+      {/* Avatar capacity results — `formatCount` keeps integer scaling
+          (no decimals) consistent with the rest of the count grid. */}
       <div className="grid grid-cols-3 gap-1.5">
         <Metric
           label="Available"
-          value={String(cap.available_avatars)}
-          sub={`/ ${cap.total_avatars} total`}
+          value={formatCount(cap.available_avatars)}
+          sub={`/ ${formatCount(cap.total_avatars)} total`}
         />
         <Metric
           label="Needed"
-          value={String(cap.avatars_needed)}
+          value={formatCount(cap.avatars_needed)}
           sub={cap.bottleneck === "hourly" ? "hourly limit" : "daily limit"}
         />
         <Metric
           label={cap.avatars_missing > 0 ? "Missing" : "Surplus"}
           value={
             cap.avatars_missing > 0
-              ? `-${cap.avatars_missing}`
-              : `+${cap.available_avatars - cap.avatars_needed}`
+              ? `−${formatCount(cap.avatars_missing)}`
+              : `+${formatCount(cap.available_avatars - cap.avatars_needed)}`
           }
           highlight={cap.avatars_missing > 0 ? "destructive" : "success"}
         />
@@ -405,13 +405,20 @@ function ParamField({
   onChange: (v: number) => void;
   readOnly?: boolean;
 }) {
+  // Stable per-instance id so the Label's htmlFor binds to the Input
+  // (screen-reader friendly, click-to-focus on touch devices).
+  const inputId = useId();
   return (
     <div className="space-y-0.5">
-      <Label className="flex items-center gap-1 text-[10px] text-muted-foreground">
+      <Label
+        htmlFor={inputId}
+        className="flex items-center gap-1 text-[10px] text-muted-foreground"
+      >
         {icon}
         {label}
       </Label>
       <Input
+        id={inputId}
         type="number"
         min={1}
         value={value}
@@ -486,17 +493,40 @@ function CapacitySkeleton() {
 // Utils
 // ---------------------------------------------------------------------------
 
-function formatNumber(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(Math.round(n));
-}
+type CapacityStatus = "ok" | "idle" | "warning" | "critical";
 
 function getCapacityStatus(
   missing: number,
-  available: number
-): "ok" | "warning" | "critical" {
+  available: number,
+  responsesNeededPerHour: number,
+): CapacityStatus {
   if (missing > 0) return "critical";
+  // No traffic — the green "Sufficient" badge would read as "everything's
+  // fine" but in fact nothing's happening. Surface this distinct state.
+  if (responsesNeededPerHour === 0) return "idle";
   if (available === 0) return "warning";
   return "ok";
+}
+
+const STATUS_BADGE_VARIANT: Record<
+  CapacityStatus,
+  "secondary" | "outline" | "destructive"
+> = {
+  ok: "secondary",
+  idle: "outline",
+  warning: "outline",
+  critical: "destructive",
+};
+
+function StatusIcon({ status }: { status: CapacityStatus }) {
+  if (status === "ok") return <CheckCircle2 className="h-3 w-3 text-success" />;
+  if (status === "idle") return <CircleSlash className="h-3 w-3 text-muted-foreground/70" />;
+  return (
+    <AlertTriangle
+      className={cn(
+        "h-3 w-3",
+        status === "warning" ? "text-warning" : "text-destructive",
+      )}
+    />
+  );
 }

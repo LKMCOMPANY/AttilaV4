@@ -389,6 +389,9 @@ export const CAMPAIGN_JOB_STATUSES = ["ready", "executing", "done", "failed", "c
 export type CampaignPostStatus = (typeof CAMPAIGN_POST_STATUSES)[number];
 export type CampaignJobStatus = (typeof CAMPAIGN_JOB_STATUSES)[number];
 
+/** Top-sentiment label produced by Gorgone V4's AI enrichment pipeline. */
+export type SentimentLabel = "positive" | "negative" | "neutral";
+
 export interface CampaignPost {
   id: string;
   campaign_id: string;
@@ -412,6 +415,19 @@ export interface CampaignPost {
   status: CampaignPostStatus;
   processed_at: string | null;
   created_at: string;
+
+  // ---------------------------------------------------------------------
+  // Gorgone V4 enrichments — surfaced as first-class columns so the UI can
+  // display them and future filters can use indexes instead of JSONB scans.
+  // Each is null when Gorgone hadn't computed the signal yet at fetch time
+  // (or when the post was processed before the V4 cutover).
+  // ---------------------------------------------------------------------
+  sentiment_label: SentimentLabel | null;
+  sentiment_score: number | null;
+  translation_text: string | null;
+  translation_lang: string | null;
+  /** When the post was originally published upstream (Gorgone's `posts.posted_at`). */
+  source_posted_at: string | null;
 }
 
 export interface CampaignJob {

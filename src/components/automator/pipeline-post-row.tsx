@@ -13,8 +13,11 @@ import {
   Reply,
 } from "lucide-react";
 import { PostStatusBadge } from "./pipeline-status";
+import { SentimentChip } from "./sentiment-chip";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { formatDistanceToNow } from "date-fns";
+import { formatCount } from "@/lib/format";
+import type { EngagementMetricKey } from "@/lib/pipeline/engagement-keys";
 import type {
   CampaignPost,
   CampaignJobWithAvatar,
@@ -67,11 +70,40 @@ export function PipelinePostRow({
             {post.platform}
           </span>
           <PostStatusBadge status={post.status} />
-          <span>
-            {formatDistanceToNow(new Date(post.created_at), {
-              addSuffix: true,
-            })}
-          </span>
+          <SentimentChip
+            label={post.sentiment_label}
+            score={post.sentiment_score}
+          />
+          {/* Two timestamps — `source_posted_at` is when the post was
+              actually published upstream, `created_at` is when Attila
+              processed it. Operators care about the first; the second is
+              shown muted as a secondary signal. */}
+          {post.source_posted_at ? (
+            <>
+              <span title="When the post was published upstream">
+                Posted{" "}
+                {formatDistanceToNow(new Date(post.source_posted_at), {
+                  addSuffix: true,
+                })}
+              </span>
+              <span
+                className="text-muted-foreground/60"
+                title="When Attila ingested the post"
+              >
+                · Detected{" "}
+                {formatDistanceToNow(new Date(post.created_at), {
+                  addSuffix: true,
+                })}
+              </span>
+            </>
+          ) : (
+            <span title="When Attila ingested the post">
+              Detected{" "}
+              {formatDistanceToNow(new Date(post.created_at), {
+                addSuffix: true,
+              })}
+            </span>
+          )}
         </div>
 
         {/* Metrics + response count */}
@@ -107,8 +139,11 @@ export function PipelinePostRow({
 // ---------------------------------------------------------------------------
 // Metric chips
 // ---------------------------------------------------------------------------
+// `EngagementMetricKey` (single source of truth) drives the icon map. Adding
+// a key in `lib/pipeline/engagement-keys.ts` therefore requires extending
+// this map — TypeScript catches the omission.
 
-const METRIC_ICON: Record<string, typeof Eye> = {
+const METRIC_ICON: Record<EngagementMetricKey, typeof Eye> = {
   view_count: Eye,
   like_count: Heart,
   reply_count: MessageCircle,
@@ -123,7 +158,7 @@ const METRIC_ICON: Record<string, typeof Eye> = {
 
 export function renderMetricChips(
   metrics: Record<string, number | undefined>,
-  limit?: number
+  limit?: number,
 ) {
   const entries = Object.entries(metrics)
     .filter(([, v]) => v != null && v > 0)
@@ -132,7 +167,7 @@ export function renderMetricChips(
   const visible = limit ? entries.slice(0, limit) : entries;
 
   return visible.map(([key, value]) => {
-    const Icon = METRIC_ICON[key] ?? Eye;
+    const Icon = METRIC_ICON[key as EngagementMetricKey] ?? Eye;
     return (
       <span
         key={key}
@@ -143,11 +178,5 @@ export function renderMetricChips(
       </span>
     );
   });
-}
-
-function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
 

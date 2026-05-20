@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { setZoneSubscription } from "@/app/actions/gorgone";
 import { XIcon, TikTokIcon } from "@/components/icons/social-icons";
 import { cn } from "@/lib/utils";
+import { formatCount } from "@/lib/format";
 import { toast } from "sonner";
 import type { GorgoneZoneRow, GorgoneNetwork } from "@/types";
 
@@ -23,12 +24,6 @@ function formatTimeAgo(dateStr: string | null): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function formatCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toString();
 }
 
 interface ZoneRowProps {

@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
+  Languages,
   User,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +16,7 @@ import { SocialIcon } from "@/components/icons/social-icons";
 import { DeviceScreenshot } from "./device-screenshot";
 import { JobStatusIcon, JobStatusLabel, PostStatusBadge } from "./pipeline-status";
 import { renderMetricChips } from "./pipeline-post-row";
+import { SentimentChip } from "./sentiment-chip";
 import { formatDistanceToNow } from "date-fns";
 import type {
   CampaignPost,
@@ -141,11 +143,32 @@ export function PostDetailView({
                 />
                 {post.platform}
               </span>
-              <span>
-                {formatDistanceToNow(new Date(post.created_at), {
-                  addSuffix: true,
-                })}
-              </span>
+              {post.source_posted_at ? (
+                <>
+                  <span title="When the post was published upstream">
+                    Posted{" "}
+                    {formatDistanceToNow(new Date(post.source_posted_at), {
+                      addSuffix: true,
+                    })}
+                  </span>
+                  <span
+                    className="text-muted-foreground/60"
+                    title="When Attila ingested the post"
+                  >
+                    · Detected{" "}
+                    {formatDistanceToNow(new Date(post.created_at), {
+                      addSuffix: true,
+                    })}
+                  </span>
+                </>
+              ) : (
+                <span title="When Attila ingested the post">
+                  Detected{" "}
+                  {formatDistanceToNow(new Date(post.created_at), {
+                    addSuffix: true,
+                  })}
+                </span>
+              )}
               {post.post_url && (
                 <a
                   href={post.post_url}
@@ -160,6 +183,20 @@ export function PostDetailView({
             </div>
           </div>
 
+          {/* Translation — surfaced when Gorgone V4 produced one for the
+              account locale. The original is already in the post body
+              above, so we only show the translated text here. */}
+          {post.translation_text && post.translation_lang && (
+            <Section label={`Translation (${post.translation_lang.toUpperCase()})`}>
+              <div className="flex items-start gap-1.5">
+                <Languages className="mt-0.5 h-2.5 w-2.5 shrink-0 text-muted-foreground/70" />
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  {post.translation_text}
+                </p>
+              </div>
+            </Section>
+          )}
+
           {/* Engagement */}
           {hasMetrics && (
             <Section label="Engagement">
@@ -169,24 +206,39 @@ export function PostDetailView({
             </Section>
           )}
 
-          {/* AI analysis */}
-          {decision && (
-            <Section label="AI Analysis">
-              <div className="flex items-center gap-2">
-                <Badge
-                  variant={decision.relevant ? "default" : "secondary"}
-                  className="text-[9px]"
-                >
-                  {decision.relevant ? "Relevant" : "Filtered"}
-                </Badge>
-                <span className="text-[10px] text-muted-foreground">
-                  {decision.suggested_avatar_count} avatar
-                  {decision.suggested_avatar_count !== 1 ? "s" : ""}
-                </span>
+          {/* AI signals — Gorgone-side sentiment + Attila-side analyst
+              decision. We display them together so the operator can
+              reconcile the two sources at a glance. Either may be null. */}
+          {(decision || post.sentiment_label) && (
+            <Section label="AI Signals">
+              <div className="flex flex-wrap items-center gap-2">
+                {post.sentiment_label && (
+                  <SentimentChip
+                    label={post.sentiment_label}
+                    score={post.sentiment_score}
+                    variant="detailed"
+                  />
+                )}
+                {decision && (
+                  <>
+                    <Badge
+                      variant={decision.relevant ? "default" : "secondary"}
+                      className="text-[9px]"
+                    >
+                      {decision.relevant ? "Relevant" : "Filtered"}
+                    </Badge>
+                    <span className="text-[10px] text-muted-foreground">
+                      {decision.suggested_avatar_count} avatar
+                      {decision.suggested_avatar_count !== 1 ? "s" : ""}
+                    </span>
+                  </>
+                )}
               </div>
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                {decision.reason}
-              </p>
+              {decision && (
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                  {decision.reason}
+                </p>
+              )}
             </Section>
           )}
 

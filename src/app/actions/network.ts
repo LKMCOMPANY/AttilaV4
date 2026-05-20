@@ -12,6 +12,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/auth/session";
+import { sumEngagementMetrics } from "@/lib/pipeline/engagement-keys";
 import type {
   NetworkData,
   NetworkNode,
@@ -237,24 +238,10 @@ function normalizeJobStatus(raw: string): NetworkJobStatus {
   return "pending";
 }
 
-function extractEngagement(metrics: Record<string, unknown> | null): number {
-  if (!metrics) return 0;
-  let total = 0;
-  for (const key of [
-    "like_count",
-    "view_count",
-    "reply_count",
-    "retweet_count",
-    "play_count",
-    "digg_count",
-    "share_count",
-    "comment_count",
-  ]) {
-    const v = metrics[key];
-    if (typeof v === "number") total += v;
-  }
-  return total;
-}
+// Engagement aggregation delegates to the shared helper in
+// `lib/pipeline/engagement-keys.ts` so adding a new metric stays a
+// single-file change. Aliased locally to keep call-site naming intent.
+const extractEngagement = sumEngagementMetrics;
 
 function scaleValue(metric: number, min: number, max: number): number {
   const log = Math.log10(Math.max(metric, 1) + 1);

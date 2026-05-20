@@ -3,6 +3,7 @@ import { broadcastCampaignEvent, broadcastAccountEvent } from "@/lib/supabase/re
 import { fetchFullGorgonePost } from "@/lib/gorgone";
 import {
   SUPPORTED_GORGONE_NETWORKS,
+  type AnalystDecision,
   type Campaign,
   type CampaignPlatform,
   type GorgoneNetwork,
@@ -119,21 +120,17 @@ export async function processNext(): Promise<PipelineResult | null> {
 
     if (selected.length === 0) {
       pipelineLog("selector", jobId, "No avatars available — saving as awaiting_avatars");
-      await supabase.from("campaign_posts").insert({
-        campaign_id: campaign.id,
-        account_id: campaign.account_id,
-        source_table: "gorgone_post_jobs",
-        source_id: jobId,
-        source_network: network,
-        platform,
-        post_url: post.post_url,
-        post_text: post.post_text,
-        post_author: post.post_author,
-        post_metrics: post.raw_metrics,
-        ai_decision: decision,
-        status: "awaiting_avatars",
-        processed_at: new Date().toISOString(),
-      });
+      await supabase
+        .from("campaign_posts")
+        .insert(buildCampaignPostRow({
+          campaign,
+          post,
+          jobId,
+          network,
+          platform,
+          decision,
+          status: "awaiting_avatars",
+        }));
       await markJob(supabase, jobId, "processed", campaign.id, null);
       broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_awaiting" });
       return result("no_avatars", jobId, campaign.id, 0, timing, totalStart);
@@ -155,21 +152,15 @@ export async function processNext(): Promise<PipelineResult | null> {
     const insertStart = Date.now();
     const { data: campaignPost } = await supabase
       .from("campaign_posts")
-      .insert({
-        campaign_id: campaign.id,
-        account_id: campaign.account_id,
-        source_table: "gorgone_post_jobs",
-        source_id: jobId,
-        source_network: network,
+      .insert(buildCampaignPostRow({
+        campaign,
+        post,
+        jobId,
+        network,
         platform,
-        post_url: post.post_url,
-        post_text: post.post_text,
-        post_author: post.post_author,
-        post_metrics: post.raw_metrics,
-        ai_decision: decision,
+        decision,
         status: "responded",
-        processed_at: new Date().toISOString(),
-      })
+      }))
       .select("id")
       .single();
 
@@ -259,6 +250,48 @@ async function claimNextJob(
     accountId: row.account_id,
     zoneId: row.zone_id,
     network: row.network,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// campaign_posts row builder — single source of truth for the columns we
+// write at every INSERT site (awaiting_avatars + responded paths). Keeping
+// the shape in one place means new columns flow through both code paths
+// without drift.
+// ---------------------------------------------------------------------------
+
+interface BuildCampaignPostRowInput {
+  campaign: Campaign;
+  post: PipelinePost;
+  jobId: string;
+  network: GorgoneNetwork;
+  platform: CampaignPlatform;
+  decision: AnalystDecision;
+  status: "awaiting_avatars" | "responded";
+}
+
+function buildCampaignPostRow(input: BuildCampaignPostRowInput) {
+  const { campaign, post, jobId, network, platform, decision, status } = input;
+  return {
+    campaign_id: campaign.id,
+    account_id: campaign.account_id,
+    source_table: "gorgone_post_jobs" as const,
+    source_id: jobId,
+    source_network: network,
+    platform,
+    post_url: post.post_url,
+    post_text: post.post_text,
+    post_author: post.post_author,
+    post_metrics: post.raw_metrics,
+    ai_decision: decision,
+    status,
+    processed_at: new Date().toISOString(),
+    // Gorgone V4 enrichments — null-safe; columns are nullable.
+    sentiment_label: post.sentiment_label ?? null,
+    sentiment_score: post.sentiment_score ?? null,
+    translation_text: post.translation_text ?? null,
+    translation_lang: post.translation_lang ?? null,
+    source_posted_at: post.posted_at,
   };
 }
 
