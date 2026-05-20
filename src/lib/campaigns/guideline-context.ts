@@ -27,6 +27,10 @@ import type { Campaign, GorgoneNetwork } from "@/types";
  */
 
 const PERIOD_HOURS = 24;
+// Generous sample sizes — Aleria runs on our own workers, so we
+// optimise for output quality (richer context → more grounded
+// guidelines) over latency. Timeouts are absorbed upstream
+// (`GENERATION_TIMEOUT_MS` in `guideline-generator.ts`).
 const POSTS_SAMPLE_LIMIT = 60;
 const ENTITIES_LIMIT = 25;
 

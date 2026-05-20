@@ -43,7 +43,22 @@ const LOG_PREFIX = "[guideline-gen]";
  * propagating up means we never lose stack traces in logs.
  */
 
-const GENERATION_TIMEOUT_MS = 60_000;
+/**
+ * 5-minute hard ceiling. Aleria runs on our own workers — there is
+ * no cost pressure to short-cut the call, and richer context (60
+ * posts + 25 entities + the DISARM doctrine) produces measurably
+ * better guidelines than a thinner prompt. The ceiling exists only
+ * so a wedged worker can never hold a request indefinitely.
+ *
+ * Compare with `analyst.ts` / `writer.ts` (60 s) — those handle a
+ * single post; this one is a heavy synthesis call.
+ *
+ * The cron caller (`auto-update-guidelines`) loops sequentially with
+ * `MAX_CAMPAIGNS_PER_RUN = 50`, so even a worst-case 5-min campaign
+ * cannot drag the batch beyond a 250 m soft budget — the cron is
+ * scheduled daily, plenty of headroom.
+ */
+const GENERATION_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_TOKENS = 3_000;
 
 export interface GenerateCampaignGuidelinesInput {

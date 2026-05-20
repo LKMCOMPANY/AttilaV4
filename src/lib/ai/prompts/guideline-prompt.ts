@@ -40,6 +40,9 @@ const LOCALE_NAMES: Record<GuidelineLocale, string> = {
  */
 const ZONE_DESCRIPTION_MAX_CHARS = 1000;
 const POST_TEXT_MAX_CHARS = 280;
+// Aligned with `POSTS_SAMPLE_LIMIT` / `ENTITIES_LIMIT` in
+// `guideline-context.ts`. We keep the prompt rich because Aleria
+// runs on our own infra — quality wins over token cost.
 const POSTS_IN_PROMPT_MAX = 60;
 const ENTITIES_IN_PROMPT_MAX = 25;
 

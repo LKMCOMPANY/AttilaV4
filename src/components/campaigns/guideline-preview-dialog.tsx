@@ -219,13 +219,17 @@ function FieldEditor({
 // Generation progress — engaging loading state
 // ---------------------------------------------------------------------------
 
+// Stage thresholds are calibrated against typical generation runs
+// (60 posts + 25 entities + DISARM doctrine, output 3 × 200-600
+// words). Aleria lands most calls between 30 s and 2 min — we keep
+// the labels honest by spacing them across that whole window.
 const PROGRESS_STAGES: readonly { label: string; minMs: number }[] = [
   { label: "Reading the zone’s recent activity", minMs: 0 },
-  { label: "Mapping sentiment patterns and top entities", minMs: 4_000 },
-  { label: "Drafting operational context", minMs: 9_000 },
-  { label: "Composing strategy", minMs: 16_000 },
-  { label: "Distilling key messages", minMs: 24_000 },
-  { label: "Finalising — almost there", minMs: 35_000 },
+  { label: "Mapping sentiment patterns and top entities", minMs: 8_000 },
+  { label: "Drafting operational context", minMs: 20_000 },
+  { label: "Composing strategy", minMs: 40_000 },
+  { label: "Distilling key messages", minMs: 65_000 },
+  { label: "Finalising — almost there", minMs: 95_000 },
 ];
 
 /**
@@ -272,7 +276,7 @@ function GenerationProgress() {
             {stage.label}…
           </p>
           <p className="text-[10px] text-muted-foreground">
-            {seconds}s elapsed · usually 20–40s
+            {seconds}s elapsed · this can take up to a few minutes
           </p>
         </div>
       </div>
