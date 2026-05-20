@@ -120,7 +120,11 @@ export async function processNext(): Promise<PipelineResult | null> {
 
     if (selected.length === 0) {
       pipelineLog("selector", jobId, "No avatars available — saving as awaiting_avatars");
-      await supabase
+      // Capture insert error explicitly — a CHECK / FK violation here
+      // used to fail silently (the awaiting_avatars status was not in
+      // the CHECK list before 2026-05-20), so the ledger reported
+      // "processed" while no campaign_post existed.
+      const { error: insertErr } = await supabase
         .from("campaign_posts")
         .insert(buildCampaignPostRow({
           campaign,
@@ -131,6 +135,9 @@ export async function processNext(): Promise<PipelineResult | null> {
           decision,
           status: "awaiting_avatars",
         }));
+      if (insertErr) {
+        throw new Error(`campaign_posts insert (awaiting_avatars) failed: ${insertErr.message}`);
+      }
       await markJob(supabase, jobId, "processed", campaign.id, null);
       broadcastCampaignEvent(campaign.id, "pipeline", { action: "post_awaiting" });
       return result("no_avatars", jobId, campaign.id, 0, timing, totalStart);
@@ -150,7 +157,7 @@ export async function processNext(): Promise<PipelineResult | null> {
 
     // INSERT
     const insertStart = Date.now();
-    const { data: campaignPost } = await supabase
+    const { data: campaignPost, error: cpInsertErr } = await supabase
       .from("campaign_posts")
       .insert(buildCampaignPostRow({
         campaign,
@@ -164,7 +171,10 @@ export async function processNext(): Promise<PipelineResult | null> {
       .select("id")
       .single();
 
-    if (!campaignPost) throw new Error("Failed to insert campaign_post");
+    if (cpInsertErr || !campaignPost) {
+      const detail = cpInsertErr?.message ?? "no row returned";
+      throw new Error(`campaign_posts insert (responded) failed: ${detail}`);
+    }
 
     const jobs = buildJobRows({
       comments: generatedComments,
