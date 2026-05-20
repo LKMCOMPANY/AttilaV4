@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useTransition } from "react";
+import { useCallback, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
   generateCampaignGuidelines,
@@ -18,6 +18,8 @@ import {
  *   - dialog open/close state
  *   - latest result + error (mutually exclusive)
  *   - reset-on-close so a previous result doesn't flash on a fresh open
+ *   - request-id guard so a second call started before the first
+ *     finishes never sees the first response leak into the UI
  *
  * Surface kept tiny on purpose — the component decides what to do
  * with the applied triple (form patch vs. server save), the hook only
@@ -47,13 +49,20 @@ export function useGuidelineGeneration(): UseGuidelineGenerationReturn {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [result, setResult] = useState<GenerateGuidelinesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Monotonic counter — last "intent" id. Any in-flight call whose id
+  // differs from this on resolution is stale and dropped silently.
+  const lastIntentRef = useRef(0);
 
   const start = useCallback((input: GenerateGuidelinesInput) => {
+    const intent = ++lastIntentRef.current;
     setIsDialogOpen(true);
     setResult(null);
     setError(null);
     startTransition(async () => {
       const response = await generateCampaignGuidelines(input);
+      // Drop late responses if a newer call has been issued OR the user
+      // has closed the dialog meanwhile (close resets `lastIntentRef`).
+      if (intent !== lastIntentRef.current) return;
       if (response.error) {
         setError(response.error);
         setResult(null);
@@ -67,8 +76,9 @@ export function useGuidelineGeneration(): UseGuidelineGenerationReturn {
   const setDialogOpen = useCallback((open: boolean) => {
     setIsDialogOpen(open);
     if (!open) {
-      // Wipe state on close so a stale result doesn't flash on the
-      // next open before a fresh call lands.
+      // Bump the intent so any in-flight response is treated as stale
+      // and never mutates state of a closed dialog.
+      lastIntentRef.current += 1;
       setResult(null);
       setError(null);
     }

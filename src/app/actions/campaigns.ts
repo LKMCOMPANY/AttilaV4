@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireSession } from "@/lib/auth/session";
 import { fetchGorgoneZoneDirectory } from "@/lib/gorgone";
 import { generateCampaignGuidelines as generateCampaignGuidelinesCore } from "@/lib/campaigns/guideline-generator";
-import type { GuidelineGenerationResult } from "@/lib/campaigns/guideline-types";
+import type { GuidelineGenerationResult } from "@/lib/ai/guideline-types";
 import {
   SUPPORTED_GORGONE_NETWORKS,
   type Campaign,
@@ -448,9 +448,28 @@ export async function generateCampaignGuidelines(
     });
     return { data: result, error: null };
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return { data: null, error: message };
+    return { data: null, error: friendlyGenerationError(err) };
   }
+}
+
+/**
+ * Translates the various failure modes of the LLM call into one of
+ * three user-facing messages — the operator does not need (and should
+ * not see) Zod stack traces or token counts. Full error stays in the
+ * server console (`guideline-generator.ts` already logs it).
+ */
+function friendlyGenerationError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "Unknown error";
+  if (/timed out|timeout|abort/i.test(raw)) {
+    return "AI generation timed out. Try again in a moment.";
+  }
+  if (/schema mismatch|JSON parse failed/i.test(raw)) {
+    return "AI returned an unexpected format. Please try again.";
+  }
+  if (/empty content/i.test(raw)) {
+    return "AI returned no content. Please try again.";
+  }
+  return "AI generation failed. Please try again.";
 }
 
 async function resolveGenerationTarget(

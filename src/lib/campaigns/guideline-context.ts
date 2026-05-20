@@ -6,7 +6,7 @@ import {
   type ContextSentimentBalance,
   type GuidelineContext,
   type GuidelineLocale,
-} from "./guideline-types";
+} from "@/lib/ai/guideline-types";
 import type { Campaign, GorgoneNetwork } from "@/types";
 
 /**

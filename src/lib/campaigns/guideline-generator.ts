@@ -14,7 +14,7 @@ import { buildGuidelineContext } from "./guideline-context";
 import {
   guidelineSuggestionSchema,
   type GuidelineGenerationResult,
-} from "./guideline-types";
+} from "@/lib/ai/guideline-types";
 import type { Campaign } from "@/types";
 
 const LOG_PREFIX = "[guideline-gen]";

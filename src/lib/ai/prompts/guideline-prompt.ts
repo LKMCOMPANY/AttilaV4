@@ -2,7 +2,7 @@ import { DISARM_TOP_15_BLOCK } from "./disarm-doctrine";
 import type {
   GuidelineContext,
   GuidelineLocale,
-} from "@/lib/campaigns/guideline-types";
+} from "@/lib/ai/guideline-types";
 
 /**
  * Pure builders for the campaign-guideline generation prompt.
@@ -19,8 +19,13 @@ import type {
  * (instructions, schema, doctrine inclusion, sample-size policy).
  * Logged into `pipelineLog` so a future audit can correlate output
  * quality with prompt evolution.
+ *
+ * v2 (2026-05-20): hardened the OUTPUT FORMAT block with an explicit
+ * "STRING, NOT ARRAY" warning + a worked example after Aleria
+ * regressed `key_messages` into `["…", "…"]` form on its first
+ * production run. The schema still tolerates arrays defensively.
  */
-export const GUIDELINE_PROMPT_VERSION = "guideline-v1";
+export const GUIDELINE_PROMPT_VERSION = "guideline-v2";
 
 const LOCALE_NAMES: Record<GuidelineLocale, string> = {
   en: "English",
@@ -75,19 +80,31 @@ export function buildGuidelineSystemPrompt(locale: GuidelineLocale): string {
     ``,
     `═══ OUTPUT FORMAT ═══`,
     `Respond with a STRICT JSON object — no commentary, no markdown fence — `,
-    `with exactly these three keys:`,
+    `with exactly these three keys, EACH VALUE MUST BE A SINGLE STRING.`,
+    `DO NOT return arrays, DO NOT return nested objects, DO NOT split`,
+    `bullets into separate items — write the bullets INSIDE the string,`,
+    `one per newline.`,
     ``,
-    `  operational_context  Background. The situation, the actors, the threat`,
-    `                       narratives, what the avatars need to understand`,
-    `                       before reading any post. 200-600 words.`,
+    `  operational_context  (string) Background. The situation, the actors,`,
+    `                       the threat narratives, what the avatars need to`,
+    `                       understand before reading any post. 200-600 words.`,
     ``,
-    `  strategy             Objectives + behavioural constraints. What the`,
-    `                       campaign aims to achieve, the tone to project, what`,
-    `                       avatars MUST and MUST NOT do. 200-500 words.`,
+    `  strategy             (string) Objectives + behavioural constraints.`,
+    `                       What the campaign aims to achieve, the tone to`,
+    `                       project, what avatars MUST and MUST NOT do.`,
+    `                       200-500 words.`,
     ``,
-    `  key_messages         Talking points + vocabulary. Specific phrases,`,
-    `                       hashtags to push, terms to avoid, framings to favour.`,
-    `                       Bullet-style is fine. 100-400 words.`,
+    `  key_messages         (string) Talking points + vocabulary. Specific`,
+    `                       phrases, hashtags to push, terms to avoid,`,
+    `                       framings to favour. Newline-separated bullets`,
+    `                       inside ONE string. 100-400 words.`,
+    ``,
+    `EXAMPLE of the EXACT shape expected (truncated content):`,
+    `{`,
+    `  "operational_context": "The zone covers ... narrative actors ...",`,
+    `  "strategy": "Objective: counter T0049 flooding bursts ...",`,
+    `  "key_messages": "• Hashtags to push: #PeaceForUAE\\n• Avoid: ..."`,
+    `}`,
     ``,
     `═══ LANGUAGE ═══`,
     `Write all three fields in ${language}. Do NOT translate proper nouns,`,

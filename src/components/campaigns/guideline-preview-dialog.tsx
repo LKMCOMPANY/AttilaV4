@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,14 +13,11 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Loader2, Sparkles } from "lucide-react";
 import {
-  BookOpen,
-  Loader2,
-  MessageSquare,
-  Sparkles,
-  Target,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+  GUIDELINE_FIELDS,
+  type GuidelineFieldDefinition,
+} from "./guideline-fields";
 import type { GenerateGuidelinesResponse } from "@/app/actions/campaigns";
 
 /**
@@ -37,6 +34,10 @@ import type { GenerateGuidelinesResponse } from "@/app/actions/campaigns";
  * The textareas are LOCAL state — the parent only sees the final
  * triple via `onApply` so an operator who closes the dialog discards
  * their edits. This keeps the parent simple (no draft management).
+ *
+ * Field labels / icons / order all come from `guideline-fields.ts`,
+ * the shared source of truth used by the wizard, the Automator panel,
+ * and this dialog.
  */
 
 export interface GuidelineTriple {
@@ -117,7 +118,10 @@ export function GuidelinePreviewDialog({
 
         <div className="space-y-4 py-2" aria-busy={loading}>
           {error && !loading && (
-            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
+            >
               <p className="text-xs text-destructive">{error}</p>
             </div>
           )}
@@ -126,37 +130,18 @@ export function GuidelinePreviewDialog({
 
           {!loading && draft && (
             <>
-              <FieldEditor
-                id="ai-operational-context"
-                label="Operational Context"
-                icon={BookOpen}
-                value={draft.operational_context}
-                onChange={(v) =>
-                  setDraft((prev) =>
-                    prev ? { ...prev, operational_context: v } : prev,
-                  )
-                }
-              />
-              <FieldEditor
-                id="ai-strategy"
-                label="Strategy"
-                icon={Target}
-                value={draft.strategy}
-                onChange={(v) =>
-                  setDraft((prev) => (prev ? { ...prev, strategy: v } : prev))
-                }
-              />
-              <FieldEditor
-                id="ai-key-messages"
-                label="Key Messages"
-                icon={MessageSquare}
-                value={draft.key_messages}
-                onChange={(v) =>
-                  setDraft((prev) =>
-                    prev ? { ...prev, key_messages: v } : prev,
-                  )
-                }
-              />
+              {GUIDELINE_FIELDS.map((field) => (
+                <FieldEditor
+                  key={field.key}
+                  field={field}
+                  value={draft[field.key]}
+                  onChange={(v) =>
+                    setDraft((prev) =>
+                      prev ? { ...prev, [field.key]: v } : prev,
+                    )
+                  }
+                />
+              ))}
 
               {result && (
                 <p className="text-[10px] text-muted-foreground/70">
@@ -196,30 +181,28 @@ export function GuidelinePreviewDialog({
 // ---------------------------------------------------------------------------
 
 function FieldEditor({
-  id,
-  label,
-  icon: Icon,
+  field,
   value,
   onChange,
 }: {
-  id: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  field: GuidelineFieldDefinition;
   value: string;
   onChange: (next: string) => void;
 }) {
+  const id = `ai-${field.slug}`;
+  const Icon = field.icon;
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id} className="flex items-center gap-1.5 text-[11px]">
         <Icon className="h-3 w-3 text-muted-foreground" />
-        {label}
+        {field.label}
       </Label>
       <Textarea
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         rows={5}
-        className={cn("resize-y text-xs leading-relaxed")}
+        className="resize-y text-xs leading-relaxed"
       />
     </div>
   );
@@ -228,15 +211,18 @@ function FieldEditor({
 function PreviewSkeletons() {
   return (
     <>
-      {[BookOpen, Target, MessageSquare].map((Icon, idx) => (
-        <div key={idx} className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            <Icon className="h-3 w-3 text-muted-foreground/50" />
-            <Skeleton className="h-3 w-32" />
+      {GUIDELINE_FIELDS.map((field) => {
+        const Icon = field.icon;
+        return (
+          <div key={field.key} className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Icon className="h-3 w-3 text-muted-foreground/50" />
+              <Skeleton className="h-3 w-32" />
+            </div>
+            <Skeleton className="h-24 w-full rounded-md" />
           </div>
-          <Skeleton className="h-24 w-full rounded-md" />
-        </div>
-      ))}
+        );
+      })}
     </>
   );
 }

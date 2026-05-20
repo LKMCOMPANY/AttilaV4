@@ -6,14 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import {
-  BookOpen,
-  Crosshair,
-  Loader2,
-  MessageSquare,
-  Sparkles,
-  Target,
-} from "lucide-react";
+import { Crosshair, Loader2, Sparkles } from "lucide-react";
 import { EmptyPanel } from "@/components/ui/empty";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
@@ -27,6 +20,10 @@ import {
   type GuidelineTriple,
 } from "@/components/campaigns/guideline-preview-dialog";
 import { useGuidelineGeneration } from "@/components/campaigns/use-guideline-generation";
+import {
+  GUIDELINE_FIELDS,
+  type GuidelineFieldKey,
+} from "@/components/campaigns/guideline-fields";
 import type { Campaign } from "@/types";
 
 interface CampaignCenterPanelProps {
@@ -76,34 +73,10 @@ export function CampaignCenterPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Guidelines tabs
+// Guidelines tabs — labels/copy/icons live in `guideline-fields.ts`,
+// shared with the wizard step and the AI preview dialog so the three
+// surfaces never drift.
 // ---------------------------------------------------------------------------
-
-const TABS = [
-  {
-    value: "context",
-    label: "Context",
-    icon: BookOpen,
-    field: "operational_context" as const,
-    placeholder: "Describe the situation, background, and what the AI needs to know...",
-  },
-  {
-    value: "strategy",
-    label: "Strategy",
-    icon: Target,
-    field: "strategy" as const,
-    placeholder: "Define the objectives and behavioral rules for avatars...",
-  },
-  {
-    value: "messages",
-    label: "Messages",
-    icon: MessageSquare,
-    field: "key_messages" as const,
-    placeholder: "Specific phrases, hashtags, or terminology to use or avoid...",
-  },
-] as const;
-
-type GuidelineField = (typeof TABS)[number]["field"];
 
 function GuidelineTabs({
   campaign,
@@ -129,7 +102,7 @@ function GuidelineTabs({
   );
 
   const saveField = useCallback(
-    (field: GuidelineField, value: string) =>
+    (field: GuidelineFieldKey, value: string) =>
       save({ [field]: value || null } as Partial<Campaign>),
     [save],
   );
@@ -175,19 +148,19 @@ function GuidelineTabs({
     : null;
 
   return (
-    <Tabs defaultValue="context" className="flex min-h-0 flex-1 flex-col">
+    <Tabs defaultValue={GUIDELINE_FIELDS[0].slug} className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5 scrollbar-hide">
         <TabsList variant="line">
-          {TABS.map((tab) => {
-            const Icon = tab.icon;
+          {GUIDELINE_FIELDS.map((field) => {
+            const Icon = field.icon;
             return (
               <TabsTrigger
-                key={tab.value}
-                value={tab.value}
+                key={field.key}
+                value={field.slug}
                 className="gap-1.5 text-[11px]"
               >
                 <Icon className="h-3 w-3" />
-                {tab.label}
+                {field.label}
               </TabsTrigger>
             );
           })}
@@ -234,17 +207,17 @@ function GuidelineTabs({
       )}
 
       <div className="min-h-0 flex-1">
-        {TABS.map((tab) => (
+        {GUIDELINE_FIELDS.map((field) => (
           <TabsContent
-            key={tab.value}
-            value={tab.value}
+            key={field.key}
+            value={field.slug}
             className="h-full p-0"
           >
             <GuidelineEditor
-              key={`${campaign.id}-${tab.field}`}
-              value={campaign[tab.field] ?? ""}
-              placeholder={tab.placeholder}
-              onCommit={(v) => saveField(tab.field, v)}
+              key={`${campaign.id}-${field.key}`}
+              value={campaign[field.key] ?? ""}
+              placeholder={field.placeholder}
+              onCommit={(v) => saveField(field.key, v)}
             />
           </TabsContent>
         ))}
