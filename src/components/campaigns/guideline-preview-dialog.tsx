@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -23,17 +22,18 @@ import type { GenerateGuidelinesResponse } from "@/app/actions/campaigns";
 /**
  * Reusable preview dialog for AI-generated guideline triples.
  *
+ * Layout — sticky header & footer, scrollable body. Capped at
+ * `max-h-[85vh]` so very long LLM outputs (3 × 4000-char fields)
+ * never push the Cancel/Apply buttons off-screen on small viewports.
+ *
  * Lifecycle (per-instance, controlled by the parent via `open`):
  *   `open=false`              → dialog closed, no state held
- *   `open=true && loading`    → 3 skeleton blocks, "Generating…" label
- *   `open=true && !loading`   → 3 editable Textareas pre-filled with the
- *                               LLM output. Operator edits in place
+ *   `open=true && loading`    → animated GenerationProgress with
+ *                               cycling step labels + elapsed timer
+ *   `open=true && !loading`   → 3 editable Textareas pre-filled with
+ *                               the LLM output. Operator edits in place
  *                               before clicking Apply.
  *   `error`                   → muted error banner replaces the form
- *
- * The textareas are LOCAL state — the parent only sees the final
- * triple via `onApply` so an operator who closes the dialog discards
- * their edits. This keeps the parent simple (no draft management).
  *
  * Field labels / icons / order all come from `guideline-fields.ts`,
  * the shared source of truth used by the wizard, the Automator panel,
@@ -103,33 +103,39 @@ export function GuidelinePreviewDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
+      <DialogContent
+        showCloseButton={!loading}
+        className="flex max-h-[85vh] flex-col gap-0 p-0 sm:max-w-2xl"
+      >
+        <DialogHeader className="shrink-0 border-b px-5 py-3">
+          <DialogTitle className="flex items-center gap-2 text-sm">
             <Sparkles className="h-4 w-4 text-primary" />
             AI Guidelines Preview
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs">
             Review and edit the AI-generated guidelines before applying.
             Anchored on the zone’s recent activity (posts, sentiment, top
             entities).
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2" aria-busy={loading}>
+        <div
+          className="flex-1 overflow-y-auto px-5 py-4"
+          aria-busy={loading}
+        >
           {error && !loading && (
             <div
               role="alert"
-              className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
+              className="mb-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2"
             >
               <p className="text-xs text-destructive">{error}</p>
             </div>
           )}
 
-          {loading && <PreviewSkeletons />}
+          {loading && <GenerationProgress />}
 
           {!loading && draft && (
-            <>
+            <div className="space-y-4">
               {GUIDELINE_FIELDS.map((field) => (
                 <FieldEditor
                   key={field.key}
@@ -144,7 +150,7 @@ export function GuidelinePreviewDialog({
               ))}
 
               {result && (
-                <p className="text-[10px] text-muted-foreground/70">
+                <p className="pt-1 text-[10px] text-muted-foreground/70">
                   Generated in {(result.metadata.durationMs / 1000).toFixed(1)}s
                   {" · "}
                   {result.metadata.postsSampled} posts sampled
@@ -154,23 +160,24 @@ export function GuidelinePreviewDialog({
                   {result.metadata.promptVersion}
                 </p>
               )}
-            </>
+            </div>
           )}
         </div>
 
-        <DialogFooter>
+        <div className="flex shrink-0 items-center justify-end gap-2 border-t px-5 py-3">
           <Button
             variant="ghost"
+            size="sm"
             onClick={() => onOpenChange(false)}
             disabled={loading}
           >
             Cancel
           </Button>
-          <Button onClick={handleApply} disabled={isApplyDisabled}>
+          <Button size="sm" onClick={handleApply} disabled={isApplyDisabled}>
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {loading ? "Generating…" : "Apply"}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -208,9 +215,68 @@ function FieldEditor({
   );
 }
 
-function PreviewSkeletons() {
+// ---------------------------------------------------------------------------
+// Generation progress — engaging loading state
+// ---------------------------------------------------------------------------
+
+const PROGRESS_STAGES: readonly { label: string; minMs: number }[] = [
+  { label: "Reading the zone’s recent activity", minMs: 0 },
+  { label: "Mapping sentiment patterns and top entities", minMs: 4_000 },
+  { label: "Drafting operational context", minMs: 9_000 },
+  { label: "Composing strategy", minMs: 16_000 },
+  { label: "Distilling key messages", minMs: 24_000 },
+  { label: "Finalising — almost there", minMs: 35_000 },
+];
+
+/**
+ * Engaging loading state for the LLM call. Shows three skeleton blocks
+ * (matching the final layout so the transition is visually smooth) plus
+ * a stage label + elapsed timer that cycle as the call progresses.
+ *
+ * The stage labels are anchored to elapsed time, NOT to actual LLM
+ * progress (we don't get streaming events from Aleria). The thresholds
+ * are calibrated against a typical 25-40s generation so the labels
+ * feel honest without making promises we can't keep.
+ *
+ * Resets every time it mounts — the parent's `loading` prop toggling
+ * controls the lifecycle.
+ */
+function GenerationProgress() {
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  useEffect(() => {
+    // Anchor on mount inside the effect — render stays pure (React 19
+    // `react-hooks/purity` forbids `Date.now()` as a ref initial value).
+    const startedAt = Date.now();
+    const id = setInterval(() => {
+      setElapsedMs(Date.now() - startedAt);
+    }, 250);
+    return () => clearInterval(id);
+  }, []);
+
+  const stage =
+    [...PROGRESS_STAGES].reverse().find((s) => elapsedMs >= s.minMs) ??
+    PROGRESS_STAGES[0];
+  const seconds = (elapsedMs / 1000).toFixed(1);
+
   return (
-    <>
+    <div className="space-y-4">
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-3 rounded-md border border-primary/20 bg-primary/5 px-3 py-2.5"
+      >
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium text-foreground">
+            {stage.label}…
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            {seconds}s elapsed · usually 20–40s
+          </p>
+        </div>
+      </div>
+
       {GUIDELINE_FIELDS.map((field) => {
         const Icon = field.icon;
         return (
@@ -219,10 +285,10 @@ function PreviewSkeletons() {
               <Icon className="h-3 w-3 text-muted-foreground/50" />
               <Skeleton className="h-3 w-32" />
             </div>
-            <Skeleton className="h-24 w-full rounded-md" />
+            <Skeleton className="h-20 w-full rounded-md" />
           </div>
         );
       })}
-    </>
+    </div>
   );
 }
