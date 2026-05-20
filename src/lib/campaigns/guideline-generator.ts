@@ -1,5 +1,3 @@
-import { generateText } from "ai";
-import { getAleriaModel } from "@/lib/ai/client";
 import { parseAleriaJSONWithSchema } from "@/lib/ai/aleria-json";
 import {
   DISARM_DOCTRINE_VERSION,
@@ -60,26 +58,31 @@ const LOG_PREFIX = "[guideline-gen]";
  */
 const GENERATION_TIMEOUT_MS = 300_000;
 /**
- * 16 000 tokens. Successive bumps as we learnt more about Aleria's
+ * 32 000 tokens. Successive bumps as we learnt more about Aleria's
  * reasoning behaviour on this synthesis task:
  *   - 3 000 (initial)  → JSON truncated mid-string (~1.3 KB out)
  *   - 8 000            → "empty content — reasoning consumed all"
  *                         (the chain-of-thought ate the whole budget)
- *   - 16 000 (this)    → ≈ 4× the worst-case visible output
- *                         (3 fields × 4 000 chars ≈ 3 000 tokens),
- *                         leaving 13 000 for the reasoning chain.
+ *   - 16 000           → STILL truncated at ~1.1 KB — the reasoning
+ *                         chain on this prompt eats more than 13 K
+ *                         tokens before yielding visible output
+ *   - 32 000 (this)    → 2× the previous ceiling. The error logger
+ *                         now also captures `finishReason` and
+ *                         `usage` so the next failure tells us
+ *                         exactly which knob to turn (length cap
+ *                         vs. content-filter vs. server-side limit).
  *
  * Aleria is hosted on our own workers — there's no $-per-token
  * pressure. The only reason not to set this even higher is that an
  * unbounded budget would make a hung reasoning loop visible only as
- * a timeout instead of an OOM. 16 K is comfortable today; bump
- * again if production logs show another empty-content run.
+ * a timeout instead of an OOM. 32 K stays well within Aleria's
+ * context window.
  *
  * `analyst.ts` keeps 2 000 because its output is one tiny JSON
  * (`{relevant, reason, count}`) — the orders of magnitude are
  * intentionally different.
  */
-const MAX_OUTPUT_TOKENS = 16_000;
+const MAX_OUTPUT_TOKENS = 32_000;
 
 export interface GenerateCampaignGuidelinesInput {
   campaign: Pick<Campaign, "id" | "name" | "platforms" | "gorgone_zone_id">;
@@ -108,28 +111,48 @@ export async function generateCampaignGuidelines(
   const user = buildGuidelineUserPrompt(context);
 
   // 3) Aleria call.
+  //
+  // NOTE — direct fetch instead of `generateText` from `ai`:
+  //   The AI SDK was producing systematically truncated responses on
+  //   THIS prompt in production (1.0–1.3 KB visible output, malformed
+  //   JSON), while a `curl` against the same Aleria endpoint with the
+  //   same model + max_tokens completed cleanly (5+ KB, finish=stop).
+  //   Bypassing the SDK gives us full control over the request shape
+  //   and surfaces `finish_reason` + `usage` so a future regression
+  //   stays diagnosable. The analyst + writer paths still use
+  //   `generateText` because their tiny outputs never tripped the bug.
+  //
+  // We log `finishReason` and `usage` explicitly so an operator can
+  // tell at a glance whether a future failure is a length cap, a
+  // content filter, or a malformed model output.
   let text: string;
+  let finishReason: string | undefined;
+  let usage: unknown;
   try {
-    const result = await withTimeout(
-      generateText({
-        model: getAleriaModel("aleria"),
-        system,
-        prompt: user,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-      }),
+    const aleriaResp = await withTimeout(
+      callAleriaChatCompletion(system, user),
       GENERATION_TIMEOUT_MS,
       "GuidelineGenerator",
     );
-    text = result.text;
+    text = aleriaResp.text;
+    finishReason = aleriaResp.finishReason;
+    usage = aleriaResp.usage;
   } catch (err) {
     console.error(`${LOG_PREFIX}[${campaign.id}] Aleria call failed`, err);
     throw err;
   }
 
   if (!text || text.trim().length === 0) {
-    const msg = "Aleria returned empty content — reasoning consumed all tokens";
-    console.error(`${LOG_PREFIX}[${campaign.id}] ${msg}`);
+    const msg = `Aleria returned empty content (finish_reason=${finishReason ?? "unknown"})`;
+    console.error(`${LOG_PREFIX}[${campaign.id}] ${msg}`, { usage });
     throw new Error(msg);
+  }
+
+  if (finishReason && finishReason !== "stop") {
+    console.warn(
+      `${LOG_PREFIX}[${campaign.id}] non-stop finish_reason=${finishReason} — output may be truncated`,
+      { usage, textLen: text.length },
+    );
   }
 
   // 4) Parse + validate. We catch + log explicitly so the server has a
@@ -168,5 +191,81 @@ export async function generateCampaignGuidelines(
       postsSampled: context.postsSampled,
       durationMs,
     },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Direct Aleria chat-completion call
+// ---------------------------------------------------------------------------
+
+interface AleriaResponse {
+  text: string;
+  finishReason: string | undefined;
+  usage: unknown;
+}
+
+/**
+ * Calls Aleria's `/v1/chat/completions` endpoint directly.
+ *
+ * Why direct fetch instead of the AI SDK's `generateText`:
+ *   On this synthesis prompt (DISARM doctrine + 60 posts + 25
+ *   entities ≈ 3 K input tokens), the AI SDK in production
+ *   produced systematically truncated responses (1.0–1.3 KB
+ *   visible output, malformed JSON), while a direct curl with
+ *   the same model + max_tokens completed cleanly (5+ KB,
+ *   finish=stop). Direct fetch removes the abstraction layer
+ *   that was eating output mid-flight and lets us surface
+ *   `finish_reason` + `usage` for every call.
+ *
+ * The function throws on HTTP errors and on missing-field
+ * responses; the caller wraps with `withTimeout` for a hard
+ * 5-min ceiling.
+ */
+async function callAleriaChatCompletion(
+  systemPrompt: string,
+  userPrompt: string,
+): Promise<AleriaResponse> {
+  const baseURL = process.env.ALERIA_BASE_URL;
+  const apiKey = process.env.ALERIA_API_KEY;
+  if (!baseURL || !apiKey) {
+    throw new Error("Missing ALERIA_BASE_URL or ALERIA_API_KEY env vars");
+  }
+
+  const res = await fetch(`${baseURL.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "aleria",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      max_tokens: MAX_OUTPUT_TOKENS,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Aleria HTTP ${res.status} ${res.statusText}: ${body.slice(0, 300)}`);
+  }
+
+  const json = (await res.json()) as {
+    choices?: { message?: { content?: string }; finish_reason?: string }[];
+    usage?: unknown;
+    error?: { message?: string };
+  };
+
+  if (json.error?.message) {
+    throw new Error(`Aleria API error: ${json.error.message}`);
+  }
+
+  const choice = json.choices?.[0];
+  return {
+    text: choice?.message?.content ?? "",
+    finishReason: choice?.finish_reason,
+    usage: json.usage,
   };
 }
