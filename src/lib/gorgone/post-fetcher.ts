@@ -95,7 +95,7 @@ interface RawPostRow {
     | { label: string; score: number }[]
     | null;
   post_translations:
-    | { translated_text: string; target_lang: string }[]
+    | { text_translated: string; target_lang: string }[]
     | null;
 }
 
@@ -128,7 +128,7 @@ const SELECT_CLAUSE = `
   twitter_post_extras (source_url),
   tiktok_post_extras (share_url, is_ads),
   post_ai_classifications (label, score),
-  post_translations (translated_text, target_lang)
+  post_translations (text_translated, target_lang)
 `.trim();
 
 /**
@@ -201,7 +201,7 @@ function mapRawToFull(row: RawPostRow): FullGorgonePost {
     is_ad: Boolean(tiktokExtras?.is_ads),
     sentiment_label: sentiment?.label ?? null,
     sentiment_score: sentiment?.score ?? null,
-    translation_text: translation?.translated_text ?? null,
+    translation_text: translation?.text_translated ?? null,
     translation_lang: translation?.target_lang ?? null,
   };
 }

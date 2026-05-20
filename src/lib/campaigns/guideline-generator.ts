@@ -112,8 +112,22 @@ export async function generateCampaignGuidelines(
     throw new Error(msg);
   }
 
-  // 4) Parse + validate.
-  const suggestion = parseAleriaJSONWithSchema(text, guidelineSuggestionSchema);
+  // 4) Parse + validate. We catch + log explicitly so the server has a
+  // record of what Aleria actually returned when the schema rejects —
+  // the action layer maps the error to a friendly message for the UI,
+  // but a Render log is the only way for an operator to see the raw
+  // model output and adjust the prompt.
+  let suggestion;
+  try {
+    suggestion = parseAleriaJSONWithSchema(text, guidelineSuggestionSchema);
+  } catch (err) {
+    const preview = text.slice(0, 800).replace(/\s+/g, " ");
+    console.error(
+      `${LOG_PREFIX}[${campaign.id}] Schema mismatch — Aleria raw preview: ${preview}`,
+      err,
+    );
+    throw err;
+  }
 
   const durationMs = Date.now() - start;
   console.log(`${LOG_PREFIX}[${campaign.id}] Generated`, {
