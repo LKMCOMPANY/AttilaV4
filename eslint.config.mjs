@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Standalone Node services that ship to the boxes, not part of the Next app.
+    "infra/**",
   ]),
 ]);
 
