@@ -21,12 +21,19 @@ const STATUS_CONFIG: Record<
   { label: string; dotClass: string }
 > = {
   idle: { label: "Idle", dotClass: "bg-muted-foreground" },
+  starting: {
+    label: "Starting device...",
+    dotClass: "bg-warning animate-pulse",
+  },
   connecting: {
     label: "Connecting...",
     dotClass: "bg-warning animate-pulse",
   },
   streaming: { label: "Live", dotClass: "bg-success" },
-  disconnected: { label: "Disconnected", dotClass: "bg-muted-foreground" },
+  reconnecting: {
+    label: "Reconnecting...",
+    dotClass: "bg-warning animate-pulse",
+  },
   error: { label: "Error", dotClass: "bg-destructive" },
 };
 

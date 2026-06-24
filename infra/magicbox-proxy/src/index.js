@@ -4,10 +4,14 @@ const { handleApiRequest, handleApiUpgrade } = require('./api-proxy');
 const { handleStreamUpgrade, isStreamRequest } = require('./stream-handler');
 const { handleHealth, isHealthCheck } = require('./health');
 const { handleProxyTest, isProxyTest } = require('./proxy-test');
+const { handleStreamReady, isStreamReady } = require('./stream-ready');
 
 const server = http.createServer((req, res) => {
   if (isHealthCheck(req.url)) {
     return handleHealth(req, res);
+  }
+  if (isStreamReady(req.url)) {
+    return handleStreamReady(req, res);
   }
   if (isProxyTest(req.url)) {
     return handleProxyTest(req, res);
@@ -26,6 +30,7 @@ server.listen(config.port, '127.0.0.1', () => {
   console.log(`[proxy] listening on 127.0.0.1:${config.port}`);
   console.log(`[proxy] API → ${config.apiHost}:${config.apiPort}`);
   console.log(`[proxy] streams → ${config.streamPrefix}{container_id}/{video|touch|audio}`);
+  console.log(`[proxy] stream ready → ${config.streamReadyPrefix}{db_id}`);
   console.log(`[proxy] proxy test → ${config.proxyTestPrefix}{db_id}`);
 });
 

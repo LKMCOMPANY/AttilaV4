@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import {
-  ensureContainerReady,
+  startContainerProcess,
   shell,
   shellSafe,
   stopContainer as stopContainerVmos,
@@ -36,8 +36,10 @@ export async function toggleScreenWake(
 }
 
 // ---------------------------------------------------------------------------
-// Start container — waits for Android to finish booting before returning
-// so the operator never sees a "running" state on a half-booted device.
+// Start container — issues the run and returns immediately (~1–2s) without
+// blocking on the full Android boot. The operator UI gates the live stream on
+// the `/stream-ready` probe, so the Start button stays responsive and the
+// device viewport shows a calm "Starting device → Connecting → Live".
 // ---------------------------------------------------------------------------
 
 export async function startContainer(
@@ -47,7 +49,7 @@ export async function startContainer(
     const { deviceId: id, dbId, accountId, boxId, tunnelHostname } =
       await resolveDeviceAccess(deviceId);
 
-    await ensureContainerReady(tunnelHostname, dbId);
+    await startContainerProcess(tunnelHostname, dbId);
 
     const supabase = await createClient();
     await supabase

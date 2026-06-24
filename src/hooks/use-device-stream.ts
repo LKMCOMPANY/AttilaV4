@@ -10,6 +10,7 @@ import {
 } from "@/lib/streaming/scrcpy-stream";
 import { ANDROID_KEYCODES, META_CTRL, META_SHIFT, META_ALT } from "@/lib/streaming/scrcpy-codec";
 import { AudioPlayer, type AudioPlayerStatus } from "@/lib/streaming/audio-player";
+import { waitForStreamReady } from "@/lib/streaming/stream-readiness";
 
 interface UseDeviceStreamOptions {
   boxId: string | null;
@@ -58,39 +59,58 @@ export function useDeviceStream({
   const [audioStatus, setAudioStatus] = useState<AudioPlayerStatus>("idle");
   const [audioEnabled, setAudioEnabled] = useState(false);
 
+  // Derive the pre-stream phase from the active target during render — React's
+  // supported pattern for resetting state when inputs change — rather than
+  // calling setState inside the effect. The stream itself drives the later
+  // phases (connecting/streaming/reconnecting/error) through its callbacks.
+  const streamKey = enabled && boxId && dbId ? `${boxId}:${dbId}` : null;
+  const [trackedKey, setTrackedKey] = useState<string | null>(null);
+  if (streamKey !== trackedKey) {
+    setTrackedKey(streamKey);
+    setStatus(streamKey ? "starting" : "idle");
+    setError(null);
+  }
+
   // -------------------------------------------------------------------------
   // Video stream lifecycle
   // -------------------------------------------------------------------------
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    if (!enabled || !boxId || !dbId || !canvas) return;
 
-    if (!enabled || !boxId || !dbId || !canvas) {
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-      setStatus("idle");
-      setError(null);
-      return;
-    }
+    const controller = new AbortController();
+    let stream: ScrcpyStream | null = null;
+    let cancelled = false;
 
-    setError(null);
+    // Wait until the box confirms the scrcpy port is actually accepting before
+    // opening any WebSocket. This eliminates the boot-window 502 storm. If the
+    // probe is unavailable or times out we still attempt to connect — the
+    // stream's warm-up retry handles a not-quite-ready device gracefully.
+    void waitForStreamReady(boxId, dbId, { signal: controller.signal }).then(
+      (outcome) => {
+        if (cancelled || outcome === "aborted") return;
 
-    const stream = new ScrcpyStream({
-      videoUrl: buildWsUrl(boxId, dbId, "video"),
-      controlUrl: buildWsUrl(boxId, dbId, "touch"),
-      canvas,
-      onStatus: setStatus,
-      onError: setError,
-    });
+        stream = new ScrcpyStream({
+          videoUrl: buildWsUrl(boxId, dbId, "video"),
+          controlUrl: buildWsUrl(boxId, dbId, "touch"),
+          canvas,
+          onStatus: setStatus,
+          onError: setError,
+        });
 
-    streamRef.current = stream;
-    stream.start();
+        streamRef.current = stream;
+        stream.start();
+      },
+    );
 
     return () => {
+      cancelled = true;
+      controller.abort();
       streamRef.current = null;
-      stream.dispose();
+      stream?.dispose();
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     };
   }, [boxId, dbId, enabled]);
 
@@ -99,12 +119,7 @@ export function useDeviceStream({
   // -------------------------------------------------------------------------
 
   useEffect(() => {
-    if (!audioEnabled || !boxId || !dbId || !enabled) {
-      audioRef.current?.dispose();
-      audioRef.current = null;
-      setAudioStatus("idle");
-      return;
-    }
+    if (!audioEnabled || !boxId || !dbId || !enabled) return;
 
     const player = new AudioPlayer({
       url: buildWsUrl(boxId, dbId, "audio"),
@@ -118,6 +133,7 @@ export function useDeviceStream({
     return () => {
       audioRef.current = null;
       player.dispose();
+      setAudioStatus("idle");
     };
   }, [boxId, dbId, enabled, audioEnabled]);
 

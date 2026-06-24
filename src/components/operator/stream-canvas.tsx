@@ -4,6 +4,14 @@ import { Loader2 } from "lucide-react";
 import type { StreamStatus } from "@/lib/streaming/scrcpy-stream";
 import { cn } from "@/lib/utils";
 
+// Pre-live states share one calm overlay so the operator sees a single steady
+// progression (Starting device -> Connecting -> Live) instead of flicker.
+const PENDING_LABELS: Partial<Record<StreamStatus, string>> = {
+  starting: "Starting device",
+  connecting: "Connecting",
+  reconnecting: "Reconnecting",
+};
+
 interface StreamCanvasProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   status: StreamStatus;
@@ -37,9 +45,12 @@ export function StreamCanvas({
         style={{ touchAction: "none" }}
         {...handlers}
       />
-      {status === "connecting" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+      {PENDING_LABELS[status] && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/40">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <span className="text-[10px] font-medium text-muted-foreground">
+            {PENDING_LABELS[status]}
+          </span>
         </div>
       )}
     </div>

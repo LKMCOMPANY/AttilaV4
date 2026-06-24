@@ -15,9 +15,10 @@ import {
 
 export type StreamStatus =
   | "idle"
+  | "starting"
   | "connecting"
   | "streaming"
-  | "disconnected"
+  | "reconnecting"
   | "error";
 
 export interface ScrcpyStreamOptions {
@@ -28,6 +29,14 @@ export interface ScrcpyStreamOptions {
   onError?: (error: string) => void;
 }
 
+// Two distinct retry regimes:
+//   - Warm-up (no frame ever received): the device may still be finishing its
+//     boot, so retry fast on a fixed cadence and stay on "connecting". The
+//     readiness gate upstream means this window is normally short.
+//   - Reconnect (a live stream dropped): a genuine interruption — back off
+//     gently so we don't hammer the box.
+const WARMUP_RETRY_DELAY = 1000;
+const WARMUP_MAX_ATTEMPTS = 30;
 const RECONNECT_DELAY = 2000;
 const MAX_RECONNECT_DELAY = 15000;
 
@@ -44,6 +53,10 @@ export class ScrcpyStream {
   private timestamp = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private reconnectDelay = RECONNECT_DELAY;
+  // True once at least one frame's worth of meta has been decoded — used to
+  // pick the warm-up vs reconnect regime.
+  private hasStreamed = false;
+  private warmupAttempts = 0;
 
   constructor(private opts: ScrcpyStreamOptions) {
     this.ctx = opts.canvas.getContext("2d");
@@ -77,6 +90,30 @@ export class ScrcpyStream {
   private scheduleReconnect() {
     if (this.disposed || this.reconnectTimer) return;
 
+    // Warm-up regime: the device has never streamed yet (likely still booting).
+    // Retry fast on a fixed cadence and stay on "connecting"; give up after a
+    // bounded number of attempts so a genuinely dead device surfaces an error
+    // instead of spinning forever.
+    if (!this.hasStreamed) {
+      if (this.warmupAttempts >= WARMUP_MAX_ATTEMPTS) {
+        this.opts.onStatus?.("error");
+        this.opts.onError?.("Device did not start streaming");
+        return;
+      }
+      this.warmupAttempts += 1;
+      this.reconnectTimer = setTimeout(() => {
+        this.reconnectTimer = null;
+        if (this.disposed) return;
+        this.reset();
+        this.opts.onStatus?.("connecting");
+        this.connectVideo();
+        this.connectControl();
+      }, WARMUP_RETRY_DELAY);
+      return;
+    }
+
+    // Reconnect regime: a previously-live stream dropped — back off gently.
+    this.opts.onStatus?.("reconnecting");
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       if (this.disposed) return;
@@ -123,6 +160,8 @@ export class ScrcpyStream {
         const codecString = extractCodecString(this.meta.spsData);
         this.initDecoder(codecString);
         this.gotMeta = true;
+        this.hasStreamed = true;
+        this.warmupAttempts = 0;
         this.reconnectDelay = RECONNECT_DELAY;
         this.opts.onStatus?.("streaming");
         return;
@@ -147,10 +186,9 @@ export class ScrcpyStream {
     };
 
     this.videoWs.onclose = () => {
-      if (!this.disposed) {
-        this.opts.onStatus?.("disconnected");
-        this.scheduleReconnect();
-      }
+      // scheduleReconnect picks the right status (connecting vs reconnecting)
+      // based on whether the stream was ever live.
+      if (!this.disposed) this.scheduleReconnect();
     };
     this.videoWs.onerror = () => {
       if (!this.disposed) this.scheduleReconnect();

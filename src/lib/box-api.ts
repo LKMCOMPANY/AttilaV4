@@ -409,16 +409,9 @@ export async function ensureContainerReady(
   dbId: string,
 ): Promise<{ wasStarted: boolean; durationMs: number }> {
   const start = Date.now();
-  const detail = await fetchContainerDetail(tunnelHostname, dbId);
-  let wasStarted = false;
+  const { wasStarted } = await startContainerProcess(tunnelHostname, dbId);
 
-  if (detail?.status !== "running") {
-    console.log(`[Container] ${dbId} status=${detail?.status ?? "unknown"} — issuing run`);
-    await boxFetch(tunnelHostname, "/container_api/v1/run", {
-      method: "POST",
-      body: JSON.stringify({ db_ids: [dbId] }),
-    });
-    wasStarted = true;
+  if (wasStarted) {
     await waitForContainerStatus(tunnelHostname, dbId, "running", CONTAINER_RUN_TIMEOUT_MS);
   }
 
@@ -491,6 +484,31 @@ export async function stopContainerIfIdle(
   } catch (err) {
     console.error(`[Container] ${dbId} stop failed:`, err instanceof Error ? err.message : err);
   }
+}
+
+/**
+ * Issue the container `run` without waiting for Android to finish booting.
+ *
+ * Used by the operator "Start" action: the box only needs the run command;
+ * actual streamability is gated client-side by the `/stream-ready` probe and
+ * the stream's own warm-up retry. This keeps the Start button responsive
+ * (~1–2s) instead of blocking for the full ~10–90s boot like
+ * `ensureContainerReady` (which the automation pipeline still needs because it
+ * immediately drives shell commands).
+ */
+export async function startContainerProcess(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<{ wasStarted: boolean }> {
+  const detail = await fetchContainerDetail(tunnelHostname, dbId);
+  if (detail?.status === "running") return { wasStarted: false };
+
+  console.log(`[Container] ${dbId} status=${detail?.status ?? "unknown"} — issuing run`);
+  await boxFetch(tunnelHostname, "/container_api/v1/run", {
+    method: "POST",
+    body: JSON.stringify({ db_ids: [dbId] }),
+  });
+  return { wasStarted: true };
 }
 
 /**

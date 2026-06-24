@@ -20,6 +20,11 @@ const config = {
   apiPort: parseInt(process.env.API_PORT, 10) || 18182,
   streamHost: '127.0.0.1',
   streamPrefix: '/stream/',
+  // Readiness probe: TCP-connect to the scrcpy video port to confirm the
+  // stream is actually accepting connections (the only reliable "streamable"
+  // signal — the VMOS container list reports a port well before scrcpy binds).
+  streamReadyPrefix: '/stream-ready/',
+  streamReadyTimeoutMs: parseInt(process.env.STREAM_READY_TIMEOUT_MS, 10) || 1500,
   healthPath: '/healthz',
 
   // --- Proxy connectivity test (mihomo delay) ---

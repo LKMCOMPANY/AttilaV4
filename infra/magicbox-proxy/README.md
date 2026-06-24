@@ -8,6 +8,7 @@ backend (`cbs_go`, `:18182`) and the per-container scrcpy streams, and exposes:
 |---|---|
 | `GET /healthz` | Box health + running container count |
 | `WS  /stream/{db_id}/{video\|touch\|audio}` | Live device streams |
+| `GET /stream-ready/{db_id}` | **Stream readiness probe** — TCP-connects the scrcpy video port; `{ ready: boolean }` |
 | `GET /proxy-test/{db_id}` | **Real proxy connectivity test** (see below) |
 | `* ` (everything else) | Reverse-proxied to `cbs_go` (`/android_api/*`, `/container_api/*`, …) |
 

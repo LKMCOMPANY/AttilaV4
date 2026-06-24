@@ -107,10 +107,36 @@ function extractAccessToken(cookieHeader) {
   return null;
 }
 
+// Session-validation cache. A reconnect storm (or the 3 parallel video/touch/
+// audio upgrades for one device) would otherwise re-run 4 Supabase queries
+// per connection. Key by access-token + boxId; short TTL keeps it fresh.
+const sessionCache = new Map();
+const SESSION_CACHE_TTL = 10_000;
+const SESSION_CACHE_MAX = 1000;
+
+function purgeSessionCache() {
+  const now = Date.now();
+  for (const [key, entry] of sessionCache) {
+    if (now - entry.ts >= SESSION_CACHE_TTL) sessionCache.delete(key);
+  }
+}
+
 async function validateSession(cookieHeader, boxId) {
   const token = extractAccessToken(cookieHeader);
   if (!token) return null;
 
+  const cacheKey = `${token}:${boxId}`;
+  const cached = sessionCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < SESSION_CACHE_TTL) return cached.profile;
+
+  const profile = await validateSessionUncached(token, boxId);
+
+  if (sessionCache.size >= SESSION_CACHE_MAX) purgeSessionCache();
+  sessionCache.set(cacheKey, { profile, ts: Date.now() });
+  return profile;
+}
+
+async function validateSessionUncached(token, boxId) {
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data?.user) return null;
 
@@ -152,6 +178,21 @@ const WS_PATH_RE = /^\/ws\/stream\/([^/]+)\/([^/]+)\/(video|touch|audio)$/;
 const wss = new WebSocketServer({ noServer: true });
 
 function proxyWebSocket(clientWs, targetUrl) {
+  // Small jitter de-synchronizes simultaneous reconnects so we never open a
+  // burst of upstream sockets in the same tick.
+  const jitter = Math.floor(Math.random() * 150);
+  setTimeout(() => {
+    if (
+      clientWs.readyState !== WebSocket.OPEN &&
+      clientWs.readyState !== WebSocket.CONNECTING
+    ) {
+      return;
+    }
+    openUpstream(clientWs, targetUrl);
+  }, jitter);
+}
+
+function openUpstream(clientWs, targetUrl) {
   const upstream = new WebSocket(targetUrl, { headers: CF_HEADERS });
   const pending = [];
   let clientReady = clientWs.readyState === WebSocket.OPEN;
@@ -190,7 +231,15 @@ function proxyWebSocket(clientWs, targetUrl) {
 
   upstream.on("close", () => cleanup("upstream"));
   upstream.on("error", (e) => {
-    console.error(`[ws] upstream error: ${e.message}`);
+    const msg = e.message || "";
+    // A 502 means the box accepted the request but the scrcpy port isn't bound
+    // yet (device still booting). The client-side readiness gate makes this
+    // rare; keep it at info level so it doesn't read as an alarm.
+    if (/\b502\b/.test(msg)) {
+      console.log(`[ws] upstream not ready: ${msg}`);
+    } else {
+      console.error(`[ws] upstream error: ${msg}`);
+    }
     cleanup("upstream-error");
   });
   clientWs.on("close", () => cleanup("client"));
