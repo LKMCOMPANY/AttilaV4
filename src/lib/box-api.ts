@@ -168,6 +168,68 @@ export async function fetchProxyConfig(
   return res.data.proxy_config;
 }
 
+export type ProxyKind = "socks5" | "http";
+
+export interface SetProxyInput {
+  proxyType: ProxyKind;
+  ip: string;
+  port: number;
+  account: string;
+  password: string;
+}
+
+/**
+ * Thrown when VMOS refuses `proxy_set` because the container is not running
+ * (code 0 / "instance not running"). Verified on box-1..4 (06/2026): the
+ * proxy can only be written while the container is up.
+ */
+export class ProxyTargetNotRunningError extends Error {
+  constructor(public readonly dbId: string) {
+    super(`Container ${dbId} must be running to update its proxy`);
+    this.name = "ProxyTargetNotRunningError";
+  }
+}
+
+/**
+ * Write a proxy onto the device via the VMOS `proxy_set` endpoint.
+ *
+ * Verified behaviour (box-1..4, 06/2026): this persists the config at the
+ * VMOS layer (reflected by `fetchProxyConfig`) but the on-device Clash engine
+ * only re-reads it on the next container (re)start — `proxy_set` alone does
+ * NOT hot-reload the live route. Callers must restart + `checkProxyEgress`
+ * to confirm a real change rather than assume success.
+ */
+export async function setProxyConfig(
+  tunnelHostname: string,
+  dbId: string,
+  cfg: SetProxyInput,
+): Promise<void> {
+  const res = await boxFetch<VmosResponse<unknown>>(
+    tunnelHostname,
+    `/android_api/v1/proxy_set/${dbId}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        proxyType: cfg.proxyType,
+        proxyName: cfg.proxyType,
+        ip: cfg.ip,
+        port: cfg.port,
+        account: cfg.account,
+        password: cfg.password,
+        dnsServers: ["8.8.8.8", "8.8.4.4"],
+        udpDisabled: false,
+        dnsOverProxyDisabled: false,
+      }),
+    },
+  );
+
+  if (res.code === 200) return;
+  if (res.code === 0 || /not running|未运行/i.test(res.msg ?? "")) {
+    throw new ProxyTargetNotRunningError(dbId);
+  }
+  throw new Error(`proxy_set failed (code ${res.code}): ${res.msg ?? "unknown error"}`);
+}
+
 // ---------------------------------------------------------------------------
 // Shell primitives
 // ---------------------------------------------------------------------------
@@ -259,6 +321,92 @@ export async function shellSafe(
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Proxy connectivity test
+// ---------------------------------------------------------------------------
+
+export interface ProxyEgressResult {
+  reachable: boolean;
+  exitIp: string | null;
+  country: string | null;
+  city: string | null;
+  isp: string | null;
+  /** Whether the on-device Clash proxy engine is running (failure diag). */
+  engineRunning: boolean;
+  detail: string;
+}
+
+const IP_API_URL =
+  "http://ip-api.com/json?fields=status,query,countryCode,city,isp";
+
+/**
+ * Real connectivity test for a device's proxy. Runs ONE curl from the device
+ * to ip-api.com; the on-device Clash engine routes all traffic through its
+ * TUN, so a plain curl exits via the configured upstream proxy and reports
+ * the true exit IP + geo.
+ *
+ * This is the only reliable signal (verified on box-1..4, 06/2026):
+ *   - VMOS `proxy_get.healthy` is misleading — it returned `true` on devices
+ *     that had no Clash engine installed at all.
+ *   - MagicBox's `curl --socks5 <proxy-host>` probe fails here because the
+ *     proxy hostname resolves to the TUN sinkhole (198.18.x).
+ *
+ * On failure we report whether Clash is even running so the operator can
+ * distinguish "proxy down/blocked" from "proxy engine not provisioned".
+ * Throws `ContainerNotReadyError` when the container is stopped.
+ */
+export async function checkProxyEgress(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<ProxyEgressResult> {
+  const res = await shell(tunnelHostname, dbId, `curl -s --max-time 12 '${IP_API_URL}'`);
+  const raw = (res.message ?? "").trim();
+
+  if (raw) {
+    try {
+      const data = JSON.parse(raw) as {
+        status?: string;
+        query?: string;
+        countryCode?: string;
+        city?: string;
+        isp?: string;
+      };
+      if (data.status === "success" && data.query) {
+        return {
+          reachable: true,
+          exitIp: data.query,
+          country: data.countryCode ?? null,
+          city: data.city ?? null,
+          isp: data.isp ?? null,
+          engineRunning: true,
+          detail: "ok",
+        };
+      }
+    } catch {
+      // Non-JSON / partial output — treat as unreachable, diagnose below.
+    }
+  }
+
+  const engine = await shellSafe(
+    tunnelHostname,
+    dbId,
+    "pidof clash >/dev/null 2>&1 && echo UP || echo DOWN",
+  );
+  const engineRunning = (engine?.message ?? "").includes("UP");
+
+  return {
+    reachable: false,
+    exitIp: null,
+    country: null,
+    city: null,
+    isp: null,
+    engineRunning,
+    detail: engineRunning
+      ? "Proxy engine running but no internet egress (upstream blocked or down)"
+      : "Proxy engine not running on this device",
+  };
 }
 
 /**

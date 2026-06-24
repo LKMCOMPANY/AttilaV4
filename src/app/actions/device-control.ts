@@ -1,97 +1,14 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { canUserAccessDevice, requireSession } from "@/lib/auth/session";
-import { broadcastAccountEvent } from "@/lib/supabase/realtime";
-import { createAdminClient } from "@/lib/supabase/admin";
 import {
   ensureContainerReady,
   shell,
   shellSafe,
   stopContainer as stopContainerVmos,
 } from "@/lib/box-api";
+import { resolveDeviceAccess, fanOutDeviceStateChange } from "@/lib/devices/access";
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
-
-// ---------------------------------------------------------------------------
-// Internal: resolve a device, validate access, return everything needed for
-// VMOS calls + downstream realtime fan-out.
-// ---------------------------------------------------------------------------
-
-interface DeviceAccess {
-  deviceId: string;
-  dbId: string;
-  accountId: string | null;
-  boxId: string;
-  tunnelHostname: string;
-}
-
-async function resolveDeviceAccess(deviceId: string): Promise<DeviceAccess> {
-  const session = await requireSession();
-  const parsed = z.string().uuid().safeParse(deviceId);
-  if (!parsed.success) throw new Error("Invalid device ID");
-
-  const supabase = await createClient();
-  const { data: device, error } = await supabase
-    .from("devices")
-    .select("id, db_id, account_id, box_id, boxes(tunnel_hostname)")
-    .eq("id", deviceId)
-    .single();
-
-  if (error || !device) throw new Error("Device not found");
-
-  const box = device.boxes as unknown as { tunnel_hostname: string } | null;
-  if (!box) throw new Error("Box not found for device");
-
-  const allowed = await canUserAccessDevice(session, {
-    box_id: device.box_id,
-    account_id: device.account_id as string | null,
-  });
-  if (!allowed) throw new Error("Forbidden: no access to this device");
-
-  return {
-    deviceId: device.id,
-    dbId: device.db_id,
-    accountId: device.account_id as string | null,
-    boxId: device.box_id,
-    tunnelHostname: box.tunnel_hostname,
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Realtime fan-out — notify every account that has visibility on the device.
-// A device with `account_id = NULL` is shared via `account_boxes`; in that
-// case the direct broadcast is skipped and we must fan out to all accounts
-// that own the box, otherwise nobody (operator UI included) is told the
-// state changed and the toggle stays stuck on the optimistic value.
-// Uses the admin client because cross-account `account_boxes` rows are
-// invisible under the caller's RLS.
-// ---------------------------------------------------------------------------
-
-async function fanOutDeviceStateChange(
-  boxId: string,
-  primaryAccountId: string | null,
-): Promise<void> {
-  const targets = new Set<string>();
-  if (primaryAccountId) targets.add(primaryAccountId);
-
-  try {
-    const admin = createAdminClient();
-    const { data } = await admin
-      .from("account_boxes")
-      .select("account_id")
-      .eq("box_id", boxId);
-    for (const row of data ?? []) {
-      if (row.account_id) targets.add(row.account_id as string);
-    }
-  } catch {
-    // Best-effort: fall through to whatever account_id we already have.
-  }
-
-  for (const accountId of targets) {
-    broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Toggle screen wake/sleep

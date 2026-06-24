@@ -4,7 +4,6 @@ import { Badge } from "@/components/ui/badge";
 import {
   Smartphone,
   Wifi,
-  Shield,
   HardDrive,
   Monitor,
   Battery,
@@ -16,10 +15,12 @@ import {
   Image,
   Eye,
   User,
-  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
+import { Section, InfoRow } from "./device-info";
+import { ProxySection } from "./proxy-section";
+import type { DeviceProxyFields } from "@/app/actions/device-proxy";
 import type { AvatarWithRelations, DeviceState } from "@/types";
 
 const STATE_CONFIG: Record<DeviceState, { dot: string; label: string }> = {
@@ -31,9 +32,10 @@ const STATE_CONFIG: Record<DeviceState, { dot: string; label: string }> = {
 
 interface DeviceTabProps {
   avatar: AvatarWithRelations;
+  onUpdated?: (avatar: AvatarWithRelations) => void;
 }
 
-export function DeviceTab({ avatar }: DeviceTabProps) {
+export function DeviceTab({ avatar, onUpdated }: DeviceTabProps) {
   const device = avatar.device;
 
   if (!device) {
@@ -51,6 +53,10 @@ export function DeviceTab({ avatar }: DeviceTabProps) {
       </div>
     );
   }
+
+  const handleProxyUpdated = (proxy: DeviceProxyFields) => {
+    onUpdated?.({ ...avatar, device: { ...device, ...proxy } });
+  };
 
   return (
     <div className="space-y-5">
@@ -96,16 +102,8 @@ export function DeviceTab({ avatar }: DeviceTabProps) {
         <InfoRow icon={Wifi} label="Docker IP" value={device.docker_ip} />
       </Section>
 
-      {/* Proxy */}
-      {device.proxy_enabled && (
-        <Section title="Proxy" icon={Shield}>
-          <InfoRow icon={Shield} label="Type" value={device.proxy_type} />
-          <InfoRow icon={Shield} label="Host" value={device.proxy_host} />
-          <InfoRow icon={Shield} label="Port" value={device.proxy_port} />
-          <InfoRow icon={User} label="Account" value={device.proxy_account} />
-          <InfoRow icon={Lock} label="Password" value={device.proxy_password ? "••••••••" : null} />
-        </Section>
-      )}
+      {/* Proxy — read, test, edit */}
+      <ProxySection key={device.id} device={device} onProxyUpdated={handleProxyUpdated} />
 
       {/* Tags */}
       {device.tags.length > 0 && (
@@ -118,49 +116,6 @@ export function DeviceTab({ avatar }: DeviceTabProps) {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function Section({
-  title,
-  icon: Icon,
-  children,
-}: {
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border bg-card/50 px-3 py-2.5">
-      <div className="mb-1 flex items-center gap-1.5">
-        <Icon className="h-3 w-3 text-muted-foreground/60" />
-        <h4 className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">
-          {title}
-        </h4>
-      </div>
-      <div className="divide-y divide-border/30">{children}</div>
-    </div>
-  );
-}
-
-function InfoRow({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: string | number | null | undefined;
-}) {
-  if (value == null || value === "") return null;
-  return (
-    <div className="flex items-center justify-between gap-3 py-1.5">
-      <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-        <Icon className="h-3 w-3 shrink-0 opacity-60" />
-        <span>{label}</span>
-      </div>
-      <span className="truncate text-right text-[11px] font-medium">{value}</span>
     </div>
   );
 }

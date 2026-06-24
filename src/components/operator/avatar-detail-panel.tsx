@@ -73,7 +73,7 @@ export function AvatarDetailPanel({
               <PersonalityTab avatar={avatar} accountId={accountId} onUpdated={onAvatarUpdated} />
             </TabsContent>
             <TabsContent value="device">
-              <DeviceTab avatar={avatar} />
+              <DeviceTab avatar={avatar} onUpdated={onAvatarUpdated} />
             </TabsContent>
             <TabsContent value="content">
               <ContentTab avatar={avatar} />
