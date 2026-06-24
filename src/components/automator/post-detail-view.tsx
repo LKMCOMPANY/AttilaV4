@@ -8,7 +8,11 @@ import {
   ExternalLink,
   Languages,
   User,
+  UserX,
+  Filter,
+  Clock,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,6 +25,7 @@ import { formatDistanceToNow } from "date-fns";
 import type {
   CampaignPost,
   CampaignJobWithAvatar,
+  CampaignPostStatus,
   SocialPlatform,
 } from "@/types";
 
@@ -228,7 +233,7 @@ export function PostDetailView({
                       {decision.relevant ? "Relevant" : "Filtered"}
                     </Badge>
                     <span className="text-[10px] text-muted-foreground">
-                      {decision.suggested_avatar_count} avatar
+                      {decision.suggested_avatar_count} suggested avatar
                       {decision.suggested_avatar_count !== 1 ? "s" : ""}
                     </span>
                   </>
@@ -242,12 +247,19 @@ export function PostDetailView({
             </Section>
           )}
 
-          {/* Source screenshot — full width */}
+          {/* Source screenshot — full width. Only meaningful once a
+              response job exists. For posts that never reached the queue
+              (no avatar available) we explain why instead of showing a
+              misleading "pending capture" placeholder. */}
           <Section label="Source Capture">
-            <DeviceScreenshot
-              url={sourceScreenshot}
-              alt={`Source: ${post.post_author ?? "post"}`}
-            />
+            {sourceScreenshot || responses.length > 0 ? (
+              <DeviceScreenshot
+                url={sourceScreenshot}
+                alt={`Source: ${post.post_author ?? "post"}`}
+              />
+            ) : (
+              <NoCaptureNote status={post.status} />
+            )}
           </Section>
 
           {/* Responses — text on top, proof screenshot directly below */}
@@ -309,6 +321,46 @@ function ResponseDetailCard({ job }: { job: CampaignJobWithAvatar }) {
         url={job.proof_screenshot}
         alt={`Proof: ${job.avatar_name ?? "response"}`}
       />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// No-capture note — shown in place of the screenshot placeholder for posts
+// that never produced a response job, so "pending capture" never implies an
+// action is on its way when none is.
+// ---------------------------------------------------------------------------
+
+const NO_CAPTURE_NOTE: Partial<
+  Record<CampaignPostStatus, { icon: typeof Clock; color: string; message: string }>
+> = {
+  awaiting_avatars: {
+    icon: UserX,
+    color: "text-warning",
+    message:
+      "Waiting for an available avatar — no response has been posted yet. Check the campaign's army selection.",
+  },
+  filtered_out: {
+    icon: Filter,
+    color: "text-muted-foreground",
+    message:
+      "Expired before an avatar became available — no response was posted.",
+  },
+};
+
+function NoCaptureNote({ status }: { status: CampaignPostStatus }) {
+  const config = NO_CAPTURE_NOTE[status] ?? {
+    icon: Clock,
+    color: "text-muted-foreground",
+    message: "No response has been posted for this post.",
+  };
+  const Icon = config.icon;
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-dashed border-border/50 bg-muted/20 px-3 py-3">
+      <Icon className={cn("mt-0.5 h-3.5 w-3.5 shrink-0", config.color)} />
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {config.message}
+      </p>
     </div>
   );
 }

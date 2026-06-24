@@ -233,7 +233,7 @@ export async function updateCampaign(
 
   const { data: existing, error: fetchErr } = await supabase
     .from("campaigns")
-    .select("account_id")
+    .select("account_id, status, army_ids")
     .eq("id", campaignId)
     .single();
 
@@ -252,6 +252,20 @@ export async function updateCampaign(
 
   if (input.platforms !== undefined && input.platforms.length === 0) {
     return { data: null, error: "At least one platform is required" };
+  }
+
+  // Guardrail: an active campaign with no army silently parks every
+  // relevant post in `awaiting_avatars` (no job, no error). Block the
+  // activation so the operator can't end up with a campaign that looks
+  // live but can never respond. We evaluate the *resulting* state so the
+  // check holds whether status, army_ids, or both are being patched.
+  const nextStatus = input.status ?? (existing.status as Campaign["status"]);
+  const nextArmyIds = input.army_ids ?? (existing.army_ids as string[]);
+  if (nextStatus === "active" && nextArmyIds.length === 0) {
+    return {
+      data: null,
+      error: "Assign at least one army before activating the campaign.",
+    };
   }
 
   const { data, error } = await supabase

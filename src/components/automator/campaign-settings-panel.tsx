@@ -19,6 +19,8 @@ import {
   Loader2,
   Filter,
   Globe,
+  Check,
+  AlertTriangle,
 } from "lucide-react";
 import { XIcon, TikTokIcon } from "@/components/icons/social-icons";
 import { CampaignFiltersSection } from "@/components/campaigns/campaign-filters";
@@ -246,6 +248,8 @@ function ArmySection({
     onSave({ army_ids: updated });
   };
 
+  const noArmySelected = campaign.army_ids.length === 0;
+
   return (
     <Section title="Avatar Army" icon={Shield}>
       {loading ? (
@@ -264,13 +268,24 @@ function ArmySection({
                 key={army.id}
                 type="button"
                 onClick={() => toggle(army.id)}
+                aria-pressed={active}
                 className={cn(
                   "flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors",
                   active
-                    ? "border-primary bg-primary/5"
+                    ? "border-primary bg-primary/10 ring-1 ring-primary/30"
                     : "border-border hover:bg-muted/50"
                 )}
               >
+                <span
+                  className={cn(
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border transition-colors",
+                    active
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-muted-foreground/40"
+                  )}
+                >
+                  {active && <Check className="h-3 w-3" strokeWidth={3} />}
+                </span>
                 <Users className={cn("h-3 w-3 shrink-0", active ? "text-primary" : "text-muted-foreground")} />
                 <span className="min-w-0 flex-1 truncate text-xs font-medium">{army.name}</span>
                 <span className="text-[10px] tabular-nums text-muted-foreground">
@@ -280,6 +295,16 @@ function ArmySection({
             );
           })}
         </div>
+      )}
+
+      {!loading && noArmySelected && armies.length > 0 && (
+        <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-warning">
+          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+          <span>
+            No army selected. Relevant posts will wait for an avatar and never
+            get a response{campaign.status === "active" ? " — even while the campaign is active" : ""}.
+          </span>
+        </p>
       )}
     </Section>
   );

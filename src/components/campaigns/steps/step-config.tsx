@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { Label } from "@/components/ui/label";
-import { Loader2, Shield, Users, Filter } from "lucide-react";
+import { Loader2, Shield, Users, Filter, Check, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getAccountArmies } from "@/app/actions/campaigns";
 import { CampaignFiltersSection } from "../campaign-filters";
@@ -59,10 +59,11 @@ export function StepConfig({ data, onChange, accountId }: StepProps) {
                   key={army.id}
                   type="button"
                   onClick={() => toggleArmy(army.id)}
+                  aria-pressed={isSelected}
                   className={cn(
                     "flex items-center gap-2.5 rounded-lg border p-2.5 text-left transition-colors",
                     isSelected
-                      ? "border-primary bg-primary/5"
+                      ? "border-primary bg-primary/10 ring-1 ring-primary/30"
                       : "border-border hover:border-primary/30 hover:bg-muted/50"
                   )}
                 >
@@ -74,16 +75,36 @@ export function StepConfig({ data, onChange, accountId }: StepProps) {
                   >
                     <Users className="h-3.5 w-3.5" />
                   </div>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{army.name}</p>
                     <p className="text-[11px] text-muted-foreground">
                       {army.avatar_count} avatar{army.avatar_count !== 1 ? "s" : ""}
                     </p>
                   </div>
+                  <span
+                    className={cn(
+                      "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors",
+                      isSelected
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-muted-foreground/30"
+                    )}
+                  >
+                    {isSelected && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
+                  </span>
                 </button>
               );
             })}
           </div>
+        )}
+
+        {!loading && armies.length > 0 && data.army_ids.length === 0 && (
+          <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-warning">
+            <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+            <span>
+              Select at least one army. Without avatars, relevant posts are
+              detected but never get a response.
+            </span>
+          </p>
         )}
       </div>
 
