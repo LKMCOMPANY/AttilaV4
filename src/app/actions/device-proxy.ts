@@ -5,11 +5,9 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { resolveDeviceAccess } from "@/lib/devices/access";
 import {
-  checkProxyEgress,
   setProxyConfig,
-  ContainerNotReadyError,
+  fetchProxyConfig,
   ProxyTargetNotRunningError,
-  type ProxyEgressResult,
 } from "@/lib/box-api";
 
 // ---------------------------------------------------------------------------
@@ -26,17 +24,23 @@ export interface DeviceProxyFields {
   proxy_password: string | null;
 }
 
-export interface TestProxyResult {
+/** Proxy actually applied on the device, read live from the box (`proxy_get`). */
+export interface AppliedProxy {
+  enabled: boolean;
+  type: string | null;
+  host: string | null;
+  port: number | null;
+  account: string | null;
+}
+
+export interface VerifyProxyResult {
   error: string | null;
-  deviceStopped: boolean;
-  egress: ProxyEgressResult | null;
+  applied: AppliedProxy | null;
 }
 
 export interface UpdateProxyResult {
   error: string | null;
   proxy: DeviceProxyFields | null;
-  /** proxy_set persists at the VMOS layer; Clash only re-reads on restart. */
-  requiresRestart: boolean;
 }
 
 const updateProxySchema = z.object({
@@ -51,32 +55,65 @@ const updateProxySchema = z.object({
 export type UpdateProxyInput = z.input<typeof updateProxySchema>;
 
 // ---------------------------------------------------------------------------
-// Test — real egress check through the device (true exit IP + geo)
+// Verify — read the proxy actually applied on the device, and resync the DB
+// ---------------------------------------------------------------------------
+//
+// `proxy_get` reflects the live per-container mihomo config managed by the box
+// backend (`cbs_go`). We deliberately do NOT use its `healthy` flag as a
+// connectivity signal — it was observed to report `true` on proxies that did
+// not route at all. A true reachability test requires the host-side mihomo
+// delay API, which is not exposed through the tunnel; that is tracked
+// separately. This verifies what is *applied*, not whether it reaches the net.
 // ---------------------------------------------------------------------------
 
-export async function testDeviceProxy(deviceId: string): Promise<TestProxyResult> {
+export async function verifyDeviceProxy(deviceId: string): Promise<VerifyProxyResult> {
   try {
-    const { dbId, tunnelHostname } = await resolveDeviceAccess(deviceId);
-    const egress = await checkProxyEgress(tunnelHostname, dbId);
-    return { error: null, deviceStopped: false, egress };
-  } catch (err) {
-    if (err instanceof ContainerNotReadyError) {
+    const { deviceId: id, dbId, tunnelHostname } = await resolveDeviceAccess(deviceId);
+
+    const live = await fetchProxyConfig(tunnelHostname, dbId);
+    if (!live) {
       return {
-        error: "Device is stopped — start it before testing the proxy.",
-        deviceStopped: true,
-        egress: null,
+        error: "Could not read the proxy from the device — start it and retry.",
+        applied: null,
       };
     }
-    return {
-      error: err instanceof Error ? err.message : "Unknown error",
-      deviceStopped: false,
-      egress: null,
+
+    const applied: AppliedProxy = {
+      enabled: live.enabled,
+      type: live.proxyType ?? null,
+      host: live.ip ?? null,
+      port: live.port ?? null,
+      account: live.account ?? null,
     };
+
+    // Keep the DB in sync with what the device actually reports.
+    const supabase = await createClient();
+    await supabase
+      .from("devices")
+      .update({
+        proxy_enabled: applied.enabled,
+        proxy_type: applied.type,
+        proxy_host: applied.host,
+        proxy_port: applied.port,
+        proxy_account: applied.account,
+        proxy_password: live.password ?? null,
+      })
+      .eq("id", id);
+
+    revalidatePath("/dashboard/operator");
+    return { error: null, applied };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error", applied: null };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Update — write the proxy to VMOS + persist to the DB
+// Update — provision the proxy on the device (live) + persist to the DB
+// ---------------------------------------------------------------------------
+//
+// `setProxyConfig` (VMOS `proxy_set`) makes `cbs_go` rewrite the host-side
+// mihomo config and hot-reload it: the change is applied to the device
+// immediately, no restart. It requires the container to be running.
 // ---------------------------------------------------------------------------
 
 export async function updateDeviceProxy(
@@ -84,7 +121,7 @@ export async function updateDeviceProxy(
 ): Promise<UpdateProxyResult> {
   const parsed = updateProxySchema.safeParse(input);
   if (!parsed.success) {
-    return { error: parsed.error.issues[0].message, proxy: null, requiresRestart: false };
+    return { error: parsed.error.issues[0].message, proxy: null };
   }
   const { deviceId, proxyType, host, port, account, password } = parsed.data;
 
@@ -110,22 +147,14 @@ export async function updateDeviceProxy(
 
     const supabase = await createClient();
     const { error } = await supabase.from("devices").update(proxy).eq("id", id);
-    if (error) return { error: error.message, proxy: null, requiresRestart: false };
+    if (error) return { error: error.message, proxy: null };
 
     revalidatePath("/dashboard/operator");
-    return { error: null, proxy, requiresRestart: true };
+    return { error: null, proxy };
   } catch (err) {
     if (err instanceof ProxyTargetNotRunningError) {
-      return {
-        error: "Start the device before updating its proxy.",
-        proxy: null,
-        requiresRestart: false,
-      };
+      return { error: "Start the device before updating its proxy.", proxy: null };
     }
-    return {
-      error: err instanceof Error ? err.message : "Unknown error",
-      proxy: null,
-      requiresRestart: false,
-    };
+    return { error: err instanceof Error ? err.message : "Unknown error", proxy: null };
   }
 }

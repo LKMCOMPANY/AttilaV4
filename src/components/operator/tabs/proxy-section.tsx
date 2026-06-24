@@ -8,12 +8,11 @@ import {
   Lock,
   User,
   Hash,
-  Plug,
+  RefreshCw,
   Pencil,
   Check,
   X,
   Loader2,
-  MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,10 +21,10 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { cn } from "@/lib/utils";
 import { Section, InfoRow } from "./device-info";
 import {
-  testDeviceProxy,
+  verifyDeviceProxy,
   updateDeviceProxy,
   type DeviceProxyFields,
-  type TestProxyResult,
+  type AppliedProxy,
 } from "@/app/actions/device-proxy";
 import type { Device } from "@/types";
 
@@ -56,23 +55,34 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Draft>(() => draftFromDevice(device));
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [test, setTest] = useState<TestProxyResult | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [applied, setApplied] = useState<AppliedProxy | null>(null);
 
   const hasProxy = device.proxy_enabled || !!device.proxy_host;
 
-  const runTest = async () => {
-    setTesting(true);
-    setTest(null);
+  const runVerify = async () => {
+    setVerifying(true);
+    setApplied(null);
     try {
-      const result = await testDeviceProxy(device.id);
-      setTest(result);
-      if (result.error) toast.error(result.error);
-      else if (result.egress?.reachable) toast.success("Proxy reachable");
+      const result = await verifyDeviceProxy(device.id);
+      if (result.error || !result.applied) {
+        toast.error(result.error ?? "Could not read proxy");
+        return;
+      }
+      setApplied(result.applied);
+      onProxyUpdated({
+        proxy_enabled: result.applied.enabled,
+        proxy_type: result.applied.type,
+        proxy_host: result.applied.host,
+        proxy_port: result.applied.port,
+        proxy_account: result.applied.account,
+        proxy_password: device.proxy_password,
+      });
+      toast.success("Proxy read from device");
     } catch {
-      toast.error("Proxy test failed");
+      toast.error("Verification failed");
     } finally {
-      setTesting(false);
+      setVerifying(false);
     }
   };
 
@@ -98,8 +108,8 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
       }
       onProxyUpdated(result.proxy);
       setEditing(false);
-      setTest(null);
-      toast.success("Proxy saved — applied on next device restart");
+      setApplied(null);
+      toast.success("Proxy applied to the device");
     } catch {
       toast.error("Failed to update proxy");
     } finally {
@@ -152,7 +162,7 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
             <Input id="proxy-password" type="password" value={draft.password} onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))} placeholder="••••••••" className="h-7 text-[11px]" autoComplete="off" />
           </Field>
           <p className="text-[10px] leading-snug text-muted-foreground/70">
-            Saved to the box immediately. The device picks up the new proxy on its next restart.
+            Applied to the device immediately. The device must be running.
           </p>
         </div>
       </Section>
@@ -160,7 +170,7 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
   }
 
   // -------------------------------------------------------------------------
-  // Read-only view + test
+  // Read-only view + verify
   // -------------------------------------------------------------------------
   return (
     <Section
@@ -168,8 +178,8 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
       icon={Shield}
       action={
         <>
-          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-[10px]" onClick={runTest} disabled={testing}>
-            {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plug className="h-3 w-3" />} Test
+          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-[10px]" onClick={runVerify} disabled={verifying}>
+            {verifying ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Verify
           </Button>
           <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-[10px]" onClick={startEdit}>
             <Pencil className="h-3 w-3" /> Edit
@@ -189,7 +199,7 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
         <p className="py-1.5 text-[11px] text-muted-foreground/70">No proxy configured</p>
       )}
 
-      {test && <TestResult test={test} />}
+      {applied && <AppliedResult applied={applied} />}
     </Section>
   );
 }
@@ -217,34 +227,17 @@ function Field({
   );
 }
 
-function TestResult({ test }: { test: TestProxyResult }) {
-  const ok = test.egress?.reachable === true;
-  const e = test.egress;
-  const message = test.error ?? e?.detail ?? "";
-  const dot = ok ? "bg-success" : e && !e.engineRunning ? "bg-destructive" : "bg-warning";
-
+function AppliedResult({ applied }: { applied: AppliedProxy }) {
+  const label = applied.host
+    ? `${applied.type ?? "proxy"} · ${applied.host}:${applied.port ?? "?"}`
+    : "No proxy applied";
   return (
     <div className="mt-2 rounded-md border bg-background/60 px-2.5 py-2">
       <div className="flex items-center gap-2">
-        <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
-        <span className="text-[11px] font-medium">
-          {ok ? "Reachable" : "Not reachable"}
-        </span>
-        {ok && e?.exitIp && (
-          <span className="ml-auto font-mono text-[10px] text-muted-foreground">{e.exitIp}</span>
-        )}
+        <span className={cn("h-1.5 w-1.5 rounded-full", applied.enabled ? "bg-success" : "bg-muted-foreground")} />
+        <span className="text-[11px] font-medium">Applied on device</span>
       </div>
-      {ok && e ? (
-        <div className="mt-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-          <MapPin className="h-3 w-3 opacity-60" />
-          <span>
-            {[e.city, e.country].filter(Boolean).join(", ")}
-            {e.isp ? ` · ${e.isp}` : ""}
-          </span>
-        </div>
-      ) : (
-        <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{message}</p>
-      )}
+      <p className="mt-1 truncate text-[10px] text-muted-foreground">{label}</p>
     </div>
   );
 }
