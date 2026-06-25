@@ -1,0 +1,17 @@
+# MANAGED BY infra/boxes — do not edit on the box.
+# Rendered per box from manifest.tsv by infra/boxes/scripts/deploy.sh.
+#
+# The ingress is identical on every box (only the hostname number and the
+# tunnel id change), which is what makes SSH-over-Access and the HTTP proxy
+# behave the same fleet-wide.
+tunnel: __TUNNEL_ID__
+credentials-file: /etc/cloudflared/__TUNNEL_ID__.json
+
+ingress:
+  # SSH over Cloudflare Access (protected by the MagicBox SSH service token).
+  - hostname: ssh-box-__NUM__.attila.army
+    service: ssh://localhost:22
+  # magicbox-proxy (VMOS API + device streams).
+  - hostname: box-__NUM__.attila.army
+    service: http://127.0.0.1:8080
+  - service: http_status:404

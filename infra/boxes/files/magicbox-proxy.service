@@ -1,0 +1,23 @@
+[Unit]
+Description=MagicBox Reverse Proxy
+After=network-online.target
+Wants=network-online.target cloudflared.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/magicbox-proxy
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+# API_HOST is auto-detected by config.js (first non-internal IPv4 = box LAN
+# IP). Override only if a box has multiple NICs by creating /etc/magicbox-proxy.env
+# with a single line: API_HOST=<lan-ip>  (the leading "-" makes it optional).
+EnvironmentFile=-/etc/magicbox-proxy.env
+ExecStartPre=/bin/sleep 3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=magicbox-proxy
+
+[Install]
+WantedBy=multi-user.target

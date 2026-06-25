@@ -57,14 +57,16 @@ reports `true` even for proxies that do not route. Do not use it for that.
 
 ## Deploy
 
-Runs under systemd as `magicbox-proxy.service`. To roll out a change:
+Runs under systemd as `magicbox-proxy.service`. Deployment is handled by the
+fleet deployer in [`../boxes`](../boxes), which ships this code **and** the box
+config (cloudflared + units) in one idempotent pass:
 
 ```bash
-./scripts/deploy.sh ssh-box-1.attila.army ssh-box-2.attila.army \
-                    ssh-box-3.attila.army ssh-box-4.attila.army
+cd ../boxes
+BOX_SSH_PASSWORD=... ./scripts/deploy.sh --proxy-only 1 2 3 4   # just this code
+BOX_SSH_PASSWORD=... ./scripts/deploy.sh 1 2 3 4                # full box converge
 ```
 
-This syncs `src/` + `package.json`, runs `npm install --omit=dev`, restarts the
-service, and checks `/healthz`. SSH access is expected via a `~/.ssh/config`
-`Host ssh-box-*.attila.army` block using a `cloudflared access ssh`
-ProxyCommand.
+The deployer builds the `cloudflared access ssh` ProxyCommand itself from the
+CF Access service token, so no hand-edited `~/.ssh/config` is required. See
+[`../boxes/README.md`](../boxes/README.md).

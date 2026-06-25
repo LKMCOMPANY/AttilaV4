@@ -1,0 +1,2 @@
+# Local deploy secrets (SSH password, CF Access service token). Never commit.
+.env
