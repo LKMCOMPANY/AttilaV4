@@ -5,12 +5,18 @@
 #   tunnel_id   Cloudflare Tunnel UUID for that box (public; also the DNS
 #               CNAME target <tunnel_id>.cfargotunnel.com). NOT a secret —
 #               the credentials JSON it references stays on the box only.
+#   api_host    Box LAN IP where the VMOS/cbs_go API listens (:18182). Written
+#               to /etc/magicbox-proxy.env by deploy.sh as an explicit override,
+#               because these hosts have several non-internal IPv4s (docker0
+#               172.17.0.1, gateway alias, …) and the proxy's auto-detect could
+#               otherwise pick the wrong one. Leave empty to fall back to
+#               auto-detect.
 #
 # Per-box config is rendered from this file by scripts/deploy.sh. Everything
 # else (proxy code, systemd units, ingress shape) is identical across boxes.
 #
-# num	tunnel_id
-1	676c636f-508c-45fd-9434-572e2c26cbe6
-2	56b2f4bd-4f22-40a7-8c20-f79824689c49
-3	1a9701e0-4553-4bd8-bf55-49523b0c80e4
-4	6fd0df5b-b774-4dbe-bc4e-91f187a1f280
+# num	tunnel_id	api_host
+1	676c636f-508c-45fd-9434-572e2c26cbe6	192.168.1.27
+2	56b2f4bd-4f22-40a7-8c20-f79824689c49	192.168.1.19
+3	1a9701e0-4553-4bd8-bf55-49523b0c80e4	192.168.74.151
+4	6fd0df5b-b774-4dbe-bc4e-91f187a1f280	192.168.1.16

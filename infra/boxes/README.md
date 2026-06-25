@@ -8,16 +8,18 @@ Versioned, identical (iso) configuration for every VMOS box. A box runs:
 - **magicbox-proxy** — the Node reverse proxy (code lives in
   [`../magicbox-proxy`](../magicbox-proxy)) on `127.0.0.1:8080`.
 
-Everything is identical across boxes except two values, captured in
-[`manifest.tsv`](manifest.tsv): the **box number** (hostnames) and the
-**tunnel id**. The LAN IP for the VMOS API is auto-detected by the proxy
-(`config.js`), so the systemd units are byte-for-byte iso.
+Everything is identical across boxes except the per-box values captured in
+[`manifest.tsv`](manifest.tsv): the **box number** (hostnames), the **tunnel
+id**, and the **api_host** (LAN IP of the VMOS API). The systemd units are
+byte-for-byte iso; `deploy.sh` writes the api_host to `/etc/magicbox-proxy.env`
+as an explicit override (these hosts have several non-internal IPv4s — docker0,
+gateway alias — so the proxy's auto-detect is not safe to rely on).
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `manifest.tsv` | Source of truth: box number → tunnel id |
+| `manifest.tsv` | Source of truth: box number → tunnel id, api_host |
 | `templates/cloudflared.config.yml.tmpl` | Rendered per box → `/etc/cloudflared/config.yml` |
 | `files/cloudflared.service` | iso → `/etc/systemd/system/cloudflared.service` |
 | `files/magicbox-proxy.service` | iso → `/etc/systemd/system/magicbox-proxy.service` |

@@ -53,8 +53,9 @@ box_host() { echo "ssh-box-$1.attila.army"; }
 ssh_box()  { local n="$1"; shift; SSHPASS="$BOX_SSH_PASSWORD" sshpass -e ssh "${SSH_OPTS[@]}" "$(box_host "$n")" "$@"; }
 scp_box()  { local n="$1" src="$2" dst="$3"; SSHPASS="$BOX_SSH_PASSWORD" sshpass -e scp -q "${SSH_OPTS[@]}" "$src" "$(box_host "$n"):$dst"; }
 
-tunnel_for() { awk -F'\t' -v n="$1" '$1==n {print $2}' "$MANIFEST"; }
-boxes_all()  { awk -F'\t' '/^[0-9]/ {print $1}' "$MANIFEST"; }
+tunnel_for()  { awk -F'\t' -v n="$1" '$1==n {print $2}' "$MANIFEST"; }
+apihost_for() { awk -F'\t' -v n="$1" '$1==n {print $3}' "$MANIFEST"; }
+boxes_all()   { awk -F'\t' '/^[0-9]/ {print $1}' "$MANIFEST"; }
 
 render_config() {  # num tunnel -> stdout
   sed -e "s/__NUM__/$1/g" -e "s/__TUNNEL_ID__/$2/g" "$ROOT/templates/cloudflared.config.yml.tmpl"
@@ -77,6 +78,17 @@ deploy_full() {  # num
     "cp -f /etc/cloudflared/config.yml /etc/cloudflared/config.yml.bak.\$(date +%Y%m%d_%H%M%S) 2>/dev/null; cat > /etc/cloudflared/config.yml"
   scp_box "$n" "$ROOT/files/cloudflared.service"     "/etc/systemd/system/cloudflared.service"
   scp_box "$n" "$ROOT/files/magicbox-proxy.service"  "/etc/systemd/system/magicbox-proxy.service"
+
+  # Explicit API_HOST override (these hosts have several non-internal IPv4s, so
+  # the proxy's auto-detect is not safe to rely on). Empty manifest value ⇒
+  # remove the file and fall back to auto-detect.
+  local apihost; apihost="$(apihost_for "$n")"
+  if [ -n "$apihost" ]; then
+    echo "  - proxy env: API_HOST=$apihost"
+    printf 'API_HOST=%s\n' "$apihost" | ssh_box "$n" "cat > /etc/magicbox-proxy.env"
+  else
+    ssh_box "$n" "rm -f /etc/magicbox-proxy.env"
+  fi
 
   echo "  - proxy code"
   deploy_proxy "$n"
