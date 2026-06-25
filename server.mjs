@@ -177,7 +177,27 @@ async function validateSessionUncached(token, boxId) {
 const WS_PATH_RE = /^\/ws\/stream\/([^/]+)\/([^/]+)\/(video|touch|audio)$/;
 const wss = new WebSocketServer({ noServer: true });
 
-function proxyWebSocket(clientWs, targetUrl) {
+// Keep a streamed device's last_seen fresh so the reaper never stops a live
+// session. One heartbeat per device (attached to the video stream only).
+const HEARTBEAT_INTERVAL_MS = 60_000;
+
+function startHeartbeat(boxId, containerId) {
+  const touch = () => {
+    supabase
+      .from("devices")
+      .update({ last_seen: new Date().toISOString() })
+      .eq("box_id", boxId)
+      .eq("db_id", containerId)
+      .then(
+        () => {},
+        (e) => console.error(`[hb] ${e?.message ?? e}`)
+      );
+  };
+  touch();
+  return setInterval(touch, HEARTBEAT_INTERVAL_MS);
+}
+
+function proxyWebSocket(clientWs, targetUrl, meta) {
   // Small jitter de-synchronizes simultaneous reconnects so we never open a
   // burst of upstream sockets in the same tick.
   const jitter = Math.floor(Math.random() * 150);
@@ -188,13 +208,14 @@ function proxyWebSocket(clientWs, targetUrl) {
     ) {
       return;
     }
-    openUpstream(clientWs, targetUrl);
+    openUpstream(clientWs, targetUrl, meta);
   }, jitter);
 }
 
-function openUpstream(clientWs, targetUrl) {
+function openUpstream(clientWs, targetUrl, meta) {
   const upstream = new WebSocket(targetUrl, { headers: CF_HEADERS });
   const pending = [];
+  let heartbeat = null;
   let clientReady = clientWs.readyState === WebSocket.OPEN;
 
   if (!clientReady) {
@@ -207,6 +228,9 @@ function openUpstream(clientWs, targetUrl) {
 
   upstream.on("open", () => {
     console.log(`[ws] connected → ${targetUrl}`);
+    if (meta?.type === "video") {
+      heartbeat = startHeartbeat(meta.boxId, meta.containerId);
+    }
   });
 
   upstream.on("message", (data, isBinary) => {
@@ -225,6 +249,10 @@ function openUpstream(clientWs, targetUrl) {
 
   const cleanup = (source) => {
     console.log(`[ws] closed (${source})`);
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
     if (upstream.readyState === WebSocket.OPEN) upstream.close();
     if (clientWs.readyState === WebSocket.OPEN) clientWs.close();
   };
@@ -287,7 +315,7 @@ app.prepare().then(() => {
       const targetUrl = `wss://${hostname}/stream/${containerId}/${type}`;
 
       wss.handleUpgrade(req, socket, head, (ws) => {
-        proxyWebSocket(ws, targetUrl);
+        proxyWebSocket(ws, targetUrl, { boxId, containerId, type });
       });
     } catch (err) {
       console.error(`[ws] upgrade error:`, err);
@@ -314,6 +342,7 @@ const PROCESS_CONCURRENCY = parseInt(process.env.PIPELINE_PROCESS_CONCURRENCY ||
 const EXECUTE_CONCURRENCY = parseInt(process.env.PIPELINE_EXECUTE_CONCURRENCY || "2", 10);
 const IDLE_MS = parseInt(process.env.PIPELINE_IDLE_MS || "5000", 10);
 const SWEEP_INTERVAL_MS = parseInt(process.env.GORGONE_SWEEP_INTERVAL_MS || "60000", 10);
+const REAP_INTERVAL_MS = parseInt(process.env.DEVICE_REAP_INTERVAL_MS || "120000", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function workerLoop(name, port, path, opts = {}) {
@@ -375,4 +404,11 @@ function startPipelineWorkers(port) {
     fixedIntervalMs: SWEEP_INTERVAL_MS,
   });
   console.log(`> Gorgone sweep worker: every ${SWEEP_INTERVAL_MS}ms`);
+
+  // Device reaper — stops abandoned containers (running, no pending job, no
+  // active stream) so boxes never accumulate idle containers and thrash.
+  workerLoop("Device-Reaper", port, "/api/devices/reap", {
+    fixedIntervalMs: REAP_INTERVAL_MS,
+  });
+  console.log(`> Device reaper worker: every ${REAP_INTERVAL_MS}ms`);
 }

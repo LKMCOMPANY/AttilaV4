@@ -60,18 +60,23 @@ export async function POST(req: NextRequest) {
   }
 
   // -----------------------------------------------------------------------
-  // 3. Resolve device → box and check slot capacity
+  // 3. Resolve device → box and check capacity.
+  //    The cap is the box's max_concurrent_containers MINUS the operator
+  //    reserve, counted against the REAL running containers (the same pool the
+  //    operator dashboard uses). Leaving `operator_reserve` slots free means a
+  //    human can always open a device even while campaigns run. Executing a job
+  //    on an already-running device is never gated — it adds no new container.
   // -----------------------------------------------------------------------
   const { data: device } = await supabase
     .from("devices")
-    .select("db_id, box_id")
+    .select("db_id, box_id, state")
     .eq("id", job.device_id)
     .single();
 
   const { data: box } = device
     ? await supabase
         .from("boxes")
-        .select("tunnel_hostname, max_concurrent_containers")
+        .select("tunnel_hostname, max_concurrent_containers, operator_reserve")
         .eq("id", device.box_id)
         .single()
     : { data: null };
@@ -85,17 +90,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Device or box not found" }, { status: 404 });
   }
 
-  const maxSlots = box.max_concurrent_containers ?? 10;
+  if (device.state !== "running") {
+    const automatorSlots =
+      (box.max_concurrent_containers ?? 3) - (box.operator_reserve ?? 1);
 
-  const { count: boxExecuting } = await supabase
-    .from("campaign_jobs")
-    .select("*", { count: "exact", head: true })
-    .eq("box_id", device.box_id)
-    .eq("status", "executing");
+    const { count: boxRunning } = await supabase
+      .from("devices")
+      .select("*", { count: "exact", head: true })
+      .eq("box_id", device.box_id)
+      .eq("state", "running");
 
-  if ((boxExecuting ?? 0) >= maxSlots) {
-    console.log(`[Execute] Box ${device.box_id} at capacity (${boxExecuting}/${maxSlots})`);
-    return NextResponse.json({ action: "idle", message: "Box at capacity" });
+    if ((boxRunning ?? 0) >= automatorSlots) {
+      console.log(`[Execute] Box ${device.box_id} at capacity (${boxRunning}/${automatorSlots} automator slots)`);
+      return NextResponse.json({ action: "idle", message: "Box at capacity" });
+    }
   }
 
   // -----------------------------------------------------------------------

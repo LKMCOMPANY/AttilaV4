@@ -7,7 +7,12 @@ import {
   shellSafe,
   stopContainer as stopContainerVmos,
 } from "@/lib/box-api";
-import { resolveDeviceAccess, fanOutDeviceStateChange } from "@/lib/devices/access";
+import {
+  resolveDeviceAccess,
+  fanOutDeviceStateChange,
+  getBoxRunningCount,
+  findReapableOwnDevice,
+} from "@/lib/devices/access";
 import { revalidatePath } from "next/cache";
 
 // ---------------------------------------------------------------------------
@@ -38,20 +43,71 @@ export async function toggleScreenWake(
 // ---------------------------------------------------------------------------
 // Start container — issues the run and returns immediately (~1–2s) without
 // blocking on the full Android boot. The operator UI gates the live stream on
-// the `/stream-ready` probe, so the Start button stays responsive and the
-// device viewport shows a calm "Starting device → Connecting → Live".
+// the `/stream-ready` probe, so the Start button stays responsive.
+//
+// Capacity (hybrid): starting a NEW container is gated on the box's
+// `max_concurrent_containers` (shared with the automator). When the box is
+// full we first try to auto-close one idle device the caller can reach; if
+// none qualifies we return `atCapacity` so the UI can ask the operator to free
+// a slot. Starting an already-running device is never gated (no new container).
 // ---------------------------------------------------------------------------
+
+const DEFAULT_MAX_CONTAINERS = 3;
+
+export interface StartContainerResult {
+  error: string | null;
+  atCapacity?: boolean;
+  max?: number;
+  running?: { id: string; userName: string | null }[];
+  autoClosed?: { userName: string | null };
+}
 
 export async function startContainer(
   deviceId: string
-): Promise<{ error: string | null }> {
+): Promise<StartContainerResult> {
   try {
     const { deviceId: id, dbId, accountId, boxId, tunnelHostname } =
       await resolveDeviceAccess(deviceId);
 
-    await startContainerProcess(tunnelHostname, dbId);
-
     const supabase = await createClient();
+    const { data: row } = await supabase
+      .from("devices")
+      .select("state, boxes(max_concurrent_containers)")
+      .eq("id", id)
+      .single();
+
+    const alreadyRunning = row?.state === "running";
+    const max =
+      (row?.boxes as unknown as { max_concurrent_containers: number } | null)
+        ?.max_concurrent_containers ?? DEFAULT_MAX_CONTAINERS;
+
+    let autoClosed: { userName: string | null } | undefined;
+
+    if (!alreadyRunning && (await getBoxRunningCount(boxId)) >= max) {
+      const victim = await findReapableOwnDevice(supabase, boxId);
+      if (victim) {
+        await stopContainerVmos(tunnelHostname, victim.dbId);
+        await supabase
+          .from("devices")
+          .update({ state: "stopped", last_seen: new Date().toISOString() })
+          .eq("id", victim.id);
+        autoClosed = { userName: victim.userName };
+      } else {
+        const { data: running } = await supabase
+          .from("devices")
+          .select("id, user_name")
+          .eq("box_id", boxId)
+          .eq("state", "running");
+        return {
+          error: null,
+          atCapacity: true,
+          max,
+          running: (running ?? []).map((d) => ({ id: d.id, userName: d.user_name })),
+        };
+      }
+    }
+
+    await startContainerProcess(tunnelHostname, dbId);
     await supabase
       .from("devices")
       .update({ state: "running", last_seen: new Date().toISOString() })
@@ -59,7 +115,7 @@ export async function startContainer(
 
     await fanOutDeviceStateChange(boxId, accountId);
     revalidatePath("/dashboard/operator");
-    return { error: null };
+    return { error: null, autoClosed };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };
   }

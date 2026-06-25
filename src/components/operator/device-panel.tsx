@@ -30,6 +30,7 @@ import {
   startContainer,
   stopContainer,
 } from "@/app/actions/device-control";
+import { CapacityDialog, type CapacityRunningDevice } from "./capacity-dialog";
 import { toast } from "sonner";
 import type { AvatarWithRelations } from "@/types";
 import type { StreamMode } from "@/lib/streaming/types";
@@ -54,6 +55,10 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
     webCodecs ? "stream" : "screenshot"
   );
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [capacity, setCapacity] = useState<{
+    max: number;
+    running: CapacityRunningDevice[];
+  } | null>(null);
 
   // Reset transient interaction state whenever the underlying device changes
   // OR when the server confirms a new state. Without the device-id branch the
@@ -99,25 +104,60 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
 
   const handlePower = useCallback(async () => {
     if (!device) return;
-    const target = isRunning ? "stopped" : "running";
+
+    // Stop is unconditional.
+    if (isRunning) {
+      setActionLoading("power");
+      setOptimisticState("stopped");
+      const result = await stopContainer(device.id);
+      if (result.error) {
+        setOptimisticState(null);
+        toast.error("Failed to stop device", { description: result.error });
+      }
+      setActionLoading(null);
+      return;
+    }
+
+    // Start is capacity-gated. We optimistically show "running" but revert if
+    // the box is full (atCapacity) or the start fails, so the UI never lies.
     setActionLoading("power");
-    setOptimisticState(target);
-    const result = isRunning
-      ? await stopContainer(device.id)
-      : await startContainer(device.id);
+    setOptimisticState("running");
+    const result = await startContainer(device.id);
     if (result.error) {
-      // Revert optimism so the UI doesn't lie about a failed start/stop.
-      // The next realtime broadcast (or the action's own DB write on retry)
-      // will converge `serverState` back to truth, but until then we show
-      // the previous known state instead of a fake one.
       setOptimisticState(null);
-      toast.error(
-        `Failed to ${target === "running" ? "start" : "stop"} device`,
-        { description: result.error },
-      );
+      toast.error("Failed to start device", { description: result.error });
+    } else if (result.atCapacity) {
+      setOptimisticState(null);
+      setCapacity({ max: result.max ?? 0, running: result.running ?? [] });
+    } else if (result.autoClosed?.userName) {
+      toast.info(`Closed ${result.autoClosed.userName} to free a slot`);
     }
     setActionLoading(null);
   }, [device, isRunning]);
+
+  // From the capacity dialog: close the chosen device, then retry the start.
+  const handleFreeSlot = useCallback(
+    async (victimId: string) => {
+      if (!device) return;
+      const stopRes = await stopContainer(victimId);
+      if (stopRes.error) {
+        toast.error("Failed to close device", { description: stopRes.error });
+        return;
+      }
+      const result = await startContainer(device.id);
+      if (result.error) {
+        toast.error("Failed to start device", { description: result.error });
+        setCapacity(null);
+      } else if (result.atCapacity) {
+        // Another slot got taken in the meantime — refresh the list.
+        setCapacity({ max: result.max ?? 0, running: result.running ?? [] });
+      } else {
+        setOptimisticState("running");
+        setCapacity(null);
+      }
+    },
+    [device],
+  );
 
   const handleDownloadScreenshot = useCallback(async () => {
     if (!device) return;
@@ -241,6 +281,18 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
           </div>
         )}
       </div>
+
+      {capacity && (
+        <CapacityDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setCapacity(null);
+          }}
+          max={capacity.max}
+          running={capacity.running}
+          onFreeSlot={handleFreeSlot}
+        />
+      )}
     </div>
   );
 }

@@ -109,3 +109,66 @@ export async function accountDeviceScopeFilter(
     ? `account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`
     : `account_id.eq.${accountId}`;
 }
+
+// A device whose last_seen is fresher than this is treated as having an active
+// stream (the server.mjs heartbeat refreshes it ~every 60s while streaming), so
+// it is never auto-closed to free a slot. Older than this = stream closed.
+const ACTIVE_STREAM_GRACE_MS = 90_000;
+
+/**
+ * Count of containers currently running on a box, across ALL accounts. Uses the
+ * admin client because box capacity is shared between tenants and the caller's
+ * RLS would hide other accounts' devices. This is the number the per-box
+ * capacity limit is enforced against.
+ */
+export async function getBoxRunningCount(boxId: string): Promise<number> {
+  const admin = createAdminClient();
+  const { count } = await admin
+    .from("devices")
+    .select("*", { count: "exact", head: true })
+    .eq("box_id", boxId)
+    .eq("state", "running");
+  return count ?? 0;
+}
+
+export interface ReapCandidate {
+  id: string;
+  dbId: string;
+  userName: string | null;
+}
+
+/**
+ * Oldest running device on the box that the caller can reach (under their RLS
+ * scope), is idle (no active stream for `ACTIVE_STREAM_GRACE_MS`), and has NO
+ * pending/executing campaign job from ANY account (checked with the admin
+ * client so the operator can never auto-close a device the automator still
+ * needs). Returns null when nothing qualifies → the UI shows the capacity popup.
+ */
+export async function findReapableOwnDevice(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  boxId: string,
+): Promise<ReapCandidate | null> {
+  const cutoff = new Date(Date.now() - ACTIVE_STREAM_GRACE_MS).toISOString();
+  const { data: candidates } = await supabase
+    .from("devices")
+    .select("id, db_id, user_name")
+    .eq("box_id", boxId)
+    .eq("state", "running")
+    .lt("last_seen", cutoff)
+    .order("last_seen", { ascending: true });
+
+  if (!candidates || candidates.length === 0) return null;
+
+  const admin = createAdminClient();
+  const { data: busy } = await admin
+    .from("campaign_jobs")
+    .select("device_id")
+    .in("device_id", candidates.map((c) => c.id))
+    .in("status", ["ready", "executing"]);
+  const busyIds = new Set((busy ?? []).map((b) => b.device_id));
+
+  const victim = candidates.find((c) => !busyIds.has(c.id));
+  return victim
+    ? { id: victim.id, dbId: victim.db_id, userName: victim.user_name }
+    : null;
+}
