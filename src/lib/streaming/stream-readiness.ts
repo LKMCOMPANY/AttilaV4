@@ -24,15 +24,15 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 
 function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const id = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(id);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(id);
+      resolve();
+    };
+    const id = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 

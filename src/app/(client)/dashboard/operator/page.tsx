@@ -2,6 +2,7 @@ import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getAvatars } from "@/app/actions/avatars";
+import { accountDeviceScopeFilter } from "@/lib/devices/access";
 import { OperatorLayout } from "@/components/operator/operator-layout";
 
 export default async function OperatorPage({
@@ -23,16 +24,10 @@ export default async function OperatorPage({
 
   const supabase = await createClient();
 
-  const [avatars, { data: accountBoxes }] = await Promise.all([
+  const [avatars, filter] = await Promise.all([
     getAvatars(accountId),
-    supabase.from("account_boxes").select("box_id").eq("account_id", accountId),
+    accountDeviceScopeFilter(supabase, accountId),
   ]);
-
-  const boxIds = (accountBoxes ?? []).map((ab) => ab.box_id);
-
-  const filter = boxIds.length > 0
-    ? `account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`
-    : `account_id.eq.${accountId}`;
 
   const { count: deviceCount } = await supabase
     .from("devices")

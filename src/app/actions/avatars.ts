@@ -12,6 +12,7 @@ import {
   AVATAR_STATUSES,
 } from "@/types";
 import { fetchContainerList } from "@/lib/box-api";
+import { accountDeviceScopeFilter } from "@/lib/devices/access";
 import type { Avatar, AvatarWithRelations, Army, Device, UserProfile } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -73,26 +74,12 @@ export async function getAccountDevices(
 
   const supabase = await createClient();
 
-  // Get box IDs assigned to this account
-  const { data: boxLinks } = await supabase
-    .from("account_boxes")
-    .select("box_id")
-    .eq("account_id", accountId);
-
-  const boxIds = (boxLinks ?? []).map((b) => b.box_id);
-
-  // Devices available = directly assigned OR inside an assigned box
-  let query = supabase.from("devices").select("*");
-
-  if (boxIds.length > 0) {
-    query = query.or(
-      `account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`
-    );
-  } else {
-    query = query.eq("account_id", accountId);
-  }
-
-  const { data, error } = await query.order("user_name", { ascending: true });
+  const filter = await accountDeviceScopeFilter(supabase, accountId);
+  const { data, error } = await supabase
+    .from("devices")
+    .select("*")
+    .or(filter)
+    .order("user_name", { ascending: true });
 
   if (error) throw new Error(error.message);
   return (data ?? []) as Device[];
@@ -551,23 +538,8 @@ export async function getDeviceStates(
 
   const supabase = await createClient();
 
-  const { data: boxLinks } = await supabase
-    .from("account_boxes")
-    .select("box_id")
-    .eq("account_id", accountId);
-
-  const boxIds = (boxLinks ?? []).map((b) => b.box_id);
-
-  let query = supabase.from("devices").select("id, state");
-  if (boxIds.length > 0) {
-    query = query.or(
-      `account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`,
-    );
-  } else {
-    query = query.eq("account_id", accountId);
-  }
-
-  const { data } = await query;
+  const filter = await accountDeviceScopeFilter(supabase, accountId);
+  const { data } = await supabase.from("devices").select("id, state").or(filter);
 
   const map: Record<string, string> = {};
   for (const row of data ?? []) {
@@ -593,22 +565,11 @@ export async function refreshDeviceStates(
 
   const supabase = await createClient();
 
-  // Same device scope as getDeviceStates: directly assigned OR inside a shared box.
-  const { data: boxLinks } = await supabase
-    .from("account_boxes")
-    .select("box_id")
-    .eq("account_id", accountId);
-  const boxIds = (boxLinks ?? []).map((b) => b.box_id);
-
-  let query = supabase
+  const filter = await accountDeviceScopeFilter(supabase, accountId);
+  const { data: devices } = await supabase
     .from("devices")
-    .select("id, db_id, box_id, state, boxes(tunnel_hostname)");
-  query =
-    boxIds.length > 0
-      ? query.or(`account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`)
-      : query.eq("account_id", accountId);
-
-  const { data: devices } = await query;
+    .select("id, db_id, box_id, state, boxes(tunnel_hostname)")
+    .or(filter);
   if (!devices || devices.length === 0) return {};
 
   // One live container list per box (not per device).

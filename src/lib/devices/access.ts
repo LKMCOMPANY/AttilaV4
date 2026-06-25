@@ -88,3 +88,24 @@ export async function fanOutDeviceStateChange(
     broadcastAccountEvent(accountId, "devices", { action: "state_changed" });
   }
 }
+
+/**
+ * PostgREST `.or(...)` filter selecting the devices an account can see: directly
+ * assigned (`account_id`) OR inside a box shared via `account_boxes`. Mirrors the
+ * `client_read_assigned_devices` RLS policy and is the single source of truth for
+ * that scope (used by every account-scoped device query).
+ */
+export async function accountDeviceScopeFilter(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  accountId: string,
+): Promise<string> {
+  const { data } = await supabase
+    .from("account_boxes")
+    .select("box_id")
+    .eq("account_id", accountId);
+
+  const boxIds = (data ?? []).map((b) => b.box_id);
+  return boxIds.length > 0
+    ? `account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`
+    : `account_id.eq.${accountId}`;
+}
