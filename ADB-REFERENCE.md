@@ -51,7 +51,18 @@ isPackageInstalled(tunnelHostname, dbId, pkg)
 // IME lifecycle — ALWAYS pair captureIme + restoreIme via try/finally.
 // The pipeline executor does this for you; CLI scripts do NOT.
 getCurrentIme(tunnelHostname, dbId): Promise<string>
-activateAdbKeyboard(tunnelHostname, dbId)     // throws if package missing
+
+// Full runtime activation, robust by design (refactor 25 June 2026):
+//   1. assert the APK is installed     → JobError("device_setup_required") if not
+//   2. pm enable + ime enable          (VMOS resets the enabled-IME list on every
+//                                        container restart, so this runs per job)
+//   3. WAIT for the enable to propagate (poll `ime list -s`) before `ime set`
+//   4. ime set + verify default_input_method
+// Step 3 is the fix for the "cannot be selected for user #0" race that caused
+// ~700 job failures: `ime enable` is async and `ime set` must not outrun it.
+// Also re-raises VMOS/Docker exec failures (creexec/OCI/"Can't find service")
+// as ContainerNotReadyError instead of a misleading IME error.
+activateAdbKeyboard(tunnelHostname, dbId)
 restoreIme(tunnelHostname, dbId, imeId)       // best-effort, never throws
 
 // Text input — only ADBKeyboard works on X (input text is anti-bot dropped).
@@ -278,6 +289,26 @@ Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled for user 
 ```
 C'est le piège qui a fait planter tous les jobs pipeline du 17 avril.
 
+**Deux pièges supplémentaires (corrigés le 25 juin 2026) :**
+
+1. **`ime enable` est asynchrone.** Il répond `now enabled for user #0`
+   immédiatement, mais `InputMethodManagerService` n'écrit le secure setting
+   `enabled_input_methods` que ~quelques centaines de ms plus tard. Si `ime set`
+   part avant cette écriture, il échoue avec :
+   ```
+   Unknown input method com.android.adbkeyboard/.AdbIME cannot be selected for user #0
+   ```
+   ⚠️ Noter **`selected`** (vient de `ime set`), à ne pas confondre avec
+   **`enabled`** (vient de `ime enable`). C'est la cause des ~700 échecs de
+   jobs de juin. Fix : **attendre** que l'IME apparaisse dans `ime list -s`
+   avant d'appeler `ime set` (`activateAdbKeyboard` le fait via un poll borné).
+
+2. **La liste des IME activées ne survit PAS au redémarrage du container.**
+   L'APK (`enabled=1`) persiste, mais `enabled_input_methods` est remis à zéro
+   à chaque `run` VMOS. Conséquence : **l'activation runtime doit refaire
+   `pm enable` + `ime enable` à chaque job** — le provisioning de masse ne
+   suffit pas, il ne garantit que la présence de l'APK.
+
 ### Vérifications
 
 ```
@@ -327,24 +358,36 @@ Notes :
   throws and can run from `finally` without masking the original error.
 - The previous `restoreGboard()` was hard-coded to `com.google.android.inputmethod.latin/.LatinIME` and would silently fail on
   devices without Gboard. Now removed.
-- `activateAdbKeyboard` throws `Error("ADBKeyboard not recognized…")` if
-  the package is missing — see provisioning section above.
+- `activateAdbKeyboard` throws `JobError("device_setup_required")` when the APK
+  is missing (actionable badge, not `[unknown]`), waits for `ime enable` to
+  propagate before `ime set`, and re-raises VMOS exec failures as
+  `ContainerNotReadyError`. The `am broadcast` swap takes ~2–5 s end to end.
 
 ### Provisionning de masse
 
 Le script `scripts/install-adbkeyboard.mjs` automatise l'install + pm enable
-+ ime enable sur tous les devices listés en base. Idempotent.
++ ime enable sur tous les devices listés en base. Idempotent (skip si l'APK est
+déjà présent). But durable réel : **garantir la présence de l'APK** (l'activation
+IME, elle, est refaite à chaque job par `activateAdbKeyboard`).
 
 ```bash
-# Tous les devices, en série
-node scripts/install-adbkeyboard.mjs --concurrency 1
+# Tout le parc — scheduler par box, sûr automatiquement
+node scripts/install-adbkeyboard.mjs
+
+# Une/plusieurs box précises
+node scripts/install-adbkeyboard.mjs --box box-3.attila.army,box-4.attila.army
 
 # Sous-ensemble (CSV de db_id ou user_name)
-node scripts/install-adbkeyboard.mjs --concurrency 1 --only EDGEXXX,EDGEYYY
+node scripts/install-adbkeyboard.mjs --only EDGEXXX,EDGEYYY
 ```
 
-Limite host : **10 containers running simultanément max**. Le script respecte
-cette contrainte via `--concurrency`.
+Limite host : **10 containers running simultanément max par box**. Le scheduler
+groupe les devices par box et calcule un *start budget* =
+`10 − (containers déjà running sur la box)` ; les devices déjà running sont
+traités en place (sans coût de slot), les stoppés sont démarrés dans la limite
+du budget. Garantie : `running_baseline + nos_starts ≤ 10` sur chaque box, même
+avec des sessions opérateur en cours. Un device qui ne rentre pas est marqué
+`DEFERRED` (re-run plus tard) plutôt que de risquer un dépassement.
 
 Audit read-only :
 ```bash

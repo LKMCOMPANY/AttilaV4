@@ -7,12 +7,39 @@
  *   - never silently ignore failures (use `shellSafe` for explicit cleanup)
  */
 
-import { shell, shellSafe } from "@/lib/box-api";
+import { shell, shellSafe, ContainerNotReadyError } from "@/lib/box-api";
+import { JobError } from "./errors";
 
+const ADBKEYBOARD_PACKAGE = "com.android.adbkeyboard";
 const ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME";
+
+// VMOS forwards shell commands to Android through a Docker exec. While the
+// container is mid-boot or its runtime is unhealthy, the exec itself fails and
+// VMOS returns the Docker/runtime error as the command "output" with HTTP code
+// 200 — so box-api's code-201 `ContainerNotReadyError` never fires. Detecting
+// these signatures lets us re-raise as `ContainerNotReadyError` so the pipeline
+// treats them as transient (retry) instead of a bug.
+const EXEC_FAILURE_SIGNATURES = [
+  "error response from daemon", // docker daemon refused the exec
+  "exec failed", // OCI runtime exec failed
+  "can't find service", // android system services not up yet (settings, ime…)
+  "失败", // generic CN-locale failure from the VMOS exec layer (创建 exec 失败)
+];
 
 function adbLog(dbId: string, message: string, data?: Record<string, unknown>) {
   console.log(`[ADB][${dbId}] ${message}`, data ? JSON.stringify(data) : "");
+}
+
+/**
+ * Re-raise a shell result as `ContainerNotReadyError` when its output is
+ * actually a VMOS/Docker exec failure rather than real command output. Keeps
+ * IME activation from misreporting a booting container as a setup/IME bug.
+ */
+function assertContainerReachable(dbId: string, cmd: string, message: string): void {
+  const lower = message.toLowerCase();
+  if (EXEC_FAILURE_SIGNATURES.some((sig) => lower.includes(sig))) {
+    throw new ContainerNotReadyError(dbId, `${cmd} → ${message.trim().slice(0, 120)}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,28 +146,76 @@ export async function getCurrentIme(
   dbId: string,
 ): Promise<string> {
   const result = await shell(tunnelHostname, dbId, "settings get secure default_input_method");
+  assertContainerReachable(dbId, "settings get default_input_method", result.message);
   return result.message.trim();
+}
+
+// `ime enable` writes the secure `enabled_input_methods` setting asynchronously
+// (InputMethodManagerService persists it a few hundred ms after the command
+// returns). These bound the wait for that write to land before we `ime set`.
+const IME_ENABLE_PROPAGATION_TIMEOUT_MS = 6000;
+const IME_ENABLE_PROPAGATION_INTERVAL_MS = 400;
+
+/**
+ * Poll the enabled-IME list until ADBKeyboard appears. grep on-device because
+ * `ime list -s` is verbose and gets truncated by the VMOS shell transport.
+ */
+async function waitForImeEnabled(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<void> {
+  const deadline = Date.now() + IME_ENABLE_PROPAGATION_TIMEOUT_MS;
+  let last = "";
+  while (Date.now() < deadline) {
+    const result = await shell(tunnelHostname, dbId, "ime list -s | grep -i adbkeyboard");
+    assertContainerReachable(dbId, "ime list -s", result.message);
+    last = result.message;
+    if (result.message.toLowerCase().includes("adbkeyboard")) return;
+    await sleep(IME_ENABLE_PROPAGATION_INTERVAL_MS);
+  }
+  throw new Error(
+    `ADBKeyboard did not enter the enabled IME list within ${IME_ENABLE_PROPAGATION_TIMEOUT_MS}ms after 'ime enable' (last='${last.trim().slice(0, 80)}')`,
+  );
 }
 
 /**
  * Activate ADBKeyboard so `am broadcast -a ADB_INPUT_TEXT` can deliver text.
- * The package ships disabled on freshly-provisioned devices, so the function
- * does `pm enable` + `ime enable` + `ime set` and verifies the switch took
- * effect. Throws on any failure — calling code must abort.
+ *
+ * Runtime contract (not just provisioning): VMOS clears the enabled-IME list on
+ * every container restart and the APK ships disabled, so we re-`pm enable` +
+ * `ime enable` on every job, then wait for the enable to propagate before
+ * `ime set`. Skipping that wait makes `ime set` race the async settings write
+ * and fail with "cannot be selected for user #0" — the historical top cause of
+ * pipeline failures. Throws on any failure; calling code must abort.
  */
 export async function activateAdbKeyboard(
   tunnelHostname: string,
   dbId: string,
 ): Promise<void> {
-  await shell(tunnelHostname, dbId, "pm enable com.android.adbkeyboard");
-  await shell(tunnelHostname, dbId, `ime enable ${ADBKEYBOARD_IME}`);
-  const setResult = await shell(tunnelHostname, dbId, `ime set ${ADBKEYBOARD_IME}`);
-
-  if (setResult.message.includes("Unknown input method")) {
-    throw new Error(`ADBKeyboard not recognized — package may be missing: ${setResult.message.trim()}`);
+  // A missing APK is an operator-actionable setup gap, not a transient bug —
+  // surface it with the right category instead of a misleading IME error.
+  if (!(await isPackageInstalled(tunnelHostname, dbId, ADBKEYBOARD_PACKAGE))) {
+    throw new JobError(
+      "device_setup_required",
+      `ADBKeyboard (${ADBKEYBOARD_PACKAGE}) not installed on device — run scripts/install-adbkeyboard.mjs`,
+    );
   }
 
-  // Confirm via settings since `ime set` returns success even when ignored
+  const pmEnable = await shell(tunnelHostname, dbId, `pm enable ${ADBKEYBOARD_PACKAGE}`);
+  assertContainerReachable(dbId, "pm enable", pmEnable.message);
+
+  const enable = await shell(tunnelHostname, dbId, `ime enable ${ADBKEYBOARD_IME}`);
+  assertContainerReachable(dbId, "ime enable", enable.message);
+
+  await waitForImeEnabled(tunnelHostname, dbId);
+
+  const setResult = await shell(tunnelHostname, dbId, `ime set ${ADBKEYBOARD_IME}`);
+  assertContainerReachable(dbId, "ime set", setResult.message);
+  if (setResult.message.includes("Unknown input method")) {
+    throw new Error(`ADBKeyboard could not be selected even after enable propagated: ${setResult.message.trim()}`);
+  }
+
+  // Confirm via settings since `ime set` returns success even when ignored.
   const active = await getCurrentIme(tunnelHostname, dbId);
   if (active !== ADBKEYBOARD_IME) {
     throw new Error(`ADBKeyboard activation failed — current IME: ${active}`);

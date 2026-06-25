@@ -421,6 +421,84 @@ async function processDevice(device) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-box safe scheduler
+//
+// VMOS enforces a hard limit of MAX_CONCURRENCY *running* containers per box.
+// We therefore schedule each box independently: devices already running are
+// processed in place (no new container, no slot cost), and stopped devices are
+// started through a "start budget" = MAX_CONCURRENCY − (containers already
+// running on the box). This guarantees `running_baseline + our_starts` never
+// exceeds the cap, even when operators have live sessions on the box.
+// ---------------------------------------------------------------------------
+
+async function listRunningDbIds(boxHost) {
+  try {
+    const json = await boxFetch(boxHost, "/container_api/v1/list_names");
+    const list = json?.data?.list ?? [];
+    return new Set(list.filter((c) => c.state === "running").map((c) => c.db_id));
+  } catch (err) {
+    logFor("BOX ", boxHost, "list_names failed — assuming box full (conservative)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** Bounded worker pool: at most `size` concurrent `fn` calls, order preserved. */
+async function runPool(items, size, fn) {
+  const out = new Array(items.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      out[idx] = await fn(items[idx]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, size) }, worker));
+  return out;
+}
+
+async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
+  const runningIds = await listRunningDbIds(boxHost);
+  // Unknown running state ⇒ assume the box is full so we never risk overshoot.
+  const baselineRunning = runningIds ? runningIds.size : MAX_CONCURRENCY;
+  const startBudget = Math.max(0, MAX_CONCURRENCY - baselineRunning);
+
+  const alreadyRunning = runningIds
+    ? boxDevices.filter((d) => runningIds.has(d.db_id))
+    : [];
+  const needStart = runningIds
+    ? boxDevices.filter((d) => !runningIds.has(d.db_id))
+    : boxDevices;
+
+  console.log(
+    `\n##### BOX ${boxHost} — ${boxDevices.length} devices | running=${baselineRunning} | startBudget=${startBudget} | running=${alreadyRunning.length} stopped=${needStart.length} #####`,
+  );
+
+  const results = [];
+
+  // 1. In-place pass over already-running containers (fast, no boot, no slot).
+  if (alreadyRunning.length > 0) {
+    results.push(...(await runPool(alreadyRunning, Math.min(requestedConcurrency, 5), processDevice)));
+  }
+
+  // 2. Boot-and-provision stopped devices within the start budget.
+  const slots = Math.min(requestedConcurrency, startBudget);
+  if (needStart.length > 0 && slots <= 0) {
+    console.log(`  ${needStart.length} stopped device(s) DEFERRED on ${boxHost} — box at capacity`);
+    for (const d of needStart) {
+      results.push({ device: d, ok: false, deferred: true, error: "box at capacity (no free slot)" });
+    }
+  } else if (needStart.length > 0) {
+    results.push(...(await runPool(needStart, slots, processDevice)));
+  }
+
+  const okCount = results.filter((r) => r.ok).length;
+  console.log(`##### BOX ${boxHost} done: ${okCount}/${results.length} OK #####`);
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -442,6 +520,19 @@ async function main() {
     console.log(`Filtered to ${queue.length} devices`);
   }
 
+  // Optional CLI filter: --box box-3.attila.army,box-4.attila.army
+  // Restricting a run to a single box keeps every concurrent batch on that box,
+  // so `--concurrency` maps 1:1 to containers started there — the only safe way
+  // to honour the hard "10 running containers per box" VMOS limit.
+  const boxArgIdx = process.argv.indexOf("--box");
+  if (boxArgIdx >= 0 && process.argv[boxArgIdx + 1]) {
+    const boxFilter = new Set(process.argv[boxArgIdx + 1].split(",").map((s) => s.trim()));
+    queue = queue.filter(
+      (d) => boxFilter.has(d.boxes?.tunnel_hostname) || boxFilter.has(d.boxes?.name),
+    );
+    console.log(`Filtered to box(es) ${[...boxFilter].join(", ")}: ${queue.length} devices`);
+  }
+
   // Optional CLI override: --concurrency N
   let concurrency = MAX_CONCURRENCY;
   const concIdx = process.argv.indexOf("--concurrency");
@@ -454,29 +545,30 @@ async function main() {
   }
   console.log("");
 
-  const results = [];
-  for (let i = 0; i < queue.length; i += concurrency) {
-    const batch = queue.slice(i, i + concurrency);
-    const batchNum = Math.floor(i / concurrency) + 1;
-    const totalBatches = Math.ceil(queue.length / concurrency);
-    console.log(
-      `\n----- Batch ${batchNum}/${totalBatches} (${batch.length} devices) -----`
-    );
-    console.log(batch.map((d) => `${d.user_name} (${d.db_id})`).join(", "));
-    console.log("");
-
-    const batchResults = await Promise.all(batch.map((d) => processDevice(d)));
-    results.push(...batchResults);
-
-    const okCount = batchResults.filter((r) => r.ok).length;
-    console.log(`\nBatch ${batchNum} done: ${okCount}/${batch.length} OK`);
+  // Group by box so each box is scheduled against its own running-container
+  // budget. Boxes are independent (different VMOS hosts) so we run them in
+  // parallel; the per-box budget keeps each one within the cap.
+  const byBox = new Map();
+  for (const d of queue) {
+    const host = d.boxes?.tunnel_hostname;
+    if (!host) continue;
+    if (!byBox.has(host)) byBox.set(host, []);
+    byBox.get(host).push(d);
   }
+  console.log(`Scheduling ${queue.length} devices across ${byBox.size} box(es)`);
+
+  const perBox = await Promise.all(
+    [...byBox.entries()].map(([host, list]) => processBoxSafely(host, list, concurrency)),
+  );
+  const results = perBox.flat();
 
   console.log("\n========== SUMMARY ==========");
   const ok = results.filter((r) => r.ok);
-  const ko = results.filter((r) => !r.ok);
-  console.log(`OK     : ${ok.length}/${results.length}`);
-  console.log(`Failed : ${ko.length}/${results.length}`);
+  const deferred = results.filter((r) => r.deferred);
+  const ko = results.filter((r) => !r.ok && !r.deferred);
+  console.log(`OK       : ${ok.length}/${results.length}`);
+  console.log(`Deferred : ${deferred.length}/${results.length} (box at capacity — re-run later)`);
+  console.log(`Failed   : ${ko.length}/${results.length}`);
   if (ok.length > 0) {
     const reused = ok.filter((r) => r.alreadyInstalled).length;
     console.log(`  - already installed before run: ${reused}`);
