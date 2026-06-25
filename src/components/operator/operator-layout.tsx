@@ -4,7 +4,11 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { Group, Panel } from "react-resizable-panels";
 import { ResizableHandle } from "@/components/ui/resizable";
 import { useRealtimeAccount } from "@/hooks/use-realtime-account";
-import { getAvatarAutomatorStatuses, getDeviceStates } from "@/app/actions/avatars";
+import {
+  getAvatarAutomatorStatuses,
+  getDeviceStates,
+  refreshDeviceStates,
+} from "@/app/actions/avatars";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import { AvatarListPanel } from "./avatar-list-panel";
 import { DevicePanel } from "./device-panel";
@@ -77,10 +81,26 @@ export function OperatorLayout({
     getAvatarAutomatorStatuses(accountId).then(setAutomatorStatuses);
   }, [accountId, jobsVersion]);
 
-  // Fetch device states on mount + on realtime events
+  // Fast path: read last-known device states from the DB on mount + on realtime
+  // events. Never blocks and is cheap.
   useEffect(() => {
     getDeviceStates(accountId).then(setDeviceStates);
   }, [accountId, devicesVersion]);
+
+  // Slow path: reconcile against the live box state once after first paint. This
+  // is the per-box list_names call that used to block the page render; running
+  // it here keeps navigation instant while still converging to box truth.
+  useEffect(() => {
+    let cancelled = false;
+    refreshDeviceStates(accountId)
+      .then((states) => {
+        if (!cancelled && Object.keys(states).length > 0) setDeviceStates(states);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId]);
 
   // Merge live device states into local avatars
   const avatarsWithLiveState = useMemo(() => {

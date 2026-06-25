@@ -184,69 +184,12 @@ export async function getAvatars(
     } as AvatarWithRelations;
   });
 
-  await syncDeviceStates(supabase, avatars);
-
+  // Device states are reconciled against the boxes out-of-band by
+  // `refreshDeviceStates` (called by the operator UI after first paint), so
+  // this query never blocks the page render on a per-box `list_names` call
+  // through the Cloudflare tunnel (~0.6-1.7s each). The page shows the
+  // last-known DB state immediately and converges to box truth a moment later.
   return avatars;
-}
-
-// ---------------------------------------------------------------------------
-// Sync device states with actual box state (prevents DB drift)
-// ---------------------------------------------------------------------------
-
-async function syncDeviceStates(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  avatars: AvatarWithRelations[]
-) {
-  const devicesWithBoxes = avatars
-    .filter((a) => a.device?.box_id)
-    .map((a) => a.device!);
-
-  if (devicesWithBoxes.length === 0) return;
-
-  const boxIds = [...new Set(devicesWithBoxes.map((d) => d.box_id))];
-
-  const { data: boxes } = await supabase
-    .from("boxes")
-    .select("id, tunnel_hostname")
-    .in("id", boxIds);
-
-  if (!boxes || boxes.length === 0) return;
-
-  const stateMap = new Map<string, string>();
-
-  await Promise.all(
-    boxes.map(async (box) => {
-      try {
-        const containerData = await fetchContainerList(box.tunnel_hostname);
-        for (const c of containerData.list) {
-          stateMap.set(c.db_id, c.state);
-        }
-      } catch {
-        // Box unreachable -- don't update states
-      }
-    })
-  );
-
-  if (stateMap.size === 0) return;
-
-  const now = new Date().toISOString();
-  const updates: PromiseLike<unknown>[] = [];
-
-  for (const device of devicesWithBoxes) {
-    const realState = stateMap.get(device.db_id);
-    if (!realState || realState === device.state) continue;
-
-    device.state = realState as Device["state"];
-
-    updates.push(
-      supabase
-        .from("devices")
-        .update({ state: realState, last_seen: now })
-        .eq("id", device.id)
-    );
-  }
-
-  if (updates.length > 0) await Promise.all(updates);
 }
 
 // ---------------------------------------------------------------------------
@@ -631,4 +574,80 @@ export async function getDeviceStates(
     map[row.id] = row.state;
   }
   return map;
+}
+
+/**
+ * Reconcile the account's device states against the live box state and return
+ * the fresh `deviceId -> state` map. Unlike `getDeviceStates` (a pure DB read),
+ * this calls each box's `list_names` through the tunnel, so it is intentionally
+ * kept out of the page render path: the operator UI invokes it once after the
+ * first paint to converge to box truth without blocking navigation. A box that
+ * is unreachable simply leaves its devices on their last-known DB state.
+ */
+export async function refreshDeviceStates(
+  accountId: string,
+): Promise<Record<string, string>> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  if (!isAdmin && accountId !== session.profile.account_id) return {};
+
+  const supabase = await createClient();
+
+  // Same device scope as getDeviceStates: directly assigned OR inside a shared box.
+  const { data: boxLinks } = await supabase
+    .from("account_boxes")
+    .select("box_id")
+    .eq("account_id", accountId);
+  const boxIds = (boxLinks ?? []).map((b) => b.box_id);
+
+  let query = supabase
+    .from("devices")
+    .select("id, db_id, box_id, state, boxes(tunnel_hostname)");
+  query =
+    boxIds.length > 0
+      ? query.or(`account_id.eq.${accountId},box_id.in.(${boxIds.join(",")})`)
+      : query.eq("account_id", accountId);
+
+  const { data: devices } = await query;
+  if (!devices || devices.length === 0) return {};
+
+  // One live container list per box (not per device).
+  const hostByBox = new Map<string, string>();
+  for (const d of devices) {
+    const box = d.boxes as unknown as { tunnel_hostname: string } | null;
+    if (d.box_id && box?.tunnel_hostname) hostByBox.set(d.box_id, box.tunnel_hostname);
+  }
+
+  const liveStateByDbId = new Map<string, string>();
+  await Promise.all(
+    [...hostByBox.values()].map(async (host) => {
+      try {
+        const data = await fetchContainerList(host);
+        for (const c of data.list) liveStateByDbId.set(c.db_id, c.state);
+      } catch {
+        // Box unreachable -- keep DB state for its devices.
+      }
+    }),
+  );
+
+  const now = new Date().toISOString();
+  const result: Record<string, string> = {};
+  const updates: PromiseLike<unknown>[] = [];
+
+  for (const d of devices) {
+    const live = liveStateByDbId.get(d.db_id as string);
+    const state = live ?? (d.state as string);
+    result[d.id as string] = state;
+    if (live && live !== d.state) {
+      updates.push(
+        supabase
+          .from("devices")
+          .update({ state: live, last_seen: now })
+          .eq("id", d.id),
+      );
+    }
+  }
+
+  if (updates.length > 0) await Promise.all(updates);
+  return result;
 }
