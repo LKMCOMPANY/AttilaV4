@@ -216,7 +216,7 @@ async function supabaseFetch(pathAndQuery, init = {}) {
 
 async function fetchAllDevices() {
   return supabaseFetch(
-    "devices?select=id,db_id,user_name,state,box_id,boxes(id,name,tunnel_hostname)&order=user_name.asc"
+    "devices?select=id,db_id,user_name,state,box_id,boxes(id,name,tunnel_hostname,max_concurrent_containers)&order=user_name.asc"
   );
 }
 
@@ -423,12 +423,14 @@ async function processDevice(device) {
 // ---------------------------------------------------------------------------
 // Per-box safe scheduler
 //
-// VMOS enforces a hard limit of MAX_CONCURRENCY *running* containers per box.
-// We therefore schedule each box independently: devices already running are
-// processed in place (no new container, no slot cost), and stopped devices are
-// started through a "start budget" = MAX_CONCURRENCY − (containers already
-// running on the box). This guarantees `running_baseline + our_starts` never
-// exceeds the cap, even when operators have live sessions on the box.
+// Each box has a real RAM-bound capacity (`boxes.max_concurrent_containers`);
+// exceeding it sends the host into swap thrashing. We schedule each box
+// independently: devices already running are processed in place (no new
+// container, no slot cost), and stopped devices are started through a "start
+// budget" = boxMax − (containers already running on the box). This guarantees
+// `running_baseline + our_starts` never exceeds the box's cap, even when
+// operators or the automator have live sessions on the box. MAX_CONCURRENCY is
+// only a fallback when a box has no configured max.
 // ---------------------------------------------------------------------------
 
 async function listRunningDbIds(boxHost) {
@@ -459,10 +461,15 @@ async function runPool(items, size, fn) {
 }
 
 async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
+  // Real per-box capacity (RAM-bound). Falls back to MAX_CONCURRENCY only if a
+  // box has no configured max. `--concurrency` (if passed) caps it further.
+  const boxMax = boxDevices[0]?.boxes?.max_concurrent_containers ?? MAX_CONCURRENCY;
+  const effective = Math.min(requestedConcurrency ?? boxMax, boxMax);
+
   const runningIds = await listRunningDbIds(boxHost);
   // Unknown running state ⇒ assume the box is full so we never risk overshoot.
-  const baselineRunning = runningIds ? runningIds.size : MAX_CONCURRENCY;
-  const startBudget = Math.max(0, MAX_CONCURRENCY - baselineRunning);
+  const baselineRunning = runningIds ? runningIds.size : boxMax;
+  const startBudget = Math.max(0, boxMax - baselineRunning);
 
   const alreadyRunning = runningIds
     ? boxDevices.filter((d) => runningIds.has(d.db_id))
@@ -472,18 +479,18 @@ async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
     : boxDevices;
 
   console.log(
-    `\n##### BOX ${boxHost} — ${boxDevices.length} devices | running=${baselineRunning} | startBudget=${startBudget} | running=${alreadyRunning.length} stopped=${needStart.length} #####`,
+    `\n##### BOX ${boxHost} — ${boxDevices.length} devices | max=${boxMax} baselineRunning=${baselineRunning} startBudget=${startBudget} | running=${alreadyRunning.length} stopped=${needStart.length} #####`,
   );
 
   const results = [];
 
   // 1. In-place pass over already-running containers (fast, no boot, no slot).
   if (alreadyRunning.length > 0) {
-    results.push(...(await runPool(alreadyRunning, Math.min(requestedConcurrency, 5), processDevice)));
+    results.push(...(await runPool(alreadyRunning, Math.min(effective, 5), processDevice)));
   }
 
   // 2. Boot-and-provision stopped devices within the start budget.
-  const slots = Math.min(requestedConcurrency, startBudget);
+  const slots = Math.min(effective, startBudget);
   if (needStart.length > 0 && slots <= 0) {
     console.log(`  ${needStart.length} stopped device(s) DEFERRED on ${boxHost} — box at capacity`);
     for (const d of needStart) {
@@ -505,7 +512,7 @@ async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
 async function main() {
   console.log("=== install-adbkeyboard ===");
   console.log(`APK: ${APK_URL}`);
-  console.log(`Concurrency: ${MAX_CONCURRENCY}`);
+  console.log(`Concurrency: per-box max_concurrent_containers (override with --concurrency)`);
   console.log("");
 
   const devices = await fetchAllDevices();
@@ -533,8 +540,8 @@ async function main() {
     console.log(`Filtered to box(es) ${[...boxFilter].join(", ")}: ${queue.length} devices`);
   }
 
-  // Optional CLI override: --concurrency N
-  let concurrency = MAX_CONCURRENCY;
+  // Optional CLI override: --concurrency N (default: each box's configured max)
+  let concurrency = null;
   const concIdx = process.argv.indexOf("--concurrency");
   if (concIdx >= 0 && process.argv[concIdx + 1]) {
     const n = parseInt(process.argv[concIdx + 1], 10);
