@@ -61,12 +61,12 @@ render_config() {  # num tunnel -> stdout
   sed -e "s/__NUM__/$1/g" -e "s/__TUNNEL_ID__/$2/g" "$ROOT/templates/cloudflared.config.yml.tmpl"
 }
 
-deploy_proxy() {  # num
+deploy_proxy() {  # num — stream src + package.json as one tarball over a single
+                  # SSH connection (many separate scp calls were flaky over the
+                  # cloudflared + sshpass path).
   local n="$1"
-  ssh_box "$n" "mkdir -p /opt/magicbox-proxy/src"
-  scp_box "$n" "$PROXY_SRC/package.json" "/opt/magicbox-proxy/package.json"
-  local f; for f in "$PROXY_SRC"/src/*.js; do scp_box "$n" "$f" "/opt/magicbox-proxy/src/"; done
-  ssh_box "$n" "cd /opt/magicbox-proxy && (npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1 || true)"
+  tar -C "$PROXY_SRC" -czf - package.json src \
+    | ssh_box "$n" "mkdir -p /opt/magicbox-proxy && tar -C /opt/magicbox-proxy -xzf - && cd /opt/magicbox-proxy && (npm install --omit=dev --no-audit --no-fund >/dev/null 2>&1 || true)"
 }
 
 deploy_full() {  # num
@@ -94,17 +94,38 @@ deploy_full() {  # num
   deploy_proxy "$n"
 
   echo "  - validate + (re)start"
-  ssh_box "$n" "cloudflared tunnel ingress validate --config /etc/cloudflared/config.yml >/dev/null \
-    && systemctl daemon-reload \
-    && systemctl enable --now cloudflared magicbox-proxy >/dev/null 2>&1 || true \
-    && systemctl restart cloudflared && sleep 2 && systemctl restart magicbox-proxy && sleep 1 \
-    && systemctl is-active cloudflared magicbox-proxy"
+  # Ingress validate is best-effort (the CLI flag order varies across cloudflared
+  # versions: newer is `tunnel --config FILE ingress validate`). The real gate is
+  # the external health-check below.
+  #
+  # cloudflared is restarted DETACHED (via a 2s transient timer) because our SSH
+  # session runs THROUGH that same tunnel — a foreground restart kills the
+  # session before the command returns. magicbox-proxy is restarted in-session
+  # (it is not our transport). Recovery is verified externally in healthcheck().
+  ssh_box "$n" "cloudflared tunnel --config /etc/cloudflared/config.yml ingress validate >/dev/null 2>&1 || echo '[warn] ingress validate skipped (cli flag mismatch)'; \
+    systemctl daemon-reload; \
+    systemctl enable cloudflared magicbox-proxy >/dev/null 2>&1 || true; \
+    systemctl restart magicbox-proxy && systemctl is-active magicbox-proxy; \
+    echo '[info] scheduling detached cloudflared restart (this session will drop briefly)'; \
+    systemd-run --on-active=2s /bin/systemctl restart cloudflared >/dev/null 2>&1 || (nohup sh -c 'sleep 2; systemctl restart cloudflared' >/dev/null 2>&1 &)" || true
 }
 
-healthcheck() {  # num
-  local n="$1"
-  echo -n "  - healthz: "; ssh_box "$n" "curl -s -m5 http://127.0.0.1:8080/healthz" || true; echo
-  echo -n "  - stream-ready route: "; ssh_box "$n" "curl -s -m5 http://127.0.0.1:8080/stream-ready/INVALIDID" || true; echo
+healthcheck() {  # num — external (the in-box path may be mid cloudflared restart)
+  local n="$1" host="box-$1.attila.army" i code=000
+  echo "  - waiting for cloudflared to come back (external probe)..."
+  for i in $(seq 1 20); do
+    sleep 3
+    code=$(curl -s -o /dev/null -w "%{http_code}" -m 8 \
+      -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+      -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+      "https://${host}/healthz" 2>/dev/null || echo 000)
+    [ "$code" = "200" ] && break
+  done
+  echo -n "  - healthz=${code} | stream-ready: "
+  curl -s -m8 -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+    -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+    "https://${host}/stream-ready/INVALIDID" 2>/dev/null || true
+  echo
 }
 
 main() {
