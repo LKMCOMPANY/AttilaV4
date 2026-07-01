@@ -31,6 +31,8 @@ import {
   boxFetch,
   shell,
   fetchRunningDbIds,
+  runContainer as startContainer,
+  stopContainer,
   fetchDevicesWithBoxes,
   updateDeviceState,
   recordAdbKeyboardState,
@@ -69,20 +71,6 @@ async function fetchContainerDetail(boxHost, dbId) {
   } catch (err) {
     return { _error: String(err?.message || err) };
   }
-}
-
-async function startContainer(boxHost, dbId) {
-  return boxFetch(boxHost, "/container_api/v1/run", {
-    method: "POST",
-    body: JSON.stringify({ db_ids: [dbId] }),
-  });
-}
-
-async function stopContainer(boxHost, dbId) {
-  return boxFetch(boxHost, "/container_api/v1/stop", {
-    method: "POST",
-    body: JSON.stringify({ db_ids: [dbId] }),
-  });
 }
 
 async function installApk(boxHost, dbId, url) {

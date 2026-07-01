@@ -106,6 +106,50 @@ export async function fetchRunningDbIds(boxHost) {
   return new Set(list.filter((c) => c.state === "running").map((c) => c.db_id));
 }
 
+/** VMOS ROM readiness code: 200 = ready, 1 = running but not ready, 0 = not started. */
+export async function fetchRomStatus(boxHost, dbId) {
+  const json = await boxFetch(boxHost, `/container_api/v1/rom_status/${dbId}`);
+  return json?.code ?? -1;
+}
+
+export async function runContainer(boxHost, dbId) {
+  return boxFetch(boxHost, "/container_api/v1/run", {
+    method: "POST",
+    body: JSON.stringify({ db_ids: [dbId] }),
+  });
+}
+
+export async function stopContainer(boxHost, dbId) {
+  return boxFetch(boxHost, "/container_api/v1/stop", {
+    method: "POST",
+    body: JSON.stringify({ db_ids: [dbId] }),
+  });
+}
+
+/**
+ * Recreate a container from its DB record, PRESERVING the data volume. Fixes
+ * runtime anomalies (port/MAC conflict, container that won't start). Requires
+ * the instance to be `stopped`/`failed`; does not auto-start (call runContainer).
+ */
+export async function recreateContainer(boxHost, dbId) {
+  return boxFetch(boxHost, `/container_api/v1/recreate_container/${dbId}`, {
+    method: "POST",
+  });
+}
+
+/**
+ * Real proxy connectivity test (mihomo delay) via the magicbox-proxy. Returns
+ * the proxy-test contract ({ ok, delayMs } | { ok:false, error }); never throws
+ * so it can be used purely as a diagnostic.
+ */
+export async function proxyTest(boxHost, dbId) {
+  try {
+    return await boxFetch(boxHost, `/proxy-test/${dbId}`);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Supabase REST (service role — bypasses RLS, scripts only)
 // ---------------------------------------------------------------------------
