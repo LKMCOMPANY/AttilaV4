@@ -13,8 +13,6 @@
  *                         polling), `stopContainerIfIdle`.
  */
 
-import { createHash } from "node:crypto";
-
 function getCfHeaders() {
   return {
     "CF-Access-Client-Id": process.env.CF_ACCESS_CLIENT_ID!,
@@ -326,24 +324,23 @@ export async function shellSafe(
 }
 
 /**
- * VMOS caches `/container_api/v1/screenshots/<dbId>` server-side for ~5s, so
- * two reads inside that window return byte-identical JPEGs even though the
- * device screen has changed. That breaks any "before / after" automation
- * proof. We work around it adaptively: keep the previous content hash per
- * device in memory; if a fresh fetch returns the same hash, retry up to N
- * times with a small delay until VMOS regenerates. Bounded so a genuinely
- * static screen never blocks (max ~3s extra wait).
+ * Fetch a fresh device screenshot as a JPEG buffer.
+ *
+ * Uses the VMOS `no_cache=true` screenshot option (Edge screenshots v2), which
+ * bypasses the ~5s server-side cache so every call returns the current frame.
+ * This replaced a client-side content-hash retry workaround — verified on
+ * box-1..5 (07/2026): back-to-back reads return distinct frames when the screen
+ * changes, so the SOURCE/PROOF automation captures are reliable with no dedup.
+ *
+ * Returns an empty buffer on transport failure so a missing debug screenshot
+ * never aborts the automation.
  */
-const SCREENSHOT_RETRY_INTERVAL_MS = 1000;
-const SCREENSHOT_MAX_RETRIES = 3;
-const lastScreenshotHash = new Map<string, string>();
-
-async function fetchScreenshotRaw(
+export async function screenshot(
   tunnelHostname: string,
   dbId: string,
 ): Promise<Buffer> {
   const start = Date.now();
-  const url = `https://${tunnelHostname}/container_api/v1/screenshots/${dbId}`;
+  const url = `https://${tunnelHostname}/container_api/v1/screenshots/${dbId}?no_cache=true`;
   const res = await fetch(url, { headers: getCfHeaders(), cache: "no-store" });
   const ms = Date.now() - start;
 
@@ -354,33 +351,6 @@ async function fetchScreenshotRaw(
 
   const buf = Buffer.from(await res.arrayBuffer());
   console.log(`[ADB][${dbId}] screenshot OK`, JSON.stringify({ bytes: buf.length, ms }));
-  return buf;
-}
-
-export async function screenshot(
-  tunnelHostname: string,
-  dbId: string,
-): Promise<Buffer> {
-  const previous = lastScreenshotHash.get(dbId);
-  let buf = await fetchScreenshotRaw(tunnelHostname, dbId);
-
-  for (let attempt = 1; attempt <= SCREENSHOT_MAX_RETRIES; attempt++) {
-    if (buf.length === 0) break; // transport failure — return as-is
-    const hash = createHash("sha256").update(buf).digest("hex");
-    if (hash !== previous) {
-      lastScreenshotHash.set(dbId, hash);
-      return buf;
-    }
-    console.log(`[ADB][${dbId}] screenshot stale (cache hit), retry ${attempt}/${SCREENSHOT_MAX_RETRIES}`);
-    await new Promise((r) => setTimeout(r, SCREENSHOT_RETRY_INTERVAL_MS));
-    buf = await fetchScreenshotRaw(tunnelHostname, dbId);
-  }
-
-  // Either the screen really hasn't changed or we hit the retry cap. Either
-  // way, return what we have so the caller doesn't block forever.
-  if (buf.length > 0) {
-    lastScreenshotHash.set(dbId, createHash("sha256").update(buf).digest("hex"));
-  }
   return buf;
 }
 
