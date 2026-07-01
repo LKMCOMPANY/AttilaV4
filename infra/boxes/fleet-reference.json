@@ -1,0 +1,11 @@
+{
+  "$comment": "Golden target versions for the VMOS Edge fleet. This is the REFERENCE every box must converge to. The vendor layer (cbs_go, kernel, android image) is not shippable from this repo (proprietary binaries) — it is propagated box-to-box from the reference box via scripts/deploy-vendor.sh. The proxy version is NOT recorded here: it is read from infra/magicbox-proxy/package.json (the code IS the source of truth). check-drift.mjs compares every live box against these values.",
+  "reference_box": 5,
+  "captured_at": "2026-07-01",
+  "captured_from": "box-5.attila.army /v1/systeminfo + list_names image",
+  "vendor": {
+    "cbs_version": "1.1.6.29.1",
+    "kernel_version": "2.0.57_k1",
+    "android_image": "vcloud_android13_edge_20260626203150"
+  }
+}

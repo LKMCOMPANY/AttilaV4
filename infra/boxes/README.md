@@ -20,10 +20,33 @@ gateway alias — so the proxy's auto-detect is not safe to rely on).
 | Path | Role |
 |---|---|
 | `manifest.tsv` | Source of truth: box number → tunnel id, api_host |
+| `fleet-reference.json` | Golden vendor versions (cbs_go / kernel / android image) every box must match |
 | `templates/cloudflared.config.yml.tmpl` | Rendered per box → `/etc/cloudflared/config.yml` |
 | `files/cloudflared.service` | iso → `/etc/systemd/system/cloudflared.service` |
 | `files/magicbox-proxy.service` | iso → `/etc/systemd/system/magicbox-proxy.service` |
 | `scripts/deploy.sh` | Converge a box to this state (idempotent) |
+| `scripts/check-drift.mjs` | Read-only: report every box's version drift vs the golden reference |
+
+## Version drift
+
+Two layers of "same version" are enforced here:
+
+- **Our code** (proxy + cloudflared + units) — shipped identically by `deploy.sh`.
+  The proxy stamps its version (`infra/magicbox-proxy/package.json`) on
+  `GET /healthz`, so a stale deploy is detectable.
+- **Vendor** (`cbs_go`, kernel, android image) — cannot ship from this repo
+  (proprietary binaries). The target is pinned in `fleet-reference.json` and
+  propagated box-to-box from the reference box.
+
+Check the whole fleet at any time (read-only, touches nothing):
+
+```bash
+node infra/boxes/scripts/check-drift.mjs
+```
+
+It reconciles the IaC manifest with the live Supabase box list and flags: boxes
+missing from the manifest, boxes off the golden cbs/kernel version, boxes not on
+the git proxy version, and unreachable boxes.
 
 Secrets are **never** in the repo: the tunnel credentials JSON stays on the
 box; the SSH password and CF Access service token are read from env / a

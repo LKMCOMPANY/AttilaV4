@@ -45,13 +45,17 @@ done
 : "${CF_ACCESS_CLIENT_ID:?set CF_ACCESS_CLIENT_ID}"
 : "${CF_ACCESS_CLIENT_SECRET:?set CF_ACCESS_CLIENT_SECRET}"
 
+# The boxes are root-only (see README). The SSH login user is configurable but
+# defaults to root — without it, ssh uses the local $USER and the box rejects it.
+BOX_SSH_USER="${BOX_SSH_USER:-root}"
+
 PROXY_CMD="cloudflared access ssh --hostname %h --service-token-id ${CF_ACCESS_CLIENT_ID} --service-token-secret ${CF_ACCESS_CLIENT_SECRET}"
 SSH_OPTS=(-o ConnectTimeout=35 -o PreferredAuthentications=password -o PubkeyAuthentication=no
           -o StrictHostKeyChecking=no -o ProxyCommand="$PROXY_CMD")
 
 box_host() { echo "ssh-box-$1.attila.army"; }
-ssh_box()  { local n="$1"; shift; SSHPASS="$BOX_SSH_PASSWORD" sshpass -e ssh "${SSH_OPTS[@]}" "$(box_host "$n")" "$@"; }
-scp_box()  { local n="$1" src="$2" dst="$3"; SSHPASS="$BOX_SSH_PASSWORD" sshpass -e scp -q "${SSH_OPTS[@]}" "$src" "$(box_host "$n"):$dst"; }
+ssh_box()  { local n="$1"; shift; SSHPASS="$BOX_SSH_PASSWORD" sshpass -e ssh "${SSH_OPTS[@]}" "${BOX_SSH_USER}@$(box_host "$n")" "$@"; }
+scp_box()  { local n="$1" src="$2" dst="$3"; SSHPASS="$BOX_SSH_PASSWORD" sshpass -e scp -q "${SSH_OPTS[@]}" "$src" "${BOX_SSH_USER}@$(box_host "$n"):$dst"; }
 
 tunnel_for()  { awk -F'\t' -v n="$1" '$1==n {print $2}' "$MANIFEST"; }
 apihost_for() { awk -F'\t' -v n="$1" '$1==n {print $3}' "$MANIFEST"; }
