@@ -358,21 +358,21 @@ export async function screenshot(
 // Container lifecycle
 // ---------------------------------------------------------------------------
 
-const CONTAINER_RUN_POLL_MS = 1500;
-const CONTAINER_RUN_TIMEOUT_MS = 30_000;
-const ANDROID_BOOT_POLL_MS = 1500;
-const ANDROID_BOOT_TIMEOUT_MS = 90_000;
+const ROM_READY_POLL_MS = 1500;
+const ROM_READY_TIMEOUT_MS = 120_000; // covers container start + Android boot
+const BOOT_CONFIRM_RETRIES = 3;
+const BOOT_CONFIRM_INTERVAL_MS = 1000;
 
 /**
  * Ensure the container is running AND Android has finished booting.
  *
- * VMOS reports `status=running` as soon as the container process is up, but
- * Android still needs ~10–30s to mount /system, start zygote, system_server
- * and reach `sys.boot_completed=1`. Without the second wait, every shell call
- * returns code 201 silently and automations tap into the void.
- *
- * Returns once `getprop sys.boot_completed` returns "1" via shell. Throws
- * if the deadline is reached.
+ * Fast path: poll the VMOS `rom_status` endpoint (code 200 = ROM ready) — one
+ * lightweight GET that reflects both "container up" and "Android booted", so it
+ * replaces the older two-phase (container-status + getprop) polling. A final
+ * `getprop sys.boot_completed` then confirms Android's own signal before any
+ * shell input is driven. Verified live (07/2026): `rom_status` never reports
+ * 200 before `sys.boot_completed=1`, so this is a fast gate with a canonical
+ * guard. Throws if the ROM is not ready within the deadline.
  */
 export async function ensureContainerReady(
   tunnelHostname: string,
@@ -381,43 +381,52 @@ export async function ensureContainerReady(
   const start = Date.now();
   const { wasStarted } = await startContainerProcess(tunnelHostname, dbId);
 
-  if (wasStarted) {
-    await waitForContainerStatus(tunnelHostname, dbId, "running", CONTAINER_RUN_TIMEOUT_MS);
-  }
+  await waitForRomReady(tunnelHostname, dbId, ROM_READY_TIMEOUT_MS);
+  await confirmBootCompleted(tunnelHostname, dbId);
 
-  await waitForBootCompleted(tunnelHostname, dbId, ANDROID_BOOT_TIMEOUT_MS);
   const durationMs = Date.now() - start;
   console.log(`[Container] ${dbId} ready (wasStarted=${wasStarted}, durationMs=${durationMs})`);
   return { wasStarted, durationMs };
 }
 
-async function waitForContainerStatus(
-  tunnelHostname: string,
-  dbId: string,
-  expected: string,
-  timeoutMs: number,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, CONTAINER_RUN_POLL_MS));
-    const check = await fetchContainerDetail(tunnelHostname, dbId);
-    if (check?.status === expected) return;
-  }
-  throw new Error(`Container ${dbId} did not reach status=${expected} within ${timeoutMs}ms`);
+/** VMOS ROM readiness code: 200 = ready, 1 = running but not ready, 0 = not started. */
+async function fetchRomStatus(tunnelHostname: string, dbId: string): Promise<number> {
+  const res = await boxFetch<VmosResponse<unknown>>(
+    tunnelHostname,
+    `/container_api/v1/rom_status/${dbId}`,
+  );
+  return res.code ?? -1;
 }
 
-async function waitForBootCompleted(
+/** Poll `rom_status` until the ROM reports ready (code 200) or the deadline hits. */
+async function waitForRomReady(
   tunnelHostname: string,
   dbId: string,
   timeoutMs: number,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if ((await fetchRomStatus(tunnelHostname, dbId)) === 200) return;
+    await new Promise((r) => setTimeout(r, ROM_READY_POLL_MS));
+  }
+  throw new Error(`Container ${dbId} ROM not ready within ${timeoutMs}ms`);
+}
+
+/**
+ * Canonical final guard: Android's own `sys.boot_completed`. rom_status==200 and
+ * this flip together, but we confirm the OS signal (short retry) before driving
+ * shell input — matches the automation contract that jobs run on a booted ROM.
+ */
+async function confirmBootCompleted(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < BOOT_CONFIRM_RETRIES; attempt++) {
     const result = await shellSafe(tunnelHostname, dbId, "getprop sys.boot_completed");
     if (result && result.code === 200 && result.message.trim() === "1") return;
-    await new Promise((r) => setTimeout(r, ANDROID_BOOT_POLL_MS));
+    await new Promise((r) => setTimeout(r, BOOT_CONFIRM_INTERVAL_MS));
   }
-  throw new Error(`Container ${dbId} did not finish booting within ${timeoutMs}ms`);
+  throw new Error(`Container ${dbId} ROM ready but sys.boot_completed != 1`);
 }
 
 /**
