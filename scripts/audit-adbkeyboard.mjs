@@ -1,143 +1,127 @@
 /**
- * READ-ONLY audit of ADBKeyboard state on every device.
+ * Fleet-wide ADBKeyboard coverage audit — box-aware.
  *
- * Does NOT start any container, NOT install anything, NOT change any IME.
- * For each device that is currently `running`, it checks:
- *   - is the package installed?
- *   - is the IME service registered (`ime list -a`)?
- *   - is the IME enabled (`ime list -s`)?
+ * For every box, RUNNING devices are verified live on-device (package installed
+ * + IME enabled) and the result is persisted to `devices.adbkeyboard_*`, so
+ * coverage becomes queryable without rebooting. STOPPED (or box-offline) devices
+ * report their last-known state from the DB. This never starts a container,
+ * installs anything, or changes an IME — it only reads the device and writes the
+ * observed state back to Supabase.
  *
- * For stopped devices, it just reports `stopped` so we know they need a
- * boot+install pass.
+ * (Previous version audited every device against the FIRST box's host, so it was
+ * wrong for any multi-box fleet. It now groups by each device's own box.)
  *
  * Usage:
- *   node scripts/audit-adbkeyboard.mjs
+ *   node scripts/audit-adbkeyboard.mjs                      # whole fleet
+ *   node scripts/audit-adbkeyboard.mjs --box box-5.attila.army
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  shell,
+  fetchRunningDbIds,
+  fetchDevicesWithBoxes,
+  recordAdbKeyboardState,
+  ADBKEYBOARD_PACKAGE,
+} from "./lib/fleet.mjs";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-for (const line of fs
-  .readFileSync(path.join(__dirname, "..", ".env.local"), "utf8")
-  .split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const i = t.indexOf("=");
-  if (i < 0) continue;
-  const k = t.slice(0, i).trim();
-  let v = t.slice(i + 1).trim();
-  if (
-    (v.startsWith('"') && v.endsWith('"')) ||
-    (v.startsWith("'") && v.endsWith("'"))
-  )
-    v = v.slice(1, -1);
-  if (!(k in process.env)) process.env[k] = v;
-}
+const flag = (b) => (b === true ? "OK" : b === false ? "NO" : "-");
 
-const cf = {
-  "CF-Access-Client-Id": process.env.CF_ACCESS_CLIENT_ID,
-  "CF-Access-Client-Secret": process.env.CF_ACCESS_CLIENT_SECRET,
-};
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-async function supabase(p) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${p}`, {
-    headers: {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-    },
-  });
-  return r.json();
-}
-
-async function shell(boxHost, dbId, cmd) {
-  const r = await fetch(`https://${boxHost}/android_api/v1/shell/${dbId}`, {
-    method: "POST",
-    headers: { ...cf, "Content-Type": "application/json" },
-    body: JSON.stringify({ id: dbId, cmd }),
-  });
-  const j = await r.json();
-  return { code: j?.code ?? -1, message: j?.data?.message ?? "" };
-}
-
-async function listContainers(boxHost) {
-  const r = await fetch(`https://${boxHost}/container_api/v1/list_names`, {
-    headers: cf,
-  });
-  const j = await r.json();
-  return j?.data?.list ?? [];
+/** Live on-device check: is the APK installed and the IME enabled/selectable? */
+async function checkRunningDevice(host, dbId) {
+  const pkg = await shell(host, dbId, `pm list packages ${ADBKEYBOARD_PACKAGE}`);
+  const installed = pkg.message.includes(ADBKEYBOARD_PACKAGE);
+  // grep on-device: `ime list -s` is verbose and gets truncated by the shell transport.
+  const en = await shell(host, dbId, "ime list -s | grep -i adbkeyboard");
+  const enabled = en.message.toLowerCase().includes("adbkeyboard");
+  return { installed, enabled };
 }
 
 async function main() {
-  const devices = await supabase(
-    "devices?select=id,db_id,user_name,box_id,boxes(tunnel_hostname)&order=user_name.asc",
-  );
-  const boxHost = devices[0].boxes.tunnel_hostname;
+  const boxArgIdx = process.argv.indexOf("--box");
+  const boxFilter = boxArgIdx >= 0 ? process.argv[boxArgIdx + 1] : null;
 
-  const live = await listContainers(boxHost);
-  const liveByDb = new Map(live.map((c) => [c.db_id, c]));
+  const devices = await fetchDevicesWithBoxes();
 
-  const rows = [];
+  // Group by the device's OWN box host (the fix — no single shared host).
+  const byBox = new Map();
   for (const d of devices) {
-    const c = liveByDb.get(d.db_id);
-    const state = c?.state ?? "unknown";
-    const row = {
-      user_name: d.user_name,
-      db_id: d.db_id,
-      state,
-      pkgInstalled: null,
-      imeRegistered: null,
-      imeEnabled: null,
-    };
-    if (state === "running") {
-      const pkg = await shell(
-        boxHost,
-        d.db_id,
-        "pm list packages com.android.adbkeyboard",
-      );
-      row.pkgInstalled = pkg.message.includes("com.android.adbkeyboard");
-      const reg = await shell(
-        boxHost,
-        d.db_id,
-        "ime list -a | grep -i adbkeyboard",
-      );
-      row.imeRegistered = reg.message.toLowerCase().includes("adbkeyboard");
-      const en = await shell(
-        boxHost,
-        d.db_id,
-        "ime list -s | grep -i adbkeyboard",
-      );
-      row.imeEnabled = en.message.toLowerCase().includes("adbkeyboard");
-    }
-    rows.push(row);
-    const flag = (b) => (b === null ? "-" : b ? "OK" : "NO");
-    console.log(
-      `${row.user_name.padEnd(14)} ${row.db_id.padEnd(18)} ${state.padEnd(10)}  pkg=${flag(row.pkgInstalled)}  reg=${flag(row.imeRegistered)}  en=${flag(row.imeEnabled)}`,
-    );
+    const host = d.boxes?.tunnel_hostname;
+    if (!host) continue;
+    if (boxFilter && host !== boxFilter && d.boxes?.name !== boxFilter) continue;
+    if (!byBox.has(host)) byBox.set(host, []);
+    byBox.get(host).push(d);
   }
 
-  const running = rows.filter((r) => r.state === "running");
-  const stopped = rows.filter((r) => r.state !== "running");
-  const fullyDone = running.filter(
-    (r) => r.pkgInstalled && r.imeRegistered && r.imeEnabled,
-  );
-  const installedNotEnabled = running.filter(
-    (r) => r.pkgInstalled && !r.imeEnabled,
-  );
-  const notInstalled = running.filter((r) => !r.pkgInstalled);
+  const rows = [];
+  for (const [host, boxDevices] of byBox) {
+    let running;
+    try {
+      running = await fetchRunningDbIds(host);
+    } catch {
+      running = null; // box unreachable → fall back to DB for all its devices
+    }
 
-  console.log("\n=== summary ===");
-  console.log(`total devices: ${rows.length}`);
-  console.log(`  running    : ${running.length}`);
-  console.log(`  stopped    : ${stopped.length}`);
-  console.log(`among running:`);
-  console.log(`  fully done             : ${fullyDone.length}`);
-  console.log(`  installed, not enabled : ${installedNotEnabled.length}`);
-  console.log(`  not installed          : ${notInstalled.length}`);
+    for (const d of boxDevices) {
+      const row = {
+        box: d.boxes?.name ?? host,
+        user_name: d.user_name ?? "",
+        db_id: d.db_id,
+        state: "",
+        installed: null,
+        enabled: null,
+        source: "",
+      };
+
+      if (running === null) {
+        row.state = "box_offline";
+        row.installed = d.adbkeyboard_installed;
+        row.enabled = d.adbkeyboard_enabled;
+        row.source = d.adbkeyboard_checked_at ? "db" : "unknown";
+      } else if (running.has(d.db_id)) {
+        row.state = "running";
+        const r = await checkRunningDevice(host, d.db_id);
+        row.installed = r.installed;
+        row.enabled = r.enabled;
+        row.source = "live";
+        await recordAdbKeyboardState(d.id, r);
+      } else {
+        row.state = "stopped";
+        row.installed = d.adbkeyboard_installed;
+        row.enabled = d.adbkeyboard_enabled;
+        row.source = d.adbkeyboard_checked_at ? "db" : "unknown";
+      }
+
+      rows.push(row);
+      console.log(
+        `${String(row.box).padEnd(20)} ${row.user_name.padEnd(12)} ${row.db_id.padEnd(18)} ` +
+          `${row.state.padEnd(11)} pkg=${flag(row.installed)} en=${flag(row.enabled)} [${row.source}]`,
+      );
+    }
+  }
+
+  // --- summary -------------------------------------------------------------
+  const installedYes = rows.filter((r) => r.installed === true).length;
+  const enabledYes = rows.filter((r) => r.enabled === true).length;
+  const knownMissing = rows.filter((r) => r.installed === false).length;
+  const unknown = rows.filter((r) => r.installed == null).length;
+  const liveNow = rows.filter((r) => r.source === "live").length;
+
+  console.log("\n=== summary (fleet-wide) ===");
+  console.log(`devices               : ${rows.length}`);
+  console.log(`checked live this run : ${liveNow}`);
+  console.log(`ADBKeyboard installed : ${installedYes}`);
+  console.log(`ADBKeyboard enabled   : ${enabledYes}`);
+  console.log(`known-missing (install needed) : ${knownMissing}`);
+  console.log(`unknown (never checked)        : ${unknown}`);
+
+  console.log("\nper box (installed / enabled / total):");
+  const boxes = [...new Set(rows.map((r) => r.box))].sort();
+  for (const b of boxes) {
+    const br = rows.filter((r) => r.box === b);
+    const ins = br.filter((r) => r.installed === true).length;
+    const en = br.filter((r) => r.enabled === true).length;
+    console.log(`  ${String(b).padEnd(20)} ${ins} / ${en} / ${br.length}`);
+  }
 }
 
 main().catch((e) => {

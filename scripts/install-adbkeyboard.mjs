@@ -27,66 +27,20 @@
  * Env vars are loaded from `.env.local`.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, "..");
-
-// ---------------------------------------------------------------------------
-// Env loader (.env.local)
-// ---------------------------------------------------------------------------
-
-function loadEnv() {
-  const envPath = path.join(PROJECT_ROOT, ".env.local");
-  if (!fs.existsSync(envPath)) {
-    throw new Error(`.env.local not found at ${envPath}`);
-  }
-  const raw = fs.readFileSync(envPath, "utf8");
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (!(key in process.env)) process.env[key] = value;
-  }
-}
-loadEnv();
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const CF_ID = process.env.CF_ACCESS_CLIENT_ID;
-const CF_SECRET = process.env.CF_ACCESS_CLIENT_SECRET;
-
-for (const [k, v] of Object.entries({
-  NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY: SUPABASE_SERVICE_KEY,
-  CF_ACCESS_CLIENT_ID: CF_ID,
-  CF_ACCESS_CLIENT_SECRET: CF_SECRET,
-})) {
-  if (!v) {
-    console.error(`Missing env var: ${k}`);
-    process.exit(1);
-  }
-}
+import {
+  boxFetch,
+  shell,
+  fetchRunningDbIds,
+  fetchDevicesWithBoxes,
+  updateDeviceState,
+  recordAdbKeyboardState,
+  ADBKEYBOARD_APK_URL,
+  ADBKEYBOARD_IME,
+} from "./lib/fleet.mjs";
 
 // ---------------------------------------------------------------------------
-// Constants
+// Tuning
 // ---------------------------------------------------------------------------
-
-const APK_URL =
-  "https://github.com/senzhk/ADBKeyBoard/releases/download/v2.4-dev/keyboardservice-debug.apk";
-const ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME";
 
 const MAX_CONCURRENCY = 10;
 const CONTAINER_START_POLL_MS = 2000;
@@ -101,45 +55,8 @@ const APK_INSTALL_MAX_ATTEMPTS = 2;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
-// HTTP helpers
+// Box container ops (VMOS) — built on the shared boxFetch/shell in lib/fleet
 // ---------------------------------------------------------------------------
-
-const cfHeaders = {
-  "CF-Access-Client-Id": CF_ID,
-  "CF-Access-Client-Secret": CF_SECRET,
-};
-
-async function boxFetch(boxHost, urlPath, init = {}) {
-  const url = `https://${boxHost}${urlPath}`;
-  const headers = { ...cfHeaders, ...(init.headers || {}) };
-  if (init.method === "POST" && !headers["Content-Type"]) {
-    headers["Content-Type"] = "application/json";
-  }
-  const res = await fetch(url, { ...init, headers, cache: "no-store" });
-  const text = await res.text();
-  let json;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    json = { raw: text };
-  }
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText} ${url} → ${text.slice(0, 200)}`);
-  }
-  return json;
-}
-
-async function shell(boxHost, dbId, cmd) {
-  const json = await boxFetch(boxHost, `/android_api/v1/shell/${dbId}`, {
-    method: "POST",
-    body: JSON.stringify({ id: dbId, cmd }),
-  });
-  return {
-    code: json?.code ?? -1,
-    message: json?.data?.message ?? "",
-    ok: (json?.code ?? -1) === 200,
-  };
-}
 
 async function fetchContainerDetail(boxHost, dbId) {
   try {
@@ -189,46 +106,6 @@ async function installApkSerialPerBox(boxHost, dbId, url) {
   } finally {
     release();
   }
-}
-
-// ---------------------------------------------------------------------------
-// Supabase REST
-// ---------------------------------------------------------------------------
-
-async function supabaseFetch(pathAndQuery, init = {}) {
-  const url = `${SUPABASE_URL}/rest/v1/${pathAndQuery}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      apikey: SUPABASE_SERVICE_KEY,
-      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
-    cache: "no-store",
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Supabase ${res.status} ${url} → ${text.slice(0, 200)}`);
-  }
-  return text ? JSON.parse(text) : null;
-}
-
-async function fetchAllDevices() {
-  return supabaseFetch(
-    "devices?select=id,db_id,user_name,state,box_id,boxes(id,name,tunnel_hostname,max_concurrent_containers)&order=user_name.asc"
-  );
-}
-
-async function updateDeviceState(deviceId, state) {
-  return supabaseFetch(`devices?id=eq.${deviceId}`, {
-    method: "PATCH",
-    headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({
-      state,
-      last_seen: new Date().toISOString(),
-    }),
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -355,7 +232,7 @@ async function processDevice(device) {
       let installed = false;
       for (let attempt = 1; attempt <= APK_INSTALL_MAX_ATTEMPTS; attempt++) {
         logFor("APK ", dbId, `installing ADBKeyboard (attempt ${attempt}/${APK_INSTALL_MAX_ATTEMPTS})`);
-        const r = await installApkSerialPerBox(boxHost, dbId, APK_URL);
+        const r = await installApkSerialPerBox(boxHost, dbId, ADBKEYBOARD_APK_URL);
         logFor("APK ", dbId, "install_apk response", { code: r?.code, msg: r?.msg });
         installed = await waitForApkInstalled(boxHost, dbId);
         if (installed) break;
@@ -398,6 +275,7 @@ async function processDevice(device) {
     logFor("IME ", dbId, "ADBKeyboard enabled and selectable");
 
     result.ok = true;
+    await recordAdbKeyboardState(device.id, { installed: true, enabled: true });
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
     logFor("ERR ", dbId, "FAILED", { error: result.error });
@@ -435,9 +313,7 @@ async function processDevice(device) {
 
 async function listRunningDbIds(boxHost) {
   try {
-    const json = await boxFetch(boxHost, "/container_api/v1/list_names");
-    const list = json?.data?.list ?? [];
-    return new Set(list.filter((c) => c.state === "running").map((c) => c.db_id));
+    return await fetchRunningDbIds(boxHost);
   } catch (err) {
     logFor("BOX ", boxHost, "list_names failed — assuming box full (conservative)", {
       error: err instanceof Error ? err.message : String(err),
@@ -511,11 +387,11 @@ async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
 
 async function main() {
   console.log("=== install-adbkeyboard ===");
-  console.log(`APK: ${APK_URL}`);
+  console.log(`APK: ${ADBKEYBOARD_APK_URL}`);
   console.log(`Concurrency: per-box max_concurrent_containers (override with --concurrency)`);
   console.log("");
 
-  const devices = await fetchAllDevices();
+  const devices = await fetchDevicesWithBoxes();
   console.log(`Loaded ${devices.length} devices from Supabase`);
 
   // Optional CLI filter: --only DBID1,DBID2
