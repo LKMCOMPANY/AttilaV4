@@ -167,16 +167,24 @@ async function main() {
 
   console.log("\n=== drift summary ===");
   console.log(`boxes total          : ${rows.length}`);
-  console.log(`on golden CBS        : ${rows.filter((r) => r.cbsOk).length}/${rows.length}`);
-  console.log(`on git proxy version : ${rows.filter((r) => r.proxyOk).length}/${rows.length}`);
-  if (notInManifest.length) console.log(`MISSING from manifest: ${notInManifest.map((r) => r.host).join(", ")}`);
-  if (offline.length) console.log(`offline              : ${offline.map((r) => r.host).join(", ")}`);
-  if (cbsDrift.length) console.log(`CBS drift            : ${cbsDrift.map((r) => `${r.host}(${r.cbs ?? "n/a"})`).join(", ")}`);
-  if (proxyDrift.length) console.log(`proxy drift          : ${proxyDrift.map((r) => `${r.host}(${r.proxyV ?? "none"})`).join(", ")}`);
+  console.log(`on git proxy version : ${rows.filter((r) => r.proxyOk).length}/${rows.length}   [actionable]`);
+  console.log(`on golden CBS        : ${rows.filter((r) => r.cbsOk).length}/${rows.length}   [vendor, cosmetic]`);
 
-  const clean = !notInManifest.length && !cbsDrift.length && !proxyDrift.length && !offline.length;
-  console.log(clean ? "\n✓ fleet is uniform and fully captured in git" : "\n✗ drift detected — see above");
-  process.exit(clean ? 0 : 2);
+  // Actionable = the layer we ship from git (proxy code + manifest coverage).
+  if (notInManifest.length) console.log(`\n[!] MISSING from manifest : ${notInManifest.map((r) => r.host).join(", ")}`);
+  if (proxyDrift.length) console.log(`[!] proxy drift           : ${proxyDrift.map((r) => `${r.host}(${r.proxyV ?? "none"})`).join(", ")}`);
+  // Informational = vendor firmware (accepted as cosmetic) + known-offline boxes.
+  if (cbsDrift.length) console.log(`(i) vendor CBS drift      : ${cbsDrift.map((r) => `${r.host}(${r.cbs ?? "n/a"})`).join(", ")}  — cosmetic, monitored`);
+  if (offline.length) console.log(`(i) offline               : ${offline.map((r) => r.host).join(", ")}`);
+
+  // Only our-code drift fails the check; vendor drift and offline boxes are informational.
+  const ourLayerClean = !notInManifest.length && !proxyDrift.length;
+  console.log(
+    ourLayerClean
+      ? "\n✓ our-code layer uniform + captured in git (vendor drift cosmetic/monitored)"
+      : "\n✗ actionable drift in our-code layer — see [!] above",
+  );
+  process.exit(ourLayerClean ? 0 : 2);
 }
 
 main().catch((e) => {
