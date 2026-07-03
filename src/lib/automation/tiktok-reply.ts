@@ -47,6 +47,7 @@ import {
   tap,
   dumpUiXml,
   dumpUiNodes,
+  parseUiNodes,
   findCommentEditText,
   editTextContains,
   findInterstitialDismiss,
@@ -140,6 +141,26 @@ const LOGGED_OUT_MARKERS = [
   "Inicia sesión en TikTok",
 ];
 
+// Second, compound auth signal: a LOGIN call-to-action and a SIGN-UP
+// call-to-action visible on the SAME screen. Promotional surfaces of a
+// logged-in session show at most one of the two; only real auth walls (e.g.
+// the per-profile "Willkommen zurück <handle> / Anmelden / Registrieren"
+// re-login screen seen on box-1, which none of the brand-qualified markers
+// caught) present both. Each pair must match its own language — mixing
+// languages across the pair would defeat the precision.
+const AUTH_WALL_PAIRS: ReadonlyArray<readonly [login: string, signup: string]> = [
+  ["Anmelden", "Registrieren"],           // DE
+  ["Log in", "Sign up"],                  // EN
+  ["Connexion", "Inscription"],           // FR
+  ["Se connecter", "S'inscrire"],         // FR variant
+  ["Iniciar sesión", "Registrarse"],      // ES
+  ["Accedi", "Registrati"],               // IT
+];
+
+function isAuthWall(uiXml: string): boolean {
+  return AUTH_WALL_PAIRS.some(([login, signup]) => uiXml.includes(login) && uiXml.includes(signup));
+}
+
 const CONTENT_UNAVAILABLE_MARKERS = [
   "Vidéo non disponible",
   "Cette vidéo n'est pas disponible",
@@ -156,7 +177,7 @@ function detectBlockingState(uiXml: string): JobError | null {
       "TikTok consent dialog blocking — device requires a one-time manual ack",
     );
   }
-  if (LOGGED_OUT_MARKERS.some((m) => uiXml.includes(m))) {
+  if (LOGGED_OUT_MARKERS.some((m) => uiXml.includes(m)) || isAuthWall(uiXml)) {
     return new JobError(
       "account_logged_out",
       "TikTok session expired or no avatar logged in on this device — operator must sign in again",
@@ -285,7 +306,14 @@ export async function postTikTokComment(
     // Gate 4 — confirm publication from the UI tree (never the screenshot): a
     // NEW list item matching our text must appear vs the pre-compose baseline.
     // "Cannot verify" is treated as failure.
-    await verifySubmission(tunnelHostname, dbId, text, beforeMatches);
+    const confirmationShot = await verifySubmission(tunnelHostname, dbId, text, beforeMatches);
+
+    // The comment is confirmed live — upgrade the proof from "composer with
+    // text" (pre-submit) to the comment actually IN the list. This is the shot
+    // operators need to trust the result at a glance; the composer shot stays
+    // as the proof only when this capture fails.
+    const liveShot = confirmationShot ?? await screenshot(tunnelHostname, dbId);
+    if (liveShot.length > 0) proof = liveShot;
 
     // Best-effort: collapse the comments panel so the device returns to feed.
     await shellSafe(tunnelHostname, dbId, "input keyevent KEYCODE_BACK");
@@ -334,8 +362,10 @@ async function ensureTikTokForeground(
     const xml = await dumpUiXml(tunnelHostname, dbId);
     const blocker = xml ? detectBlockingState(xml) : null;
     if (blocker) throw blocker;
+    // Nothing typed yet — a slow cold start (CPU contention right after the
+    // container boots) is the common cause, and a later retry usually lands.
     throw new JobError(
-      "ui_unexpected",
+      "app_not_ready",
       `TikTok did not reach the foreground within ${TIMING.foregroundTimeoutMs / 1000}s of the deep link`,
     );
   }
@@ -350,17 +380,24 @@ async function ensureTikTokForeground(
  * seconds behind the animation, and an eager re-tap on an already-open panel
  * closes it again (the bug that made this look like the panel never opened).
  * Between attempts we dismiss any recognised interstitial (add-phone,
- * notification nudge). Throws `ui_unexpected` if the panel never opens — the
- * exact state the old flow silently reported as a posted comment.
+ * notification nudge).
+ *
+ * A blocker that surfaces mid-loop (auth wall after a redirect, consent
+ * dialog) throws its own typed JobError — observed live: an expired session
+ * redirected to the German "Willkommen zurück / Anmelden" re-login screen a
+ * few seconds after the deep link, and the job burned 2 minutes tapping a
+ * login wall before failing with a generic category that never tagged the
+ * avatar. Otherwise throws retryable `app_not_ready` (nothing typed yet —
+ * usually the video simply never loaded on this attempt).
  */
 async function openCommentsPanel(
   tunnelHostname: string,
   dbId: string,
 ): Promise<void> {
-  if (await ensureCommentsPanelOpen(tunnelHostname, dbId)) return;
+  if (await ensureCommentsPanelOpen(tunnelHostname, dbId, { throwOnBlocker: true })) return;
   throw new JobError(
-    "ui_unexpected",
-    "Comments panel never opened — deep link may have landed off-target or an unknown dialog is blocking",
+    "app_not_ready",
+    "Comments panel never opened — the video did not load or the deep link landed off-target",
   );
 }
 
@@ -368,26 +405,41 @@ async function openCommentsPanel(
  * Best-effort: get the comments sheet open and return whether it is. Rotates
  * through the comment-icon Y candidates (its position drifts per video) and
  * polls after each tap — never re-tapping an already-open panel (that closes
- * it). Dismisses recognised interstitials. Reused by the initial open gate and
- * by the post-submit readback (which must re-open the sheet after TikTok
- * collapses back to the opaque video surface).
+ * it). Dismisses recognised interstitials. Reused by the initial open gate
+ * (`throwOnBlocker` — a login/consent wall must fail the job with its own
+ * category) and by the post-submit readback (best-effort only: the comment
+ * may already be live, a late blocker must not overwrite that verdict).
  */
 async function ensureCommentsPanelOpen(
   tunnelHostname: string,
   dbId: string,
+  opts: { throwOnBlocker?: boolean } = {},
 ): Promise<boolean> {
   for (let attempt = 0; attempt < OPEN_PANEL_ATTEMPTS; attempt++) {
-    const current = await dumpUiNodes(tunnelHostname, dbId);
-    if (current && (findCommentEditText(current) || isCommentsPanelOpen(current))) return true;
+    const currentXml = await dumpUiXml(tunnelHostname, dbId);
+    if (currentXml) {
+      const nodes = parseUiNodes(currentXml);
+      if (findCommentEditText(nodes) || isCommentsPanelOpen(nodes)) return true;
+      if (opts.throwOnBlocker) {
+        const blocker = detectBlockingState(currentXml);
+        if (blocker) throw blocker;
+      }
+    }
 
     const target = COMMENT_BUTTON_CANDIDATES[attempt % COMMENT_BUTTON_CANDIDATES.length];
     await tap(tunnelHostname, dbId, target);
 
     for (let poll = 0; poll < PANEL_POLL_ATTEMPTS; poll++) {
       await sleep(TIMING.panelSettle);
-      const nodes = await dumpUiNodes(tunnelHostname, dbId);
-      if (!nodes) continue;
+      const xml = await dumpUiXml(tunnelHostname, dbId);
+      if (!xml) continue;
+      const nodes = parseUiNodes(xml);
       if (findCommentEditText(nodes) || isCommentsPanelOpen(nodes)) return true;
+
+      if (opts.throwOnBlocker) {
+        const blocker = detectBlockingState(xml);
+        if (blocker) throw blocker;
+      }
 
       const dismiss = findInterstitialDismiss(nodes);
       if (dismiss) {
@@ -426,13 +478,17 @@ const OCR_MAX_ATTEMPTS = 2; // OCR is heavy — cap how many polls fall back to 
  * Text still sitting in an `EditText` is a hard negative (`rate_limited`).
  * Leaving the TikTok foreground, or never getting a readable tree, is also a
  * failure. We never pass without one of the two positive signals.
+ *
+ * Returns the screenshot that carried the confirmation when one was taken
+ * (OCR path) so the caller can persist it as the proof; `null` means the tree
+ * confirmed and the caller should capture the live frame itself.
  */
 async function verifySubmission(
   tunnelHostname: string,
   dbId: string,
   text: string,
   beforeMatches: number,
-): Promise<void> {
+): Promise<Buffer | null> {
   let sawReadableTree = false;
   let ocrAttempts = 0;
 
@@ -467,7 +523,7 @@ async function verifySubmission(
       // Signal 1 — tree shows a NEW matching list item vs baseline.
       if (countPostedMatches(nodes, text) > beforeMatches) {
         ttLog(dbId, "submission confirmed — our comment is in the list", { beforeMatches });
-        return;
+        return null;
       }
 
       // Signal 2 — field is cleared (checked above) and the sheet is on screen,
@@ -477,7 +533,7 @@ async function verifySubmission(
         const shot = await screenshot(tunnelHostname, dbId);
         if (await screenshotContainsText(shot, text)) {
           ttLog(dbId, "submission confirmed — our comment found via OCR", { ocrAttempts });
-          return;
+          return shot;
         }
       }
     }

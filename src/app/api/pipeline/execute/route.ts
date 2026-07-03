@@ -7,7 +7,7 @@ import {
   stopContainerIfIdle,
   ContainerNotReadyError,
 } from "@/lib/box-api";
-import { encodeJobError, JobError, parseJobError } from "@/lib/automation/errors";
+import { encodeJobError, isAutoRetryable, JobError, parseJobError } from "@/lib/automation/errors";
 import { tagAvatarBlocked } from "@/lib/pipeline/avatar-selector";
 import { isTikHubEnabled, verifyTweetReply } from "@/lib/social-verify/tikhub";
 
@@ -67,6 +67,16 @@ async function crossCheckTwitterReply(
     console.warn(`[Verify][${job.id}] twitter cross-check failed:`, err instanceof Error ? err.message : err);
   }
 }
+
+/**
+ * Auto-retry budget for pre-compose failures (`app_not_ready`: app never
+ * foregrounded, video never loaded, comments panel never opened). Observed
+ * live: the same video failed on one device and posted fine on another two
+ * minutes later — these flakes are device-moment-specific, and a delayed
+ * retry recovers most of them. 3 total attempts, spaced by a growing delay.
+ */
+const MAX_JOB_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 2 * 60 * 1000;
 
 /**
  * An `executing` row this old is an orphan: the worker died mid-job (deploy
@@ -317,9 +327,35 @@ export async function POST(req: NextRequest) {
     // promise can never reject.
     void crossCheckTwitterReply(supabase, job);
   } else {
+    // Pre-compose failures (nothing typed, nothing sent — guaranteed by the
+    // `app_not_ready` contract) are re-queued with backoff instead of failed:
+    // they are device-moment flakes and a later attempt usually lands. The
+    // failure counter is only touched when the job goes terminal.
+    const attempts = (job.attempts ?? 0) + 1;
+    const parsed = parseJobError(result.error);
+    if (parsed && isAutoRetryable(parsed.category) && attempts < MAX_JOB_ATTEMPTS) {
+      await supabase
+        .from("campaign_jobs")
+        .update({
+          status: "ready",
+          attempts,
+          started_at: null,
+          scheduled_at: new Date(Date.now() + RETRY_BACKOFF_MS * attempts).toISOString(),
+          error_message: `retry ${attempts}/${MAX_JOB_ATTEMPTS - 1} scheduled: ${result.error}`,
+          source_screenshot: sourceUrl,
+          proof_screenshot: proofUrl,
+        })
+        .eq("id", job.id);
+      console.log(`[Execute] Job ${job.id} re-queued (attempt ${attempts}/${MAX_JOB_ATTEMPTS - 1})`, { error: result.error });
+      broadcastCampaignEvent(job.campaign_id, "pipeline", { action: "job_retry", attempts });
+      broadcastAccountEvent(job.account_id, "jobs", { action: "job_retry" });
+      await stopContainerIfIdle(tunnelHostname, device.db_id, job.device_id, supabase);
+      return NextResponse.json({ jobId: job.id, success: false, status: "retry_scheduled", attempts, error: result.error });
+    }
+
     await supabase
       .from("campaign_jobs")
-      .update({ status: "failed", error_message: result.error, completed_at: now, duration_ms: result.durationMs, source_screenshot: sourceUrl, proof_screenshot: proofUrl })
+      .update({ status: "failed", attempts, error_message: result.error, completed_at: now, duration_ms: result.durationMs, source_screenshot: sourceUrl, proof_screenshot: proofUrl })
       .eq("id", job.id);
     await supabase.rpc("increment_campaign_counter", { p_campaign_id: job.campaign_id, p_counter: "total_responses_failed" });
 

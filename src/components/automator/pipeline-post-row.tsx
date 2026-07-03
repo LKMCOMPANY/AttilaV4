@@ -10,7 +10,9 @@ import {
   ThumbsUp,
   Share2,
   Bookmark,
-  Reply,
+  CheckCircle2,
+  XCircle,
+  Clock,
 } from "lucide-react";
 import { PostStatusBadge } from "./pipeline-status";
 import { SentimentChip } from "./sentiment-chip";
@@ -25,7 +27,10 @@ import type {
 } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Post row — compact list item, click opens detail overlay
+// Post row — compact list item, click opens detail overlay.
+// Reads top-to-bottom: WHO posted → WHAT they said → WHAT WE DID about it.
+// The outcome line is the load-bearing signal (published / failed / queued),
+// spelled out with words and color instead of a bare "1/3" fraction.
 // ---------------------------------------------------------------------------
 
 interface PipelinePostRowProps {
@@ -41,98 +46,116 @@ export function PipelinePostRow({
 }: PipelinePostRowProps) {
   const metrics = post.post_metrics as Record<string, number | undefined>;
   const hasMetrics = Object.keys(metrics).length > 0;
-  const doneResponses = responses.filter((r) => r.status === "done");
   const sourceScreenshot = responses.find(
-    (r) => r.source_screenshot
+    (r) => r.source_screenshot,
   )?.source_screenshot;
 
   return (
     <button
       onClick={onSelect}
-      className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted/50"
+      className="flex w-full items-start gap-2.5 rounded-md px-2.5 py-2.5 text-left transition-colors hover:bg-muted/50"
     >
       <div className="min-w-0 flex-1">
-        <p className="font-medium leading-snug">
-          {post.post_author && (
-            <span className="text-primary">@{post.post_author} </span>
-          )}
-          <span className="truncate-multiline truncate-2 text-foreground">
-            {post.post_text}
+        {/* WHO + status */}
+        <div className="flex items-center gap-1.5">
+          <SocialIcon
+            platform={post.platform as SocialPlatform}
+            className="h-3 w-3 shrink-0 text-muted-foreground"
+          />
+          <span className="truncate text-[13px] font-semibold text-foreground">
+            @{post.post_author ?? "unknown"}
           </span>
+          <span
+            className="shrink-0 text-[11px] text-muted-foreground"
+            title={
+              post.source_posted_at
+                ? "When the post was published on the platform"
+                : "When Attila detected the post"
+            }
+          >
+            {formatDistanceToNow(
+              new Date(post.source_posted_at ?? post.created_at),
+              { addSuffix: true },
+            )}
+          </span>
+          <span className="ml-auto shrink-0">
+            <PostStatusBadge status={post.status} />
+          </span>
+        </div>
+
+        {/* WHAT they said */}
+        <p className="truncate-multiline truncate-2 mt-1 text-xs leading-normal text-muted-foreground">
+          {post.post_text}
         </p>
 
-        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
-          <span className="inline-flex items-center gap-0.5">
-            <SocialIcon
-              platform={post.platform as SocialPlatform}
-              className="h-2.5 w-2.5"
-            />
-            {post.platform}
-          </span>
-          <PostStatusBadge status={post.status} />
+        {/* WHAT WE DID — outcome per response, spelled out */}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1">
+          <ResponseOutcome responses={responses} />
           <SentimentChip
             label={post.sentiment_label}
             score={post.sentiment_score}
           />
-          {/* Two timestamps — `source_posted_at` is when the post was
-              actually published upstream, `created_at` is when Attila
-              processed it. Operators care about the first; the second is
-              shown muted as a secondary signal. */}
-          {post.source_posted_at ? (
-            <>
-              <span title="When the post was published upstream">
-                Posted{" "}
-                {formatDistanceToNow(new Date(post.source_posted_at), {
-                  addSuffix: true,
-                })}
-              </span>
-              <span
-                className="text-muted-foreground/60"
-                title="When Attila ingested the post"
-              >
-                · Detected{" "}
-                {formatDistanceToNow(new Date(post.created_at), {
-                  addSuffix: true,
-                })}
-              </span>
-            </>
-          ) : (
-            <span title="When Attila ingested the post">
-              Detected{" "}
-              {formatDistanceToNow(new Date(post.created_at), {
-                addSuffix: true,
-              })}
-            </span>
-          )}
-        </div>
-
-        {/* Metrics + response count */}
-        <div className="mt-1.5 flex items-center gap-2">
           {hasMetrics && (
-            <div className="flex flex-wrap gap-1">
-              {renderMetricChips(metrics, 3)}
-            </div>
-          )}
-          {responses.length > 0 && (
-            <span className="ml-auto inline-flex items-center gap-1 text-[10px] tabular-nums text-muted-foreground">
-              <Reply className="h-2.5 w-2.5" />
-              {doneResponses.length}/{responses.length}
+            <span className="ml-auto flex gap-1">
+              {renderMetricChips(metrics, 2)}
             </span>
           )}
         </div>
       </div>
 
-      {/* Source screenshot thumbnail */}
+      {/* Source thumbnail */}
       {sourceScreenshot && (
-        <div className="aspect-[9/16] w-7 shrink-0 overflow-hidden rounded border border-border/40">
+        <div className="mt-0.5 aspect-[9/16] w-9 shrink-0 overflow-hidden rounded border border-border/40">
           <img
             src={sourceScreenshot}
             alt={`Source: ${post.post_author ?? "post"}`}
-            className="h-full w-full object-cover"
+            loading="lazy"
+            className="h-full w-full object-cover object-top"
           />
         </div>
       )}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Outcome summary — one colored chip per outcome bucket, in words
+// ---------------------------------------------------------------------------
+
+export function ResponseOutcome({
+  responses,
+}: {
+  responses: CampaignJobWithAvatar[];
+}) {
+  if (responses.length === 0) return null;
+
+  const published = responses.filter((r) => r.status === "done").length;
+  const failed = responses.filter((r) => r.status === "failed").length;
+  const inFlight = responses.filter(
+    (r) => r.status === "ready" || r.status === "executing",
+  ).length;
+
+  return (
+    <span className="inline-flex items-center gap-2 text-[11px] font-medium">
+      {published > 0 && (
+        <span className="inline-flex items-center gap-1 text-success">
+          <CheckCircle2 className="h-3 w-3" />
+          {published} published
+        </span>
+      )}
+      {failed > 0 && (
+        <span className="inline-flex items-center gap-1 text-destructive">
+          <XCircle className="h-3 w-3" />
+          {failed} failed
+        </span>
+      )}
+      {inFlight > 0 && (
+        <span className="inline-flex items-center gap-1 text-muted-foreground">
+          <Clock className="h-3 w-3" />
+          {inFlight} queued
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -171,7 +194,7 @@ export function renderMetricChips(
     return (
       <span
         key={key}
-        className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[9px] tabular-nums text-muted-foreground"
+        className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground"
       >
         <Icon className="h-2.5 w-2.5" />
         {formatCount(value ?? 0)}
@@ -179,4 +202,3 @@ export function renderMetricChips(
     );
   });
 }
-

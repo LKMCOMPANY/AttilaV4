@@ -184,8 +184,9 @@ export async function postReply(
       const ui = await dumpUiXml(tunnelHostname, dbId);
       const blocker = ui ? detectBlockingState(ui) : null;
       if (blocker) throw blocker;
+      // Pre-compose: nothing typed yet, safe for the executor to retry.
       throw new JobError(
-        "ui_unexpected",
+        "app_not_ready",
         `Tweet detail did not open within ${TIMING.focusOpenTimeoutMs / 1000}s after deep link`,
       );
     }

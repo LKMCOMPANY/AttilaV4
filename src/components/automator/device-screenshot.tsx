@@ -3,22 +3,26 @@
 import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Smartphone, X, Maximize2, Download } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 
 interface DeviceScreenshotProps {
   url: string | null | undefined;
   alt: string;
+  /** Short label rendered under the tile (e.g. "Target loaded"). */
+  caption?: string;
   className?: string;
 }
 
+/**
+ * Device screenshot tile: a bounded 9:16 thumbnail with a lightbox for the
+ * full frame. Phone captures rendered full-width dwarfed the panel and pushed
+ * every other signal off screen — evidence is always a small labeled tile,
+ * and inspection happens in the lightbox.
+ */
 export function DeviceScreenshot({
   url,
   alt,
+  caption,
   className,
 }: DeviceScreenshotProps) {
   const [lightbox, setLightbox] = useState(false);
@@ -34,83 +38,55 @@ export function DeviceScreenshot({
     a.click();
   }, [url, alt]);
 
+  const tile = (
+    <div
+      className={cn(
+        "group relative h-44 w-[99px] shrink-0 overflow-hidden rounded-md border",
+        hasImage
+          ? "cursor-zoom-in border-border/60 bg-muted/10"
+          : "border-dashed border-border/40 bg-muted/20",
+        className,
+      )}
+      onClick={() => hasImage && setLightbox(true)}
+    >
+      {hasImage ? (
+        <>
+          <img
+            src={url}
+            alt={alt}
+            loading="lazy"
+            onError={() => setImgError(true)}
+            className="h-full w-full object-cover object-top"
+          />
+          <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition-colors group-hover:bg-black/25">
+            <Maximize2 className="h-4 w-4 text-white opacity-0 drop-shadow transition-opacity group-hover:opacity-100" />
+          </div>
+        </>
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 py-6">
+          <Smartphone className="h-5 w-5 text-muted-foreground/25" />
+          <span className="text-[11px] text-muted-foreground/50">No capture</span>
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <>
-      <div
-        className={cn(
-          "group relative flex w-full items-center justify-center overflow-hidden rounded-md border",
-          "min-h-[140px]",
-          hasImage
-            ? "cursor-pointer border-border/60 bg-muted/10"
-            : "border-dashed border-border/40 bg-muted/20",
-          className
-        )}
-        onClick={() => hasImage && setLightbox(true)}
-      >
-        {hasImage ? (
-          <>
-            <img
-              src={url}
-              alt={alt}
-              onError={() => setImgError(true)}
-              className="h-full w-full object-contain"
-            />
-            {/* Action bar — visible on hover */}
-            <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      className="rounded bg-black/50 p-1 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setLightbox(true);
-                      }}
-                    />
-                  }
-                >
-                  <Maximize2 className="h-3 w-3" />
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-xs">
-                  Fullscreen
-                </TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      className="rounded bg-black/50 p-1 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDownload();
-                      }}
-                    />
-                  }
-                >
-                  <Download className="h-3 w-3" />
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-xs">
-                  Download
-                </TooltipContent>
-              </Tooltip>
-            </div>
-          </>
-        ) : (
-          <div className="flex flex-col items-center gap-1.5 py-6">
-            <Smartphone className="h-5 w-5 text-muted-foreground/25" />
-            <span className="text-[10px] text-muted-foreground/40">
-              Pending capture
-            </span>
-          </div>
-        )}
-      </div>
+      {caption ? (
+        <figure className="flex w-fit flex-col gap-1">
+          {tile}
+          <figcaption className="max-w-[99px] text-center text-[11px] leading-tight text-muted-foreground">
+            {caption}
+          </figcaption>
+        </figure>
+      ) : (
+        tile
+      )}
 
-      {/* Lightbox */}
       {lightbox && hasImage && (
         <div
-          className="fixed inset-0 z-[1050] flex items-center justify-center bg-black/85 p-8"
+          className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/85 p-8"
           onClick={() => setLightbox(false)}
         >
           <div className="absolute right-4 top-4 flex items-center gap-1.5">
@@ -124,6 +100,7 @@ export function DeviceScreenshot({
               }}
             >
               <Download className="h-4 w-4" />
+              <span className="sr-only">Download</span>
             </Button>
             <Button
               variant="ghost"
@@ -132,6 +109,7 @@ export function DeviceScreenshot({
               onClick={() => setLightbox(false)}
             >
               <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
             </Button>
           </div>
 

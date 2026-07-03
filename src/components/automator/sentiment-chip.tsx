@@ -64,7 +64,7 @@ export function SentimentChip({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide tabular-nums",
+        "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide tabular-nums",
         styles.bg,
         styles.text,
         className,

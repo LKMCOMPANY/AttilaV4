@@ -18,6 +18,7 @@ import {
 import type { CampaignJobStatus, CampaignPostStatus } from "@/types";
 import {
   parseJobError,
+  severityOf,
   type JobErrorCategory,
   type JobErrorSeverity,
 } from "@/lib/automation/errors";
@@ -58,7 +59,7 @@ export function JobStatusLabel({ status }: { status: CampaignJobStatus }) {
   return (
     <span
       className={cn(
-        "text-[10px] font-medium",
+        "text-[11px] font-semibold",
         JOB_STATUS_CONFIG[status].color
       )}
     >
@@ -95,7 +96,7 @@ export function PostStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
         config.color,
         config.bgColor,
         className
@@ -131,6 +132,7 @@ const CATEGORY_CONFIG: Record<
 > = {
   container_not_ready: { icon: RefreshCw, label: "Container restart" },
   infrastructure: { icon: RefreshCw, label: "Network / box" },
+  app_not_ready: { icon: RefreshCw, label: "App not ready" },
   device_setup_required: { icon: ShieldAlert, label: "Device setup" },
   consent_required: { icon: ShieldAlert, label: "Consent dialog" },
   account_logged_out: { icon: UserX, label: "Account logged out" },
@@ -142,24 +144,10 @@ const CATEGORY_CONFIG: Record<
   unknown: { icon: HelpCircle, label: "Unknown error" },
 };
 
+// Severity comes from the single source of truth in `lib/automation/errors`
+// — the old inline copy of that mapping drifted as categories were added.
 function styleFor(category: JobErrorCategory): ErrorCategoryConfig {
-  const base = CATEGORY_CONFIG[category];
-  const severity = SEVERITY_STYLE[
-    {
-      container_not_ready: "transient",
-      infrastructure: "transient",
-      rate_limited: "transient",
-      device_setup_required: "action_required",
-      consent_required: "action_required",
-      account_logged_out: "action_required",
-      account_blocked: "action_required",
-      account_captcha: "action_required",
-      content_unavailable: "terminal",
-      ui_unexpected: "bug",
-      unknown: "bug",
-    }[category] as JobErrorSeverity
-  ];
-  return { ...base, ...severity };
+  return { ...CATEGORY_CONFIG[category], ...SEVERITY_STYLE[severityOf(category)] };
 }
 
 /**
@@ -182,7 +170,7 @@ export function JobErrorBadge({
     <span
       title={parsed.message}
       className={cn(
-        "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium",
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
         config.color,
         config.bgColor,
         className,

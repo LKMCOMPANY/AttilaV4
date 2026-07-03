@@ -466,6 +466,8 @@ export interface CampaignJob {
   started_at: string | null;
   completed_at: string | null;
   duration_ms: number | null;
+  /** Execution attempts consumed (auto-retry of pre-compose failures). */
+  attempts: number;
   created_at: string;
 }
 

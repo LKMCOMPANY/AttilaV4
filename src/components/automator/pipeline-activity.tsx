@@ -172,36 +172,36 @@ export function PipelineActivity({
         {/* Tab bar */}
         <div className="flex shrink-0 items-center overflow-x-auto border-b px-3 scrollbar-hide">
           <TabsList variant="line">
-            <TabsTrigger value="posts" className="gap-1.5 text-[11px]">
+            <TabsTrigger value="posts" className="gap-1.5 text-xs">
               <MessageSquare className="h-3 w-3" />
               Posts
-              <span className="text-[10px] tabular-nums text-muted-foreground">
+              <span className="text-[11px] tabular-nums text-muted-foreground">
                 {filteredPosts.length}
               </span>
             </TabsTrigger>
-            <TabsTrigger value="queue" className="gap-1.5 text-[11px]">
+            <TabsTrigger value="queue" className="gap-1.5 text-xs">
               <Clock className="h-3 w-3" />
               Queue
               {queuedJobs.length > 0 && (
-                <span className="text-[10px] tabular-nums text-muted-foreground">
+                <span className="text-[11px] tabular-nums text-muted-foreground">
                   {queuedJobs.length}
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="awaiting" className="gap-1.5 text-[11px]">
+            <TabsTrigger value="awaiting" className="gap-1.5 text-xs">
               <UserX className="h-3 w-3" />
-              Awaiting
+              No avatar
               {awaitingPosts.length > 0 && (
-                <span className="text-[10px] tabular-nums text-warning">
+                <span className="text-[11px] tabular-nums text-warning">
                   {awaitingPosts.length}
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger value="activity" className="gap-1.5 text-[11px]">
+            <TabsTrigger value="activity" className="gap-1.5 text-xs">
               <Activity className="h-3 w-3" />
-              Activity
+              History
               {completedJobs.length > 0 && (
-                <span className="text-[10px] tabular-nums text-muted-foreground">
+                <span className="text-[11px] tabular-nums text-muted-foreground">
                   {completedJobs.length}
                 </span>
               )}
@@ -212,7 +212,7 @@ export function PipelineActivity({
             {awaitingPosts.length > 0 && (
               <button
                 onClick={handlePurgeAwaiting}
-                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-2.5 w-2.5" />
                 Purge awaiting
@@ -221,7 +221,7 @@ export function PipelineActivity({
             {queuedJobs.length > 0 && (
               <button
                 onClick={handlePurge}
-                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
               >
                 <Trash2 className="h-2.5 w-2.5" />
                 Purge queue

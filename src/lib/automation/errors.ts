@@ -12,6 +12,9 @@ export type JobErrorCategory =
   // Infrastructure — typically transient, safe to retry later
   | "container_not_ready"     // VMOS reports container not running
   | "infrastructure"          // network / box outage / 5xx
+  | "app_not_ready"           // app/screen never reached the target state
+                              // BEFORE composing (nothing typed, nothing sent)
+                              // — always safe to retry automatically
   // Setup — fixable on the device by an admin / one-time provisioning
   | "device_setup_required"   // ADBKeyboard missing, app missing, etc.
   | "consent_required"        // first-launch GDPR / ads dialog
@@ -38,6 +41,7 @@ export type JobErrorSeverity = "action_required" | "transient" | "terminal" | "b
 const SEVERITY_BY_CATEGORY: Record<JobErrorCategory, JobErrorSeverity> = {
   container_not_ready: "transient",
   infrastructure: "transient",
+  app_not_ready: "transient",
   device_setup_required: "action_required",
   consent_required: "action_required",
   account_logged_out: "action_required",
@@ -51,6 +55,21 @@ const SEVERITY_BY_CATEGORY: Record<JobErrorCategory, JobErrorSeverity> = {
 
 export function severityOf(category: JobErrorCategory): JobErrorSeverity {
   return SEVERITY_BY_CATEGORY[category];
+}
+
+/**
+ * Whether the executor may re-queue this failure automatically. The invariant
+ * is strict: the failure must be GUARANTEED to have happened before any text
+ * was typed or submitted, so a retry can never double-post.
+ *
+ * Only `app_not_ready` qualifies — the automation modules throw it exclusively
+ * from pre-compose gates (app never foregrounded, video never loaded, comments
+ * panel never opened). `container_not_ready`/`infrastructure` are NOT safe
+ * here: they can also surface when a container dies mid-flow, after the
+ * submit tap, where the outcome is unknowable.
+ */
+export function isAutoRetryable(category: JobErrorCategory): boolean {
+  return category === "app_not_ready";
 }
 
 /**

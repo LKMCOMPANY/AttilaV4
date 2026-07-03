@@ -448,6 +448,7 @@ export { shell, shellSafe, screenshot } from "@/lib/box-api";
 // here (so automation code has a single import surface). Pure/internal helpers
 // like nodeCenter / normalizedIncludes stay private to `ui-tree`.
 export {
+  parseUiNodes,
   findCommentEditText,
   editTextContains,
   findInterstitialDismiss,
