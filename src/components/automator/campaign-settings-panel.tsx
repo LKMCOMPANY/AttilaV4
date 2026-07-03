@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useTransition, useEffect } from "react";
+import { useState, useCallback, useTransition, useEffect, useRef } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
@@ -57,21 +57,7 @@ export function CampaignSettingsPanel({
     });
   }, [accountId]);
 
-  const save = useCallback(
-    async (patch: UpdateCampaignInput) => {
-      const optimistic = { ...campaign, ...patch } as Campaign;
-      onCampaignUpdated(optimistic);
-
-      const { data, error } = await updateCampaign(campaign.id, patch);
-      if (error) {
-        toast.error("Update failed", { description: error });
-        onCampaignUpdated(campaign);
-        return;
-      }
-      if (data) onCampaignUpdated(data);
-    },
-    [campaign, onCampaignUpdated]
-  );
+  const { save, debouncedSave } = useCampaignSaver(campaign, onCampaignUpdated);
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -90,8 +76,17 @@ export function CampaignSettingsPanel({
         <StatusSelect campaign={campaign} onSave={save} />
       </div>
 
+      {/* Cause → effect reading order: what we target (filters), who
+          responds (army), whether it fits (capacity), where (networks). */}
       <ScrollArea className="min-h-0 flex-1" dir="rtl">
         <div className="space-y-5 p-3" dir="ltr">
+          <FiltersSection campaign={campaign} onSave={debouncedSave} />
+          <ArmySection
+            campaign={campaign}
+            armies={armies}
+            loading={armiesLoading}
+            onSave={save}
+          />
           <CapacityEstimator
             accountId={accountId}
             zoneId={campaign.gorgone_zone_id}
@@ -99,20 +94,116 @@ export function CampaignSettingsPanel({
             filters={campaign.filters}
             armyIds={campaign.army_ids}
             capacityParams={campaign.capacity_params}
-            onParamsChange={(capacity_params) => save({ capacity_params })}
-          />
-          <FiltersSection campaign={campaign} onSave={save} />
-          <ArmySection
-            campaign={campaign}
-            armies={armies}
-            loading={armiesLoading}
-            onSave={save}
+            onParamsChange={(capacity_params) => debouncedSave({ capacity_params })}
           />
           <NetworksSection campaign={campaign} onSave={save} />
         </div>
       </ScrollArea>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Campaign persistence
+//
+//   `save`          — immediate write (status, armies, networks).
+//   `debouncedSave` — coalesced write for keystroke-frequency edits
+//                     (filters, capacity params); the optimistic UI
+//                     update stays instant, only the `updateCampaign`
+//                     round-trip is debounced.
+//
+// Response handling is sequence-guarded: a slow response from an older
+// request never overwrites newer optimistic edits already on screen, and
+// a failed save reverts to the last server-confirmed row merged with the
+// still-queued edits (not to a stale render-time snapshot).
+// ---------------------------------------------------------------------------
+
+const SAVE_DEBOUNCE_MS = 600;
+
+function useCampaignSaver(
+  campaign: Campaign,
+  onCampaignUpdated: (updated: Campaign) => void,
+) {
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  /** Edits queued behind the debounce, not yet sent. */
+  const pendingRef = useRef<UpdateCampaignInput>({});
+  /** Monotonic id of the most recently issued request. */
+  const seqRef = useRef(0);
+  /** Last row confirmed by the server (rollback target on error). */
+  const serverRef = useRef(campaign);
+
+  // Latest props via refs — React 19 forbids ref writes during render.
+  const campaignRef = useRef(campaign);
+  const onUpdatedRef = useRef(onCampaignUpdated);
+  useEffect(() => {
+    campaignRef.current = campaign;
+    onUpdatedRef.current = onCampaignUpdated;
+  }, [campaign, onCampaignUpdated]);
+
+  const commit = useCallback(async (patch: UpdateCampaignInput) => {
+    const seq = ++seqRef.current;
+    const { data, error } = await updateCampaign(campaignRef.current.id, patch);
+    const isLatest = seq === seqRef.current;
+
+    if (error) {
+      toast.error("Update failed", { description: error });
+      if (isLatest) {
+        onUpdatedRef.current({
+          ...serverRef.current,
+          ...pendingRef.current,
+        } as Campaign);
+      }
+      return;
+    }
+    if (data) {
+      serverRef.current = data;
+      // Server truth, with any newer un-flushed edits kept on top.
+      if (isLatest) {
+        onUpdatedRef.current({ ...data, ...pendingRef.current } as Campaign);
+      }
+    }
+  }, []);
+
+  const save = useCallback(
+    (patch: UpdateCampaignInput) => {
+      onUpdatedRef.current({ ...campaignRef.current, ...patch } as Campaign);
+      void commit(patch);
+    },
+    [commit],
+  );
+
+  const debouncedSave = useCallback(
+    (patch: UpdateCampaignInput) => {
+      pendingRef.current = { ...pendingRef.current, ...patch };
+      onUpdatedRef.current({
+        ...campaignRef.current,
+        ...pendingRef.current,
+      } as Campaign);
+
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        const pending = pendingRef.current;
+        pendingRef.current = {};
+        void commit(pending);
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [commit],
+  );
+
+  // Flush pending edits on unmount (operator navigates back before the
+  // debounce fires) so nothing is silently dropped.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      if (Object.keys(pendingRef.current).length > 0) {
+        const pending = pendingRef.current;
+        pendingRef.current = {};
+        void commit(pending);
+      }
+    };
+  }, [commit]);
+
+  return { save, debouncedSave };
 }
 
 // ---------------------------------------------------------------------------

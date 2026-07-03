@@ -7,33 +7,41 @@ import type { CampaignPlatform, AnalystDecision, Avatar } from "@/types";
 // re-fetching the full payload via `fetchFullGorgonePost`. The shape is
 // network-agnostic with optional fields for network-specific filters.
 
-export interface PipelinePost {
-  id: string;                     // gorgone posts.id
-  posted_at: string;              // gorgone posts.posted_at (composite PK partner)
-  zone_id: string;
-  account_id: string;             // Attila account_id (resolved via gorgone_links)
+/**
+ * Minimal surface `applyFilters` needs to evaluate a post against
+ * `CampaignFilters`. `PipelinePost` satisfies it structurally; the capacity
+ * estimator builds it from sampled Gorgone rows so the *same* filter
+ * implementation produces both runtime decisions and volume estimates.
+ */
+export interface FilterablePost {
   platform: CampaignPlatform;     // 'twitter' | 'tiktok'
-  post_url: string | null;
-  post_text: string;
-  post_author: string | null;     // social_users.handle
   author_followers: number;
   author_verified: boolean;
   total_engagement: number;
   language: string | null;
-  collected_at: string;           // posts.first_seen_at (when Gorgone observed it)
-
-  is_reply?: boolean;
   is_ad?: boolean;
   author_is_private?: boolean;
   post_type?: "post" | "reply" | "retweet";
+  raw_metrics: Record<string, unknown>;
+}
+
+export interface PipelinePost extends FilterablePost {
+  id: string;                     // gorgone posts.id
+  posted_at: string;              // gorgone posts.posted_at (composite PK partner)
+  zone_id: string;
+  account_id: string;             // Attila account_id (resolved via gorgone_links)
+  post_url: string | null;
+  post_text: string;
+  post_author: string | null;     // social_users.handle
+  collected_at: string;           // posts.first_seen_at (when Gorgone observed it)
+
+  is_reply?: boolean;
 
   // V4 bonuses (null when AI hasn't run yet — pipeline tolerates absence)
   sentiment_label?: "positive" | "negative" | "neutral" | string | null;
   sentiment_score?: number | null;
   translation_text?: string | null;
   translation_lang?: string | null;
-
-  raw_metrics: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------

@@ -68,7 +68,7 @@ export async function buildGuidelineContext(
 
   // 2) Window anchor — most recent first_seen_at across networks for
   // this zone. Mirrors the same anchoring strategy the capacity
-  // estimator uses (`resolveWindowStart` in `lib/gorgone/capacity-queries`).
+  // estimator uses (`resolveWindow` in `lib/gorgone/capacity-queries`).
   // Anchored on observation (not now) so a zone whose collection paused
   // still produces a sample.
   const since = await resolveSinceTimestamp(gorgone, input.zoneId);

@@ -1,41 +1,27 @@
 "use client";
 
-import { useId, useState, useCallback, useTransition, useEffect, useRef } from "react";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
+import { useState, useCallback, useTransition, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { InfoTip } from "@/components/ui/info-tip";
 import { cn } from "@/lib/utils";
-import { formatCount, formatRate } from "@/lib/format";
-import {
-  BarChart3,
-  RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  AlertTriangle,
-  CheckCircle2,
-  CircleSlash,
-  Clock,
-  Calendar,
-  Loader2,
-} from "lucide-react";
-import { XIcon, TikTokIcon } from "@/components/icons/social-icons";
+import { BarChart3, RefreshCw, Loader2 } from "lucide-react";
 import {
   getCapacityEstimate,
   type CapacityEstimateResult,
-  type PlatformCapacityTotals,
 } from "@/app/actions/capacity";
+import { CapacityPlatformBlock } from "./capacity-platform-block";
 import type {
   CampaignFilters,
   CampaignPlatform,
   CapacityParams,
-  PlatformCapacityParams,
 } from "@/types";
 
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
+/**
+ * Capacity panel container: debounced fetch of the zone volume + filter
+ * simulation + army capacity, one card per platform. Rendering lives in
+ * `capacity-platform-block.tsx`.
+ */
 
 interface CapacityEstimatorProps {
   accountId: string;
@@ -46,18 +32,6 @@ interface CapacityEstimatorProps {
   capacityParams: CapacityParams;
   onParamsChange?: (params: CapacityParams) => void;
 }
-
-const PLATFORM_LABELS: Record<
-  CampaignPlatform,
-  { label: string; Icon: React.ComponentType<{ className?: string }> }
-> = {
-  twitter: { label: "X (Twitter)", Icon: XIcon },
-  tiktok: { label: "TikTok", Icon: TikTokIcon },
-};
-
-// ---------------------------------------------------------------------------
-// Main component
-// ---------------------------------------------------------------------------
 
 export function CapacityEstimator({
   accountId,
@@ -119,7 +93,16 @@ export function CapacityEstimator({
   const header = (
     <div className="mb-2.5 flex items-center gap-2">
       <BarChart3 className="h-3.5 w-3.5 text-muted-foreground/60" />
-      <h3 className="flex-1 text-[13px] font-semibold">Capacity</h3>
+      <h3 className="flex items-center gap-1 text-[13px] font-semibold">
+        Capacity
+        <InfoTip side="right">
+          Estimates the zone&apos;s hourly volume from its last 24h of
+          collection, simulates your filters on real posts, and checks the
+          selected armies can produce the required responses. Updates as
+          you edit filters, armies, or limits.
+        </InfoTip>
+      </h3>
+      <div className="flex-1" />
       {canEstimate && (
         <Button
           variant="ghost"
@@ -155,286 +138,55 @@ export function CapacityEstimator({
   return (
     <div>
       {header}
-      <div className="space-y-2.5">
-
-      {error && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5">
-          <p className="text-[10px] text-destructive">{error}</p>
-        </div>
-      )}
-
-      {!result &&
-        platforms.map((p) => <CapacitySkeleton key={p} />)}
-
-      {result &&
-        result.platforms.map((p) => (
-          <PlatformBlock
-            key={p.platform}
-            data={p}
-            params={capacityParams[p.platform]}
-            onParamsChange={
-              onParamsChange
-                ? (patch) =>
-                    onParamsChange({
-                      ...capacityParams,
-                      [p.platform]: patch,
-                    })
-                : undefined
-            }
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Per-platform block
-// ---------------------------------------------------------------------------
-
-function PlatformBlock({
-  data,
-  params,
-  onParamsChange,
-}: {
-  data: PlatformCapacityTotals;
-  params: PlatformCapacityParams;
-  onParamsChange?: (params: PlatformCapacityParams) => void;
-}) {
-  const { platform, result: r } = data;
-  const { Icon, label } = PLATFORM_LABELS[platform];
-  const cap = r.capacity;
-
-  const status = getCapacityStatus(
-    cap.avatars_missing,
-    cap.available_avatars,
-    cap.responses_needed_per_hour,
-  );
-  const passRatePct = (r.filtered.filter_pass_rate * 100).toFixed(1);
-
-  const handleChange = (field: string, value: number) => {
-    if (!onParamsChange || value < 1) return;
-
-    let nextMin = field === "minPerPost" ? value : params.min_avatars_per_post;
-    let nextMax = field === "maxPerPost" ? value : params.max_avatars_per_post;
-    if (nextMin > nextMax) {
-      if (field === "minPerPost") nextMax = nextMin;
-      else nextMin = nextMax;
-    }
-
-    onParamsChange({
-      max_responses_per_hour:
-        field === "maxPerHour" ? value : params.max_responses_per_hour,
-      max_responses_per_day:
-        field === "maxPerDay" ? value : params.max_responses_per_day,
-      min_avatars_per_post: nextMin,
-      max_avatars_per_post: nextMax,
-    });
-  };
-
-  return (
-    <div className="space-y-2.5 rounded-md border p-2.5">
-      {/* Platform header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <Icon className="h-3 w-3 text-muted-foreground" />
-          <span className="text-[11px] font-medium">{label}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <StatusIcon status={status} />
-          <Badge
-            variant={STATUS_BADGE_VARIANT[status]}
-            className={cn(
-              "h-4 px-1.5 text-[9px]",
-              status === "idle" && "border-muted-foreground/30 text-muted-foreground",
-            )}
-          >
-            {status === "ok"
-              ? "Sufficient"
-              : status === "idle"
-                ? "Idle — no traffic"
-                : status === "warning"
-                  ? "Tight"
-                  : `${cap.avatars_missing} missing`}
-          </Badge>
-        </div>
-      </div>
-
-      {/* Volume metrics — `formatRate` keeps a fractional decimal under 1k
-          so the on-screen arithmetic stays self-consistent
-          (e.g. "3.5/h × 1.5 = 5.3/h" instead of misleading
-          "4 × 1.5 = 5"). */}
-      <div className="grid grid-cols-3 gap-1.5">
-        <Metric label="Raw / h" value={formatRate(r.volume.avg_per_hour)} />
-        <Metric
-          label="Filtered / h"
-          value={formatRate(r.filtered.filtered_per_hour)}
-          sub={`${passRatePct}% pass`}
-        />
-        <Metric
-          label="Resp. / h"
-          value={formatRate(cap.responses_needed_per_hour)}
-          sub={`avg ${cap.avg_avatars_per_post}/post`}
-        />
-      </div>
-
-      {/* Filters breakdown */}
-      {r.filtered.filters_applied.length > 0 && (
-        <div className="space-y-px">
-          {r.filtered.filters_applied.map((f, i) => (
-            <div
-              key={i}
-              className="flex items-center justify-between text-[10px]"
-            >
-              <span className="text-muted-foreground">{f.name}</span>
-              <span className="tabular-nums">
-                {(f.pass_rate * 100).toFixed(1)}%
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="border-t border-border/50" />
-
-      {/* Capacity params */}
-      <div className="grid grid-cols-2 gap-1.5">
-        <ParamField
-          icon={<Clock className="h-2.5 w-2.5" />}
-          label="Max / avatar / h"
-          value={params.max_responses_per_hour}
-          onChange={(v) => handleChange("maxPerHour", v)}
-          readOnly={!onParamsChange}
-        />
-        <ParamField
-          icon={<Calendar className="h-2.5 w-2.5" />}
-          label="Max / avatar / day"
-          value={params.max_responses_per_day}
-          onChange={(v) => handleChange("maxPerDay", v)}
-          readOnly={!onParamsChange}
-        />
-        <ParamField
-          icon={<TrendingDown className="h-2.5 w-2.5" />}
-          label="Min avatars / post"
-          value={params.min_avatars_per_post}
-          onChange={(v) => handleChange("minPerPost", v)}
-          readOnly={!onParamsChange}
-        />
-        <ParamField
-          icon={<TrendingUp className="h-2.5 w-2.5" />}
-          label="Max avatars / post"
-          value={params.max_avatars_per_post}
-          onChange={(v) => handleChange("maxPerPost", v)}
-          readOnly={!onParamsChange}
-        />
-      </div>
-
-      <div className="border-t border-border/50" />
-
-      {/* Avatar capacity results — `formatCount` keeps integer scaling
-          (no decimals) consistent with the rest of the count grid. */}
-      <div className="grid grid-cols-3 gap-1.5">
-        <Metric
-          label="Available"
-          value={formatCount(cap.available_avatars)}
-          sub={`/ ${formatCount(cap.total_avatars)} total`}
-        />
-        <Metric
-          label="Needed"
-          value={formatCount(cap.avatars_needed)}
-          sub={cap.bottleneck === "hourly" ? "hourly limit" : "daily limit"}
-        />
-        <Metric
-          label={cap.avatars_missing > 0 ? "Missing" : "Surplus"}
-          value={
-            cap.avatars_missing > 0
-              ? `−${formatCount(cap.avatars_missing)}`
-              : `+${formatCount(cap.available_avatars - cap.avatars_needed)}`
-          }
-          highlight={cap.avatars_missing > 0 ? "destructive" : "success"}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Shared sub-components
-// ---------------------------------------------------------------------------
-
-function Metric({
-  label,
-  value,
-  sub,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  highlight?: "destructive" | "success";
-}) {
-  return (
-    <div>
-      <p
+      <div
         className={cn(
-          "text-xs font-semibold tabular-nums",
-          highlight === "destructive" && "text-destructive",
-          highlight === "success" && "text-success"
+          "space-y-2.5 transition-opacity duration-200",
+          // Keep stale numbers readable (and params editable) while a
+          // refetch is in flight, but make the transient state visible.
+          isPending && result && "opacity-60",
         )}
       >
-        {value}
-      </p>
-      <p className="text-[10px] text-muted-foreground">{label}</p>
-      {sub && (
-        <p className="text-[9px] text-muted-foreground/60">{sub}</p>
-      )}
-    </div>
-  );
-}
+        {error && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5">
+            <p className="text-[10px] text-destructive">
+              Estimation failed: {error}
+            </p>
+            <button
+              type="button"
+              onClick={fetchEstimate}
+              className="mt-0.5 text-[10px] font-medium text-destructive underline underline-offset-2"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
-function ParamField({
-  icon,
-  label,
-  value,
-  onChange,
-  readOnly,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-  readOnly?: boolean;
-}) {
-  // Stable per-instance id so the Label's htmlFor binds to the Input
-  // (screen-reader friendly, click-to-focus on touch devices).
-  const inputId = useId();
-  return (
-    <div className="space-y-0.5">
-      <Label
-        htmlFor={inputId}
-        className="flex items-center gap-1 text-[10px] text-muted-foreground"
-      >
-        {icon}
-        {label}
-      </Label>
-      <Input
-        id={inputId}
-        type="number"
-        min={1}
-        value={value}
-        onChange={(e) => {
-          const v = parseInt(e.target.value);
-          if (!isNaN(v) && v >= 1) onChange(v);
-        }}
-        readOnly={readOnly}
-        className="h-7 text-xs tabular-nums"
-      />
+        {!result && !error && platforms.map((p) => <CapacitySkeleton key={p} />)}
+
+        {result &&
+          result.platforms.map((p) => (
+            <CapacityPlatformBlock
+              key={p.platform}
+              data={p}
+              params={capacityParams[p.platform]}
+              onParamsChange={
+                onParamsChange
+                  ? (patch) =>
+                      onParamsChange({
+                        ...capacityParams,
+                        [p.platform]: patch,
+                      })
+                  : undefined
+              }
+            />
+          ))}
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Loading skeleton — matches PlatformBlock structure
+// Loading skeleton — matches CapacityPlatformBlock structure
 // ---------------------------------------------------------------------------
 
 function CapacitySkeleton() {
@@ -486,47 +238,5 @@ function CapacitySkeleton() {
         ))}
       </div>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Utils
-// ---------------------------------------------------------------------------
-
-type CapacityStatus = "ok" | "idle" | "warning" | "critical";
-
-function getCapacityStatus(
-  missing: number,
-  available: number,
-  responsesNeededPerHour: number,
-): CapacityStatus {
-  if (missing > 0) return "critical";
-  // No traffic — the green "Sufficient" badge would read as "everything's
-  // fine" but in fact nothing's happening. Surface this distinct state.
-  if (responsesNeededPerHour === 0) return "idle";
-  if (available === 0) return "warning";
-  return "ok";
-}
-
-const STATUS_BADGE_VARIANT: Record<
-  CapacityStatus,
-  "secondary" | "outline" | "destructive"
-> = {
-  ok: "secondary",
-  idle: "outline",
-  warning: "outline",
-  critical: "destructive",
-};
-
-function StatusIcon({ status }: { status: CapacityStatus }) {
-  if (status === "ok") return <CheckCircle2 className="h-3 w-3 text-success" />;
-  if (status === "idle") return <CircleSlash className="h-3 w-3 text-muted-foreground/70" />;
-  return (
-    <AlertTriangle
-      className={cn(
-        "h-3 w-3",
-        status === "warning" ? "text-warning" : "text-destructive",
-      )}
-    />
   );
 }

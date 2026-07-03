@@ -164,34 +164,53 @@ est utilise par le pipeline pour tracker l'avancement de chaque post.
 Le worker charge les posts `pending` des zones liees aux campagnes actives et
 applique les filtres configures dans `campaign.filters` (type `CampaignFilters`).
 
+Source de verite unique : `lib/pipeline/filter.ts` (`applyFilters`). La meme
+fonction est utilisee par le pipeline runtime ET par le capacity estimator
+(simulation sur echantillon) — les deux ne peuvent pas diverger.
+
+### Filtres communs (les deux plateformes)
+
+| Filtre | Champ | Exemple |
+|--------|-------|---------|
+| Min followers | `author_followers >= N` | `>= 100` |
+| Verified only | `author_verified = true` | Comptes verifies |
+| Langue | `language IN (...)` | `['en', 'fr']` |
+| Min engagement | `total_engagement >= N` | `>= 50` (likes+RT+replies+quotes sur X ; diggs+comments+shares sur TikTok) |
+
 ### Filtres Twitter
 
 | Filtre | Champ | Exemple |
 |--------|-------|---------|
-| Type de post | `is_reply`, `text LIKE 'RT @%'` | Exclure RT et replies |
-| Min followers | `author_followers >= N` | `>= 100` |
-| Verified only | `author_verified = true` | Comptes verifies |
-| Langue | `lang IN (...)` | `['en', 'fr']` |
-| Min engagement | `total_engagement >= N` | `>= 50` |
-| Min likes/views | `like_count`, `view_count >= N` | Seuils specifiques |
+| Types de post | `post_type IN (post, reply, retweet)` | Originaux seulement |
+| Min likes / views / replies / quotes / RTs | `raw_metrics.* >= N` | Seuils specifiques |
 
 ### Filtres TikTok
 
 | Filtre | Champ | Exemple |
 |--------|-------|---------|
-| Min followers | `author_followers >= N` | `>= 100` |
-| Verified only | `author_verified = true` | Comptes verifies |
-| Exclure comptes prives | `author_is_private = false` | Impossible de commenter |
+| Types de contenu | `tiktok_content_kinds IN (video, comment)` | Videos seulement (les commentaires representent souvent ~80% du volume d'une zone) |
 | Exclure pubs | `is_ad = false` | Pas de reponse aux ads |
-| Langue | `language IN (...)` | `['en', 'fr']` |
-| Min plays | `play_count >= N` | `>= 1000` |
-| Min engagement | `total_engagement >= N` | `>= 100` |
+| Exclure comptes prives | `author_is_private = false` | Impossible de commenter |
+| Min plays / comments / diggs / shares / saves | `raw_metrics.* >= N` | Seuils specifiques (saves = `bookmarks` Gorgone) |
 
-### Taux de passage
+### Capacity estimator
 
-Le capacity estimator (`lib/gorgone/capacity-estimator.ts`) mesure un taux de
-passage d'environ **9%** apres filtrage. Sur 2.2K tweets/jour/zone, ~200 passent
-les filtres.
+`lib/gorgone/` (queries → math → orchestrateur) alimente le panneau "Capacity"
+du wizard et des reglages campagne :
+
+- **Fenetre** : les 24h precedant le dernier `first_seen_at` de la (zone,
+  network) ; le debit horaire divise par les heures reellement couvertes
+  (une zone qui n'a collecte que 2h n'est pas diluee par /24).
+- **Volume brut** : count exact sur `posts` (tous kinds ingeres par le
+  pipeline, commentaires TikTok inclus).
+- **Taux de passage** : mesure empiriquement en executant le vrai
+  `applyFilters` du pipeline sur les 5000 posts les plus recents de la
+  fenetre (taux joint + taux par filtre individuel pour le breakdown UI).
+- **Capacite avatars** : `filtered/h × avg avatars/post` compare aux caps
+  horaires/journaliers des armees selectionnees.
+
+Toute erreur de requete Gorgone est propagee jusqu'a l'UI (etat d'erreur +
+Retry) — jamais de zero silencieux.
 
 Les posts filtres sont marques `filtered_out`. Seuls les posts qui passent vont
 a l'etape suivante (filtre IA).

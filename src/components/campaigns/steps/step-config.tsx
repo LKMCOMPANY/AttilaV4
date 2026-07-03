@@ -108,18 +108,7 @@ export function StepConfig({ data, onChange, accountId }: StepProps) {
         )}
       </div>
 
-      {/* 2 — Capacity estimator */}
-      <CapacityEstimator
-        accountId={accountId}
-        zoneId={data.gorgone_zone_id}
-        platforms={data.platforms}
-        filters={data.filters}
-        armyIds={data.army_ids}
-        capacityParams={data.capacity_params}
-        onParamsChange={(capacity_params) => onChange({ capacity_params })}
-      />
-
-      {/* 3 — Filters by platform */}
+      {/* 2 — Filters by platform (cause…) */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-muted-foreground" />
@@ -131,6 +120,17 @@ export function StepConfig({ data, onChange, accountId }: StepProps) {
           onChange={(filters) => onChange({ filters })}
         />
       </div>
+
+      {/* 3 — Capacity estimator (…effect: volume left + army coverage) */}
+      <CapacityEstimator
+        accountId={accountId}
+        zoneId={data.gorgone_zone_id}
+        platforms={data.platforms}
+        filters={data.filters}
+        armyIds={data.army_ids}
+        capacityParams={data.capacity_params}
+        onParamsChange={(capacity_params) => onChange({ capacity_params })}
+      />
     </div>
   );
 }

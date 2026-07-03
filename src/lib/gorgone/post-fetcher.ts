@@ -249,11 +249,16 @@ interface SentimentRow {
  * write multiple classifications per post (sentiment + topic + intent +
  * toxicity); we only care about the top sentiment for filter / analyst
  * short-circuiting.
+ *
+ * Returns null when no row carries an actual sentiment label — falling
+ * back to an arbitrary classification (e.g. a topic label) used to
+ * violate `campaign_posts_sentiment_label_check` at insert time and
+ * lose the post.
  */
 function pickTopSentiment(rows: SentimentRow[] | null): SentimentRow | null {
   if (!rows || rows.length === 0) return null;
   const sentimentLabels = new Set(["positive", "negative", "neutral"]);
   const sentimentRows = rows.filter((r) => sentimentLabels.has(r.label));
-  if (sentimentRows.length === 0) return rows[0] ?? null;
+  if (sentimentRows.length === 0) return null;
   return [...sentimentRows].sort((a, b) => b.score - a.score)[0];
 }

@@ -333,11 +333,13 @@ function fullPostToPipelinePost(
       }
     : {
         // TikTok column mapping (V4 stores plays as `views`, diggs as `likes`,
-        // comments as `replies`, shares as `retweets` on the unified posts row).
+        // comments as `replies`, shares as `retweets`, saves as `bookmarks`
+        // on the unified posts row).
         play_count: full.views,
         digg_count: full.likes,
         comment_count: full.replies,
         share_count: full.retweets,
+        collect_count: full.bookmarks,
         total_engagement: full.total_engagement,
       };
 

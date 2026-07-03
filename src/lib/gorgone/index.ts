@@ -52,16 +52,21 @@ export {
 // Capacity estimator
 export {
   estimateZoneVolume,
-  applyFilters,
+  applyCampaignFilters,
   estimateCapacity,
+  type ZoneVolumeWithSample,
 } from "./capacity-estimator";
 export type {
+  EstimationWindow,
   ZoneVolumeEstimate,
   TwitterBreakdown,
   TiktokBreakdown,
-  EstimatorFilters,
+  AppliedFilterRate,
   FilteredVolume,
   AvatarCapacityInput,
   CapacityEstimate,
   CampaignCapacityResult,
 } from "./types";
+
+// Tenant guard for client-supplied zone ids
+export { verifyZoneAccess } from "./zone-access";

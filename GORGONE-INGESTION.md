@@ -254,9 +254,12 @@ les env Render, puis cliquer "Push webhook config".
 
 ## Filtres campagne
 
-Aucun changement de surface. Les filtres `CampaignFilters` (Twitter +
-TikTok) restent identiques. Le `PipelinePost` les expose tous, avec deux
-nouveaux champs optionnels exploitables côté analyst :
+Les filtres `CampaignFilters` (Twitter + TikTok) sont appliqués par
+`lib/pipeline/filter.ts` — même fonction pour le runtime et le capacity
+estimator. TikTok dispose d'un filtre `tiktok_content_kinds`
+(videos / comments) car les commentaires collectés sous les vidéos
+représentent souvent la majorité du volume d'une zone. Le `PipelinePost`
+expose aussi deux champs optionnels exploitables côté analyst :
 
 - `sentiment_label` / `sentiment_score` — top sentiment Gorgone si dispo.
 - `translation_text` / `translation_lang` — traduction dans la locale du

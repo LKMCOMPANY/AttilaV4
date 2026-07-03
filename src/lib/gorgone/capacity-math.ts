@@ -1,96 +1,263 @@
+import type { CampaignFilters } from "@/types";
+import { applyFilters } from "@/lib/pipeline/filter";
+import type { FilterablePost } from "@/lib/pipeline/types";
 import type {
   ZoneVolumeEstimate,
-  EstimatorFilters,
   FilteredVolume,
+  AppliedFilterRate,
   AvatarCapacityInput,
   CapacityEstimate,
+  TwitterBreakdown,
+  TiktokBreakdown,
 } from "./types";
-import type {
-  RawTwitterAuthorRow,
-  RawTiktokAuthorRow,
-} from "./capacity-queries";
+import type { SampleRow } from "./capacity-queries";
 
 /**
- * Pure-function math for the capacity estimator. No I/O. Tested in
- * isolation. Consumed by the orchestrator in `capacity-estimator.ts`.
+ * Pure-function math for the capacity estimator. No I/O.
+ *
+ * Filter rates are measured empirically: each sampled Gorgone row is
+ * mapped to the pipeline's `FilterablePost` shape and evaluated with the
+ * SAME `applyFilters` the runtime pipeline uses. This guarantees the
+ * estimate and the live behaviour can't drift apart (the previous
+ * implementation re-modelled a subset of the filters statistically and
+ * ignored the rest, overstating "Filtered / h").
  */
 
 // ---------------------------------------------------------------------------
-// Filter pass-rate compounding
+// Sample row → FilterablePost
 // ---------------------------------------------------------------------------
 
-export function applyFilters(
+export function sampleRowToFilterable(
+  row: SampleRow,
+  platform: "twitter" | "tiktok",
+): FilterablePost {
+  const likes = row.likes ?? 0;
+  const retweets = row.retweets ?? 0;
+  const replies = row.replies ?? 0;
+  const quotes = row.quotes ?? 0;
+  const views = row.views ?? 0;
+  const bookmarks = row.bookmarks ?? 0;
+
+  // Mirrors `fullPostToPipelinePost` in lib/pipeline/processor.ts.
+  const rawMetrics: Record<string, unknown> =
+    platform === "twitter"
+      ? {
+          like_count: likes,
+          retweet_count: retweets,
+          reply_count: replies,
+          quote_count: quotes,
+          view_count: views,
+        }
+      : {
+          play_count: views,
+          digg_count: likes,
+          comment_count: replies,
+          share_count: retweets,
+          collect_count: bookmarks,
+        };
+
+  return {
+    platform,
+    author_followers: row.author?.followers_count ?? 0,
+    author_verified: deriveVerified(row, platform),
+    total_engagement: likes + retweets + replies + quotes,
+    language: row.lang,
+    is_ad: Boolean(row.tiktok_post_extras?.[0]?.is_ads),
+    author_is_private: Boolean(row.author?.protected),
+    post_type: deriveKind(row.kind),
+    raw_metrics: rawMetrics,
+  };
+}
+
+function deriveKind(kind: string | null): "post" | "reply" | "retweet" {
+  if (kind === "reply" || kind === "comment") return "reply";
+  if (kind === "repost") return "retweet";
+  return "post";
+}
+
+function deriveVerified(row: SampleRow, platform: "twitter" | "tiktok"): boolean {
+  if (platform === "twitter") {
+    const x = row.author?.twitter_social_user_extras?.[0];
+    return Boolean(x?.blue_verified) || Boolean(x?.legacy_verified);
+  }
+  return Boolean(row.author?.tiktok_social_user_extras?.[0]?.verified);
+}
+
+// ---------------------------------------------------------------------------
+// Filter simulation — joint pass rate + per-filter breakdown
+// ---------------------------------------------------------------------------
+
+/**
+ * Active-filter descriptors: which keys are set + a display label +
+ * which platform's block they belong to (a TikTok-only filter must not
+ * appear — even at 100% — under the Twitter card).
+ */
+type FilterPlatform = "twitter" | "tiktok" | "common";
+
+const FILTER_DESCRIPTORS: {
+  key: keyof CampaignFilters;
+  platform: FilterPlatform;
+  isActive: (f: CampaignFilters) => boolean;
+  label: (f: CampaignFilters) => string;
+}[] = [
+  { key: "post_types", platform: "twitter", isActive: (f) => (f.post_types?.length ?? 0) > 0, label: (f) => `Post types: ${f.post_types!.join(", ")}` },
+  { key: "tiktok_content_kinds", platform: "tiktok", isActive: (f) => (f.tiktok_content_kinds?.length ?? 0) > 0, label: (f) => `Content: ${f.tiktok_content_kinds!.join(", ")}s` },
+  { key: "exclude_ads", platform: "tiktok", isActive: (f) => f.exclude_ads === true, label: () => "Exclude ads" },
+  { key: "exclude_private", platform: "tiktok", isActive: (f) => f.exclude_private === true, label: () => "Exclude private authors" },
+  { key: "verified_only", platform: "common", isActive: (f) => f.verified_only === true, label: () => "Verified authors only" },
+  { key: "min_author_followers", platform: "common", isActive: (f) => f.min_author_followers != null, label: (f) => `Min ${f.min_author_followers} followers` },
+  { key: "languages", platform: "common", isActive: (f) => (f.languages?.length ?? 0) > 0, label: (f) => `Languages: ${f.languages!.join(", ")}` },
+  { key: "min_engagement", platform: "common", isActive: (f) => f.min_engagement != null, label: (f) => `Min engagement ${f.min_engagement}` },
+  { key: "min_like_count", platform: "twitter", isActive: (f) => f.min_like_count != null, label: (f) => `Min ${f.min_like_count} likes` },
+  { key: "min_view_count", platform: "twitter", isActive: (f) => f.min_view_count != null, label: (f) => `Min ${f.min_view_count} views` },
+  { key: "min_reply_count", platform: "twitter", isActive: (f) => f.min_reply_count != null, label: (f) => `Min ${f.min_reply_count} replies` },
+  { key: "min_quote_count", platform: "twitter", isActive: (f) => f.min_quote_count != null, label: (f) => `Min ${f.min_quote_count} quotes` },
+  { key: "min_retweet_count", platform: "twitter", isActive: (f) => f.min_retweet_count != null, label: (f) => `Min ${f.min_retweet_count} retweets` },
+  { key: "min_play_count", platform: "tiktok", isActive: (f) => f.min_play_count != null, label: (f) => `Min ${f.min_play_count} plays` },
+  { key: "min_comment_count", platform: "tiktok", isActive: (f) => f.min_comment_count != null, label: (f) => `Min ${f.min_comment_count} comments` },
+  { key: "min_digg_count", platform: "tiktok", isActive: (f) => f.min_digg_count != null, label: (f) => `Min ${f.min_digg_count} likes (diggs)` },
+  { key: "min_share_count", platform: "tiktok", isActive: (f) => f.min_share_count != null, label: (f) => `Min ${f.min_share_count} shares` },
+  { key: "min_collect_count", platform: "tiktok", isActive: (f) => f.min_collect_count != null, label: (f) => `Min ${f.min_collect_count} saves` },
+];
+
+/**
+ * Measure filter impact on the sampled posts.
+ *
+ *   - `filter_pass_rate`  — fraction passing ALL filters together (what
+ *     the pipeline will actually let through).
+ *   - `filters_applied`   — pass rate of each active filter in isolation
+ *     (diagnostic: which filter costs the most volume).
+ *
+ * With an empty sample there is nothing to measure — rates default to 1
+ * so `filtered = raw` (raw is 0 anyway when the zone is silent).
+ */
+export function computeFilteredVolume(
   volume: ZoneVolumeEstimate,
-  filters: EstimatorFilters,
+  sample: FilterablePost[],
+  filters: CampaignFilters,
 ): FilteredVolume {
-  const applied: { name: string; pass_rate: number }[] = [];
-  let rate = 1.0;
+  const active = FILTER_DESCRIPTORS.filter(
+    (d) =>
+      d.isActive(filters) &&
+      (d.platform === "common" || d.platform === volume.platform),
+  );
 
-  if (volume.breakdown.platform === "twitter") {
-    const b = volume.breakdown;
-    if (filters.post_types && filters.post_types.length > 0) {
-      let typePct = 0;
-      if (filters.post_types.includes("post")) typePct += b.pct_original;
-      if (filters.post_types.includes("reply")) typePct += b.pct_replies;
-      if (filters.post_types.includes("retweet")) typePct += b.pct_retweets;
-      const passRate = typePct / 100;
-      applied.push({ name: "Post types", pass_rate: passRate });
-      rate *= passRate;
+  if (active.length === 0 || sample.length === 0) {
+    return {
+      raw_per_hour: volume.avg_per_hour,
+      filtered_per_hour: volume.avg_per_hour,
+      filter_pass_rate: 1,
+      filters_applied: [],
+    };
+  }
+
+  let jointPassed = 0;
+  const soloFilters = active.map(
+    (d) => ({ [d.key]: filters[d.key] }) as CampaignFilters,
+  );
+  const soloPassed = new Array<number>(active.length).fill(0);
+
+  for (const post of sample) {
+    if (applyFilters(post, filters).passed) jointPassed++;
+    for (let i = 0; i < soloFilters.length; i++) {
+      if (applyFilters(post, soloFilters[i]).passed) soloPassed[i]++;
     }
   }
 
-  if (volume.breakdown.platform === "tiktok") {
-    const b = volume.breakdown;
-    if (filters.exclude_ads) {
-      const passRate = 1 - b.pct_ads / 100;
-      applied.push({ name: "Exclude ads", pass_rate: passRate });
-      rate *= passRate;
-    }
-    if (filters.exclude_private) {
-      const passRate = 1 - b.pct_private_authors / 100;
-      applied.push({ name: "Exclude private", pass_rate: passRate });
-      rate *= passRate;
-    }
-  }
-
-  if (filters.verified_only) {
-    const passRate = volume.author_stats.pct_verified / 100;
-    applied.push({ name: "Verified only", pass_rate: passRate });
-    rate *= passRate;
-  }
-
-  if (filters.min_author_followers != null) {
-    const passRate = followerThresholdPassRate(
-      volume.author_stats,
-      filters.min_author_followers,
-    );
-    applied.push({
-      name: `Min ${filters.min_author_followers} followers`,
-      pass_rate: passRate,
-    });
-    rate *= passRate;
-  }
-
-  if (filters.languages && filters.languages.length > 0) {
-    const totalPosts = volume.total_posts || 1;
-    const matchingPosts = filters.languages.reduce(
-      (sum, lang) => sum + (volume.by_language[lang] ?? 0),
-      0,
-    );
-    const passRate = matchingPosts / totalPosts;
-    applied.push({
-      name: `Languages: ${filters.languages.join(", ")}`,
-      pass_rate: passRate,
-    });
-    rate *= passRate;
-  }
+  const jointRate = jointPassed / sample.length;
+  const filtersApplied: AppliedFilterRate[] = active.map((d, i) => ({
+    key: d.key,
+    label: d.label(filters),
+    pass_rate: round(soloPassed[i] / sample.length, 4),
+  }));
 
   return {
     raw_per_hour: volume.avg_per_hour,
-    filtered_per_hour: round(volume.avg_per_hour * rate),
-    filter_pass_rate: round(rate, 4),
-    filters_applied: applied,
+    filtered_per_hour: round(volume.avg_per_hour * jointRate),
+    filter_pass_rate: round(jointRate, 4),
+    filters_applied: filtersApplied,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Per-network breakdowns (exact kind counts + sample-based stats)
+// ---------------------------------------------------------------------------
+
+export function buildTwitterBreakdown(
+  counts: { total: number; replies: number; retweets: number },
+  sample: SampleRow[],
+): TwitterBreakdown {
+  const originals = Math.max(0, counts.total - counts.replies - counts.retweets);
+  const n = sample.length;
+
+  let verified = 0, sumEng = 0, sumLikes = 0, sumViews = 0;
+  for (const r of sample) {
+    if (deriveVerified(r, "twitter")) verified++;
+    sumEng += (r.likes ?? 0) + (r.retweets ?? 0) + (r.replies ?? 0) + (r.quotes ?? 0);
+    sumLikes += r.likes ?? 0;
+    sumViews += r.views ?? 0;
+  }
+
+  return {
+    platform: "twitter",
+    original_posts: originals,
+    replies: counts.replies,
+    retweets: counts.retweets,
+    pct_original: safePct(originals, counts.total),
+    pct_replies: safePct(counts.replies, counts.total),
+    pct_retweets: safePct(counts.retweets, counts.total),
+    pct_verified_authors: safePct(verified, n),
+    avg_engagement: n > 0 ? round(sumEng / n) : 0,
+    avg_likes: n > 0 ? round(sumLikes / n) : 0,
+    avg_views: n > 0 ? round(sumViews / n) : 0,
+  };
+}
+
+export function buildTiktokBreakdown(
+  counts: { total: number; comments: number },
+  sample: SampleRow[],
+): TiktokBreakdown {
+  const videos = Math.max(0, counts.total - counts.comments);
+  const n = sample.length;
+
+  let ads = 0, priv = 0, verified = 0;
+  // Play counts only exist on videos — averaging over comments (always 0)
+  // would drag the number into meaninglessness.
+  let videoRows = 0, sumPlays = 0, sumEng = 0;
+
+  for (const r of sample) {
+    if (r.tiktok_post_extras?.[0]?.is_ads) ads++;
+    if (r.author?.protected) priv++;
+    if (deriveVerified(r, "tiktok")) verified++;
+    if (r.kind !== "comment") {
+      videoRows++;
+      sumPlays += r.views ?? 0;
+      sumEng += (r.likes ?? 0) + (r.retweets ?? 0) + (r.replies ?? 0);
+    }
+  }
+
+  return {
+    platform: "tiktok",
+    videos,
+    comments: counts.comments,
+    pct_videos: safePct(videos, counts.total),
+    pct_comments: safePct(counts.comments, counts.total),
+    pct_ads: safePct(ads, n),
+    pct_private_authors: safePct(priv, n),
+    pct_verified_authors: safePct(verified, n),
+    avg_play_count: videoRows > 0 ? round(sumPlays / videoRows) : 0,
+    avg_engagement: videoRows > 0 ? round(sumEng / videoRows) : 0,
+  };
+}
+
+/** Language histogram over the sample. */
+export function buildLanguageHistogram(sample: SampleRow[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const r of sample) {
+    const lang = r.lang ?? "unknown";
+    counts[lang] = (counts[lang] ?? 0) + 1;
+  }
+  return counts;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,19 +274,10 @@ export function estimateCapacity(
   const responsesPerDay = responsesPerHour * 24;
 
   const availableAvatars = params.active_avatars;
-  const blockedRate =
-    params.total_avatars > 0
-      ? round(1 - availableAvatars / params.total_avatars, 4)
-      : 0;
-
   const capacityPerHour =
     availableAvatars * params.max_responses_per_avatar_per_hour;
   const capacityPerDay =
     availableAvatars * params.max_responses_per_avatar_per_day;
-  const surplusPerHour = capacityPerHour - responsesPerHour;
-  const surplusPerDay = capacityPerDay - responsesPerDay;
-  const coverageRate =
-    responsesPerHour > 0 ? round(capacityPerHour / responsesPerHour, 2) : 1;
 
   const avatarsNeededHourly =
     params.max_responses_per_avatar_per_hour > 0
@@ -140,14 +298,8 @@ export function estimateCapacity(
     responses_needed_per_day: round(responsesPerDay),
     total_avatars: params.total_avatars,
     available_avatars: availableAvatars,
-    blocked_rate: blockedRate,
     capacity_per_hour: capacityPerHour,
     capacity_per_day: capacityPerDay,
-    surplus_per_hour: round(surplusPerHour),
-    surplus_per_day: round(surplusPerDay),
-    coverage_rate: coverageRate,
-    avatars_needed_hourly: avatarsNeededHourly,
-    avatars_needed_daily: avatarsNeededDaily,
     avatars_needed: avatarsNeeded,
     avatars_missing: avatarsMissing,
     bottleneck,
@@ -155,112 +307,10 @@ export function estimateCapacity(
 }
 
 // ---------------------------------------------------------------------------
-// Per-network row reductions (sample → aggregate stats)
-// ---------------------------------------------------------------------------
-
-export interface TwitterAuthorAgg {
-  pct_verified: number;
-  pct_min_100_followers: number;
-  pct_min_1000_followers: number;
-  pct_min_10000_followers: number;
-  avg_engagement: number;
-  avg_likes: number;
-  avg_views: number;
-}
-
-export interface TiktokAuthorAgg {
-  pct_verified: number;
-  pct_min_100_followers: number;
-  pct_min_1000_followers: number;
-  pct_min_10000_followers: number;
-  avg_plays: number;
-  avg_engagement: number;
-  avg_comments: number;
-  avg_digg: number;
-}
-
-export function reduceTwitterAuthors(
-  rows: RawTwitterAuthorRow[],
-): TwitterAuthorAgg {
-  if (rows.length === 0) return EMPTY_TWITTER;
-  const total = rows.length;
-  let verified = 0,
-    f100 = 0,
-    f1000 = 0,
-    f10000 = 0;
-  let sumEngagement = 0,
-    sumLikes = 0,
-    sumViews = 0;
-
-  for (const r of rows) {
-    sumEngagement +=
-      (r.likes ?? 0) + (r.retweets ?? 0) + (r.replies ?? 0) + (r.quotes ?? 0);
-    sumLikes += r.likes ?? 0;
-    sumViews += r.views ?? 0;
-
-    const fc = r.author?.followers_count ?? 0;
-    if (fc >= 100) f100++;
-    if (fc >= 1000) f1000++;
-    if (fc >= 10000) f10000++;
-
-    const x = r.author?.twitter_social_user_extras?.[0];
-    if (x?.blue_verified || x?.legacy_verified) verified++;
-  }
-
-  return {
-    pct_verified: safePct(verified, total),
-    pct_min_100_followers: safePct(f100, total),
-    pct_min_1000_followers: safePct(f1000, total),
-    pct_min_10000_followers: safePct(f10000, total),
-    avg_engagement: round(sumEngagement / total),
-    avg_likes: round(sumLikes / total),
-    avg_views: round(sumViews / total),
-  };
-}
-
-export function reduceTiktokAuthors(rows: RawTiktokAuthorRow[]): TiktokAuthorAgg {
-  if (rows.length === 0) return EMPTY_TIKTOK;
-  const total = rows.length;
-  let verified = 0,
-    f100 = 0,
-    f1000 = 0,
-    f10000 = 0;
-  let sumPlays = 0,
-    sumEngagement = 0,
-    sumComments = 0,
-    sumDigg = 0;
-
-  for (const r of rows) {
-    sumPlays += r.views ?? 0;
-    sumComments += r.replies ?? 0;
-    sumDigg += r.likes ?? 0;
-    sumEngagement += (r.likes ?? 0) + (r.replies ?? 0) + (r.retweets ?? 0);
-
-    const fc = r.author?.followers_count ?? 0;
-    if (fc >= 100) f100++;
-    if (fc >= 1000) f1000++;
-    if (fc >= 10000) f10000++;
-
-    if (r.author?.tiktok_social_user_extras?.[0]?.verified) verified++;
-  }
-
-  return {
-    pct_verified: safePct(verified, total),
-    pct_min_100_followers: safePct(f100, total),
-    pct_min_1000_followers: safePct(f1000, total),
-    pct_min_10000_followers: safePct(f10000, total),
-    avg_plays: round(sumPlays / total),
-    avg_engagement: round(sumEngagement / total),
-    avg_comments: round(sumComments / total),
-    avg_digg: round(sumDigg / total),
-  };
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function safePct(part: number, total: number): number {
+function safePct(part: number, total: number): number {
   if (total === 0) return 0;
   return round((part / total) * 100, 1);
 }
@@ -269,34 +319,3 @@ export function round(n: number, decimals = 1): number {
   const factor = 10 ** decimals;
   return Math.round(n * factor) / factor;
 }
-
-function followerThresholdPassRate(
-  stats: ZoneVolumeEstimate["author_stats"],
-  threshold: number,
-): number {
-  if (threshold >= 10_000) return stats.pct_min_10000_followers / 100;
-  if (threshold >= 1_000) return stats.pct_min_1000_followers / 100;
-  if (threshold >= 100) return stats.pct_min_100_followers / 100;
-  return 1.0;
-}
-
-const EMPTY_TWITTER: TwitterAuthorAgg = {
-  pct_verified: 0,
-  pct_min_100_followers: 0,
-  pct_min_1000_followers: 0,
-  pct_min_10000_followers: 0,
-  avg_engagement: 0,
-  avg_likes: 0,
-  avg_views: 0,
-};
-
-const EMPTY_TIKTOK: TiktokAuthorAgg = {
-  pct_verified: 0,
-  pct_min_100_followers: 0,
-  pct_min_1000_followers: 0,
-  pct_min_10000_followers: 0,
-  avg_plays: 0,
-  avg_engagement: 0,
-  avg_comments: 0,
-  avg_digg: 0,
-};

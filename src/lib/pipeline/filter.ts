@@ -1,18 +1,23 @@
 import type { CampaignFilters } from "@/types";
-import type { PipelinePost, FilterResult } from "./types";
+import type { FilterablePost, FilterResult } from "./types";
 
 /**
  * Apply rule-based campaign filters to a post.
  * Pure function — no DB, no LLM, no side effects.
+ *
+ * Single source of truth for filter semantics: the runtime pipeline
+ * (`processor.ts`) and the capacity estimator
+ * (`lib/gorgone/capacity-math.ts`) both call this function, so the
+ * volume shown in the campaign UI matches what the pipeline will do.
  */
-export function applyFilters(post: PipelinePost, filters: CampaignFilters): FilterResult {
+export function applyFilters(post: FilterablePost, filters: CampaignFilters): FilterResult {
   if (post.platform === "twitter") {
     return applyTwitterFilters(post, filters);
   }
   return applyTiktokFilters(post, filters);
 }
 
-function applyTwitterFilters(post: PipelinePost, f: CampaignFilters): FilterResult {
+function applyTwitterFilters(post: FilterablePost, f: CampaignFilters): FilterResult {
   if (f.post_types && f.post_types.length > 0 && post.post_type) {
     if (!f.post_types.includes(post.post_type)) {
       return { passed: false, reason: `post_type ${post.post_type} not in ${f.post_types.join(",")}` };
@@ -60,7 +65,18 @@ function applyTwitterFilters(post: PipelinePost, f: CampaignFilters): FilterResu
   return { passed: true };
 }
 
-function applyTiktokFilters(post: PipelinePost, f: CampaignFilters): FilterResult {
+function applyTiktokFilters(post: FilterablePost, f: CampaignFilters): FilterResult {
+  // Gorgone feeds both videos (kind=post) and comments (kind=comment,
+  // surfaced as post_type="reply") into the pipeline. Comments often
+  // dominate a zone's volume, so campaigns can scope which kind they
+  // respond to.
+  if (f.tiktok_content_kinds && f.tiktok_content_kinds.length > 0) {
+    const kind = post.post_type === "reply" ? "comment" : "video";
+    if (!f.tiktok_content_kinds.includes(kind)) {
+      return { passed: false, reason: `tiktok kind ${kind} not in ${f.tiktok_content_kinds.join(",")}` };
+    }
+  }
+
   if (f.exclude_ads && post.is_ad) {
     return { passed: false, reason: "excluded: is_ad" };
   }
@@ -110,7 +126,7 @@ function applyTiktokFilters(post: PipelinePost, f: CampaignFilters): FilterResul
   return { passed: true };
 }
 
-function applyCommonFilters(post: PipelinePost, f: CampaignFilters): FilterResult {
+function applyCommonFilters(post: FilterablePost, f: CampaignFilters): FilterResult {
   if (f.min_author_followers != null && post.author_followers < f.min_author_followers) {
     return { passed: false, reason: `author_followers ${post.author_followers} < ${f.min_author_followers}` };
   }

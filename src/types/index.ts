@@ -329,6 +329,8 @@ export interface CampaignFilters {
   min_retweet_count?: number;
 
   // TikTok
+  /** Which content kinds to respond to. Empty/undefined = both. */
+  tiktok_content_kinds?: ("video" | "comment")[];
   exclude_ads?: boolean;
   exclude_private?: boolean;
   min_play_count?: number;

@@ -5,7 +5,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireSession } from "@/lib/auth/session";
-import { fetchGorgoneZoneDirectory } from "@/lib/gorgone";
+import { fetchGorgoneZoneDirectory, verifyZoneAccess } from "@/lib/gorgone";
 import { generateCampaignGuidelines as generateCampaignGuidelinesCore } from "@/lib/campaigns/guideline-generator";
 import type { GuidelineGenerationResult } from "@/lib/ai/guideline-types";
 import {
@@ -268,6 +268,15 @@ export async function updateCampaign(
     };
   }
 
+  // Tenant guard — a re-pointed zone must belong to this account's
+  // Gorgone links (zone_id is free client input).
+  if (
+    input.gorgone_zone_id !== undefined &&
+    !(await verifyZoneAccess(supabase, existing.account_id, input.gorgone_zone_id))
+  ) {
+    return { data: null, error: "Zone not accessible for this account" };
+  }
+
   const { data, error } = await supabase
     .from("campaigns")
     .update(input)
@@ -321,6 +330,11 @@ export async function createCampaign(
   }
 
   const supabase = await createClient();
+
+  // Tenant guard — zone_id is free client input.
+  if (!(await verifyZoneAccess(supabase, input.account_id, input.gorgone_zone_id))) {
+    return { data: null, error: "Zone not accessible for this account" };
+  }
 
   const { data, error } = await supabase
     .from("campaigns")
