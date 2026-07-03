@@ -27,7 +27,7 @@ export function CampaignDetailPanel({
 
   return (
     <div className="flex h-full flex-col bg-background">
-      <PipelineStats campaign={campaign} />
+      <PipelineStats campaign={campaign} pipelineVersion={pipelineVersion} />
       <div className="min-h-0 flex-1">
         {/* `key` resets toolbar / pagination / overlay state when the
             campaign in view changes, in lieu of an effect-based reset. */}

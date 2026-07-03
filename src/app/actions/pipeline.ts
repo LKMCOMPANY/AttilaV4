@@ -5,7 +5,15 @@ import { broadcastCampaignEvent, broadcastAccountEvent } from "@/lib/supabase/re
 import { requireSession, requireAdmin } from "@/lib/auth/session";
 import { selectAvatars } from "@/lib/pipeline/avatar-selector";
 import { generateComments, buildJobRows } from "@/lib/pipeline/job-builder";
-import type { CampaignPost, CampaignJob, CampaignJobWithAvatar, Campaign } from "@/types";
+import { severityOf, type JobErrorCategory, type JobErrorSeverity } from "@/lib/automation/errors";
+import type {
+  CampaignPost,
+  CampaignJob,
+  CampaignJobWithAvatar,
+  Campaign,
+  CampaignPlatform,
+  JobVerification,
+} from "@/types";
 import type { PipelinePost } from "@/lib/pipeline/types";
 
 // ---------------------------------------------------------------------------
@@ -141,6 +149,124 @@ export async function getJobQueue(boxId?: string): Promise<CampaignJob[]> {
 
   const { data } = await query;
   return (data ?? []) as CampaignJob[];
+}
+
+// ---------------------------------------------------------------------------
+// Campaign stats — live job breakdown (network / verification / failures)
+//
+// Backs the automator stats panel. The 4 headline counters on the campaign row
+// are the cumulative lifetime funnel; this is the live delivery detail the
+// counters can't express: which network is producing, how many "published"
+// posts are independently confirmed vs silent-drops, and — most actionable for
+// an operator — how many failures they must personally fix (logged-out
+// accounts, un-provisioned devices) vs the ones the system retries itself.
+// ---------------------------------------------------------------------------
+
+export interface NetworkBreakdown {
+  platform: CampaignPlatform;
+  done: number;
+  failed: number;
+  pending: number;
+}
+
+export interface FailureCategoryStat {
+  category: JobErrorCategory;
+  severity: JobErrorSeverity;
+  count: number;
+}
+
+export interface CampaignStats {
+  networks: NetworkBreakdown[];
+  verification: Record<JobVerification, number>;
+  totalDone: number;
+  totalFailed: number;
+  totalPending: number;
+  failures: FailureCategoryStat[];
+  /** Failures grouped by what the operator should do about them. */
+  buckets: Record<JobErrorSeverity, number>;
+}
+
+interface RawJobStats {
+  by_platform_status: { platform: string; status: string; n: number }[];
+  verification: { verification: string; n: number }[];
+  errors: { category: string; n: number }[];
+}
+
+const PENDING_STATUSES = new Set(["ready", "executing"]);
+
+export async function getCampaignStats(campaignId: string): Promise<CampaignStats> {
+  const session = await requireSession();
+  const supabase = createAdminClient();
+
+  // Tenant guard: a non-admin may only read stats for their own account's
+  // campaign (mirrors the list endpoints above).
+  if (session.profile.role !== "admin") {
+    const { data: owned } = await supabase
+      .from("campaigns")
+      .select("id")
+      .eq("id", campaignId)
+      .eq("account_id", session.profile.account_id)
+      .maybeSingle();
+    if (!owned) return emptyStats();
+  }
+
+  const { data, error } = await supabase.rpc("campaign_job_stats", { p_campaign_id: campaignId });
+  if (error || !data) return emptyStats();
+
+  return shapeStats(data as unknown as RawJobStats);
+}
+
+function emptyStats(): CampaignStats {
+  return {
+    networks: [],
+    verification: { unchecked: 0, confirmed: 0, unconfirmed: 0 },
+    totalDone: 0,
+    totalFailed: 0,
+    totalPending: 0,
+    failures: [],
+    buckets: { action_required: 0, transient: 0, terminal: 0, bug: 0 },
+  };
+}
+
+function shapeStats(raw: RawJobStats): CampaignStats {
+  const stats = emptyStats();
+  const byPlatform = new Map<CampaignPlatform, NetworkBreakdown>();
+
+  for (const row of raw.by_platform_status ?? []) {
+    const platform = row.platform as CampaignPlatform;
+    const entry = byPlatform.get(platform) ?? { platform, done: 0, failed: 0, pending: 0 };
+    if (row.status === "done") { entry.done += row.n; stats.totalDone += row.n; }
+    else if (row.status === "failed") { entry.failed += row.n; stats.totalFailed += row.n; }
+    else if (PENDING_STATUSES.has(row.status)) { entry.pending += row.n; stats.totalPending += row.n; }
+    byPlatform.set(platform, entry);
+  }
+  stats.networks = [...byPlatform.values()].sort((a, b) => a.platform.localeCompare(b.platform));
+
+  for (const row of raw.verification ?? []) {
+    if (row.verification in stats.verification) {
+      stats.verification[row.verification as JobVerification] = row.n;
+    }
+  }
+
+  for (const row of raw.errors ?? []) {
+    const category = (isKnownCategory(row.category) ? row.category : "unknown") as JobErrorCategory;
+    const severity = severityOf(category);
+    stats.failures.push({ category, severity, count: row.n });
+    stats.buckets[severity] += row.n;
+  }
+  stats.failures.sort((a, b) => b.count - a.count);
+
+  return stats;
+}
+
+const KNOWN_CATEGORIES = new Set<JobErrorCategory>([
+  "container_not_ready", "infrastructure", "app_not_ready", "device_setup_required",
+  "consent_required", "account_logged_out", "account_blocked", "account_captcha",
+  "rate_limited", "content_unavailable", "ui_unexpected", "unknown",
+]);
+
+function isKnownCategory(value: string): value is JobErrorCategory {
+  return KNOWN_CATEGORIES.has(value as JobErrorCategory);
 }
 
 // ---------------------------------------------------------------------------

@@ -211,6 +211,11 @@ function styleFor(category: JobErrorCategory): ErrorCategoryConfig {
   return { ...CATEGORY_CONFIG[category], ...SEVERITY_STYLE[severityOf(category)] };
 }
 
+/** Human label for an error category — single source, reused by the stats panel. */
+export function categoryLabel(category: JobErrorCategory): string {
+  return CATEGORY_CONFIG[category].label;
+}
+
 /**
  * Compact pill rendered next to a `failed` job. Tells the operator at a
  * glance whether the device needs human attention, the platform is
