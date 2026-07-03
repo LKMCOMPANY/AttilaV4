@@ -1,6 +1,7 @@
 import type { createGorgoneClient } from "./client";
 import type { GorgoneNetwork } from "@/types";
 import type { EstimationWindow } from "./types";
+import type { EmbedOne } from "./postgrest";
 
 /**
  * Capacity estimator — Supabase reads against Gorgone V4's `public.posts`
@@ -116,11 +117,12 @@ export async function countPosts(
 export interface SampleAuthor {
   followers_count: number | null;
   protected: boolean | null;
-  twitter_social_user_extras?: {
+  // PostgREST returns to-one embeds as OBJECTS — normalized via embedOne.
+  twitter_social_user_extras?: EmbedOne<{
     blue_verified: boolean | null;
     legacy_verified: boolean | null;
-  }[] | null;
-  tiktok_social_user_extras?: { verified: boolean | null }[] | null;
+  }>;
+  tiktok_social_user_extras?: EmbedOne<{ verified: boolean | null }>;
 }
 
 /** One sampled Gorgone posts row with everything the filters inspect. */
@@ -134,7 +136,7 @@ export interface SampleRow {
   views: number | null;
   bookmarks: number | null;
   author: SampleAuthor | null;
-  tiktok_post_extras?: { is_ads: boolean | null }[] | null;
+  tiktok_post_extras?: EmbedOne<{ is_ads: boolean | null }>;
 }
 
 const TWITTER_SAMPLE_SELECT = `

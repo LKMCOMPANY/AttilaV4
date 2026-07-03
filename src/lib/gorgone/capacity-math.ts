@@ -1,6 +1,7 @@
 import type { CampaignFilters } from "@/types";
 import { applyFilters } from "@/lib/pipeline/filter";
 import type { FilterablePost } from "@/lib/pipeline/types";
+import { embedOne } from "./postgrest";
 import type {
   ZoneVolumeEstimate,
   FilteredVolume,
@@ -62,7 +63,7 @@ export function sampleRowToFilterable(
     author_verified: deriveVerified(row, platform),
     total_engagement: likes + retweets + replies + quotes,
     language: row.lang,
-    is_ad: Boolean(row.tiktok_post_extras?.[0]?.is_ads),
+    is_ad: Boolean(embedOne(row.tiktok_post_extras)?.is_ads),
     author_is_private: Boolean(row.author?.protected),
     post_type: deriveKind(row.kind),
     raw_metrics: rawMetrics,
@@ -77,10 +78,10 @@ function deriveKind(kind: string | null): "post" | "reply" | "retweet" {
 
 function deriveVerified(row: SampleRow, platform: "twitter" | "tiktok"): boolean {
   if (platform === "twitter") {
-    const x = row.author?.twitter_social_user_extras?.[0];
+    const x = embedOne(row.author?.twitter_social_user_extras);
     return Boolean(x?.blue_verified) || Boolean(x?.legacy_verified);
   }
-  return Boolean(row.author?.tiktok_social_user_extras?.[0]?.verified);
+  return Boolean(embedOne(row.author?.tiktok_social_user_extras)?.verified);
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +227,7 @@ export function buildTiktokBreakdown(
   let videoRows = 0, sumPlays = 0, sumEng = 0;
 
   for (const r of sample) {
-    if (r.tiktok_post_extras?.[0]?.is_ads) ads++;
+    if (embedOne(r.tiktok_post_extras)?.is_ads) ads++;
     if (r.author?.protected) priv++;
     if (deriveVerified(r, "tiktok")) verified++;
     if (r.kind !== "comment") {
