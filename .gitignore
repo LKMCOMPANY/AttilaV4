@@ -47,3 +47,6 @@ next-env.d.ts
 /screenshot_proof_*.jpg
 /tiktok_source_*.jpg
 /tiktok_proof_*.jpg
+
+# tesseract.js language models (downloaded at runtime, never commit)
+*.traineddata
