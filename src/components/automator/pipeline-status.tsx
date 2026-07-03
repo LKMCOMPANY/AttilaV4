@@ -124,11 +124,6 @@ export function JobVerificationBadge({
   );
 }
 
-export function verificationHint(verification: JobVerification): string | null {
-  if (verification === "unchecked") return null;
-  return VERIFICATION_CONFIG[verification].hint;
-}
-
 // ---------------------------------------------------------------------------
 // Post statuses
 // ---------------------------------------------------------------------------

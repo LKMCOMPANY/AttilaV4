@@ -30,6 +30,13 @@ const MIN_AGE_MS = 90_000;
 const MAX_AGE_MS = 2 * 60 * 60 * 1000;
 const BATCH = 10;
 
+// After an inconclusive attempt (TikHub unreachable, or a TikTok comment buried
+// below the scan budget) the job stays `unchecked` — but we stamp `verified_at`
+// and skip it for this long before retrying. Without the cooldown the sweep
+// would re-pick the same oldest stuck jobs every cycle (ordered by
+// completed_at), burning paid API calls and starving fresh jobs.
+const RECHECK_COOLDOWN_MS = 20 * 60 * 1000;
+
 interface VerifiableJob {
   id: string;
   campaign_id: string;
@@ -67,6 +74,9 @@ export async function verifyDoneJobs(): Promise<VerifyPassResult> {
     .eq("verification", "unchecked")
     .lt("completed_at", new Date(now - MIN_AGE_MS).toISOString())
     .gt("completed_at", new Date(now - MAX_AGE_MS).toISOString())
+    // Skip jobs re-checked within the cooldown so an inconclusive attempt
+    // (TikHub down, comment buried) doesn't hot-loop on the same rows.
+    .or(`verified_at.is.null,verified_at.lt.${new Date(now - RECHECK_COOLDOWN_MS).toISOString()}`)
     .order("completed_at", { ascending: true })
     .limit(BATCH);
 
@@ -104,8 +114,15 @@ async function verifyOne(
 
   // Twitter needs the avatar's own handle to read its reply timeline; without
   // it we can't check (leave unchecked rather than falsely "unconfirmed").
-  if (!check.available) return "skipped";
-  if (job.platform === "twitter" && !handle) return "skipped";
+  // Stamp verified_at on the inconclusive path too, so the cooldown filter
+  // paces the retry instead of re-picking this row every cycle.
+  if (!check.available || (job.platform === "twitter" && !handle)) {
+    await supabase
+      .from("campaign_jobs")
+      .update({ verified_at: new Date().toISOString() })
+      .eq("id", job.id);
+    return "skipped";
+  }
 
   const verification = check.confirmed ? "confirmed" : "unconfirmed";
   await supabase
