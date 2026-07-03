@@ -209,7 +209,12 @@ export async function processNext(): Promise<PipelineResult | null> {
     const phase = getPhaseFromTiming(timing);
     pipelineError(phase, jobId, "Pipeline failed", err);
     const errMsg = err instanceof Error ? err.message : String(err);
-    await markJob(supabase, jobId, "error", null, errMsg);
+    // Transient failures (LLM timeout / provider 5xx / network) must not
+    // terminally drop a post — re-queue it with a bounded attempt count so it
+    // is retried once the provider recovers. Only give up (`error`) once the
+    // failure is non-transient or the retry budget is exhausted.
+    const requeued = await requeueIfTransient(supabase, jobId, err, errMsg);
+    if (!requeued) await markJob(supabase, jobId, "error", null, errMsg);
     return {
       success: false,
       action: "error",
@@ -221,6 +226,70 @@ export async function processNext(): Promise<PipelineResult | null> {
       timing: { ...timing, totalMs: Date.now() - totalStart },
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Transient-failure retry — bounded, uses the ledger's `attempts` column
+// ---------------------------------------------------------------------------
+
+const MAX_PIPELINE_ATTEMPTS = 5;
+
+/** Failures worth retrying: the LLM provider timed out, rate-limited, or 5xx'd,
+ * or the network blipped. Editorial/validation errors are NOT transient. */
+function isTransientPipelineError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("timeout") ||
+    msg.includes("fetch failed") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("network") ||
+    /\b(429|500|502|503|504)\b/.test(msg)
+  );
+}
+
+/**
+ * On a transient failure, set the ledger row back to `pending` and increment
+ * `attempts` (so a later cycle re-claims it) — up to `MAX_PIPELINE_ATTEMPTS`.
+ * Returns true when the post was re-queued, false when it should be terminally
+ * marked `error` (non-transient, or retry budget spent).
+ */
+async function requeueIfTransient(
+  supabase: ReturnType<typeof createAdminClient>,
+  jobId: string,
+  err: unknown,
+  errMsg: string,
+): Promise<boolean> {
+  if (!isTransientPipelineError(err)) return false;
+
+  const { data: row } = await supabase
+    .from("gorgone_post_jobs")
+    .select("attempts")
+    .eq("gorgone_post_id", jobId)
+    .single();
+
+  const attempts = (row?.attempts ?? 0) + 1;
+  if (attempts >= MAX_PIPELINE_ATTEMPTS) {
+    pipelineLog("claim", jobId, `Transient failure but retry budget spent (${attempts}) — marking error`);
+    return false;
+  }
+
+  const { error } = await supabase
+    .from("gorgone_post_jobs")
+    .update({
+      status: "pending",
+      attempts,
+      error_message: `retry ${attempts}/${MAX_PIPELINE_ATTEMPTS}: ${errMsg.slice(0, 200)}`,
+      status_changed_at: new Date().toISOString(),
+    })
+    .eq("gorgone_post_id", jobId);
+
+  if (error) {
+    pipelineError("claim", jobId, "Failed to re-queue transient post", error);
+    return false;
+  }
+  pipelineLog("claim", jobId, `Transient failure — re-queued (attempt ${attempts}/${MAX_PIPELINE_ATTEMPTS})`);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
