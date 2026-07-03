@@ -4,3 +4,4 @@
 export { processNext } from "./processor";
 export { executeJob } from "./executor";
 export { uploadProofScreenshot } from "./storage";
+export { verifyDoneJobs } from "./verify";

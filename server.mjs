@@ -343,6 +343,7 @@ const EXECUTE_CONCURRENCY = parseInt(process.env.PIPELINE_EXECUTE_CONCURRENCY ||
 const IDLE_MS = parseInt(process.env.PIPELINE_IDLE_MS || "5000", 10);
 const SWEEP_INTERVAL_MS = parseInt(process.env.GORGONE_SWEEP_INTERVAL_MS || "60000", 10);
 const REAP_INTERVAL_MS = parseInt(process.env.DEVICE_REAP_INTERVAL_MS || "120000", 10);
+const VERIFY_INTERVAL_MS = parseInt(process.env.PIPELINE_VERIFY_INTERVAL_MS || "60000", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function workerLoop(name, port, path, opts = {}) {
@@ -411,4 +412,12 @@ function startPipelineWorkers(port) {
     fixedIntervalMs: REAP_INTERVAL_MS,
   });
   console.log(`> Device reaper worker: every ${REAP_INTERVAL_MS}ms`);
+
+  // Off-device verification — re-reads recently-done jobs via TikHub and marks
+  // each confirmed / unconfirmed. Fixed cadence: it's throughput-independent
+  // and must not compete with the execute workers for device slots.
+  workerLoop("Verify", port, "/api/pipeline/verify", {
+    fixedIntervalMs: VERIFY_INTERVAL_MS,
+  });
+  console.log(`> Verify worker: every ${VERIFY_INTERVAL_MS}ms`);
 }

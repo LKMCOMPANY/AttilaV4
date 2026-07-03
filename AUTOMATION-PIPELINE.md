@@ -615,20 +615,35 @@ de faux `done`.
   saisie tourne **sans dump** (un dump referme le composer). Voir
   `TIKTOK-AUTOMATE.md`.
 - **Twitter** : `getCurrentFocus()` doit revenir sur `TweetDetailActivity` après
-  l'envoi (gate on-device). En secondaire non bloquant, un cross-check TikHub
-  (`fetch_user_tweet_replies` sur le handle de l'avatar) confirme la présence de
-  la réponse sur la timeline propre de l'avatar — robuste au shadow-ban (une
-  réponse masquée dans le thread cible reste visible sur la timeline de
-  l'auteur). Voir `src/lib/social-verify/tikhub.ts`.
+  l'envoi (gate on-device). ⚠️ Ce gate est FAIBLE : « composer fermé » ne prouve
+  pas que la réponse a atterri (un shadow-ban / silent-drop est identique
+  on-device — vérifié en live : un `done` absent de la timeline TikHub). La
+  couche TikHub (ci-dessous) est donc essentielle sur Twitter, pas juste un bonus.
 
-### Preuve de publication off-device (TikHub) — secondaire
+### Vérification off-device différée (TikHub) — colonne `verification`
 
-`src/lib/social-verify/tikhub.ts` fournit une couche secondaire, jamais un gate
-bloquant (un scraper tiers peut manquer un post réellement publié). Activée par
-`TIKHUB_API_KEY`. Deux usages : cross-check Twitter anti shadow-ban (ci-dessus)
-et analytics de campagne a posteriori (métriques tweet, santé de compte). TikTok
-n'y est pas fiable pour la validation (le scrape de commentaires dépend de la
-vidéo/région) — on s'appuie sur la confirmation on-device.
+`src/lib/pipeline/verify.ts` (worker `Verify`, endpoint `/api/pipeline/verify`)
+relit chaque job `done` via TikHub après un délai d'indexation (90s min, 2h max)
+et écrit une colonne `verification` **indépendante de `status`** :
+- `confirmed` — commentaire/réponse retrouvé sur la cible
+- `unconfirmed` — vérifié mais absent (silent-drop / shadow-ban) → badge ambre
+  « Publié — non confirmé » dans l'UI
+- `unchecked` — TikHub injoignable, clé absente, ou (TikTok) commentaire enfoui
+  sous le tri par pertinence → « on ne sait pas »
+
+Ne touche JAMAIS `status` (pas de re-post → zéro risque de doublon) ; annote
+seulement. Activée par `TIKHUB_API_KEY`.
+
+**Asymétrie Twitter vs TikTok** :
+- Twitter : `fetch_user_tweet_replies` lit la timeline PROPRE de l'avatar →
+  fiable quelle que soit la taille du thread cible. Compense le gate on-device
+  faible. Verdict confirmed/unconfirmed robuste.
+- TikTok : pas d'historique par-user ; on ne peut scanner que les commentaires
+  de la VIDÉO cible, triés par pertinence (pas par récence). Sur une vidéo
+  active (milliers de commentaires) le nôtre est enfoui → `available:false` →
+  `unchecked` (jamais un faux `unconfirmed`). Verdict fiable seulement sur les
+  vidéos ≤100 commentaires. Le gate on-device TikTok étant déjà fort (on lit
+  notre commentaire dans la liste), TikHub y est un bonus, pas une béquille.
 
 ### Reporting d'erreur — JobError
 
@@ -899,11 +914,13 @@ src/lib/pipeline/
   avatar-selector.ts        Selection + rate-limiting + scoring (source unique)
   processor.ts              Orchestrateur : processNext() = 1 pipe complet
   executor.ts               Wrapper mince → appelle src/lib/automation/
+  verify.ts                 Passe TikHub differee : done → confirmed/unconfirmed
   index.ts                  Barrel exports
 
 src/app/api/pipeline/
   process/route.ts          Cron endpoint (Option A dev)
   execute/route.ts          Simule gateway (dev) avec guard anti-race
+  verify/route.ts           Passe de verification off-device (worker Verify)
 
 src/app/actions/
   pipeline.ts               Server actions avec auth (getCampaignPosts, getJobs, purge)

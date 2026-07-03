@@ -9,7 +9,6 @@ import {
 } from "@/lib/box-api";
 import { encodeJobError, isAutoRetryable, JobError, parseJobError } from "@/lib/automation/errors";
 import { tagAvatarBlocked } from "@/lib/pipeline/avatar-selector";
-import { isTikHubEnabled, verifyTweetReply } from "@/lib/social-verify/tikhub";
 
 /**
  * Only account-level failures warrant tagging the avatar `blocked_${platform}`.
@@ -24,48 +23,6 @@ function shouldBlockAvatar(error: string | undefined): boolean {
     parsed.category === "account_blocked" ||
     parsed.category === "account_captcha"
   );
-}
-
-/** Extract the numeric status id from an x.com / twitter.com status URL. */
-function tweetIdFromUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
-  const m = /status\/(\d+)/.exec(url);
-  return m ? m[1] : null;
-}
-
-/**
- * Best-effort TikHub cross-check for a just-posted Twitter reply. Logs a
- * structured result (confirmed vs shadow-ban-suspected) for observability and
- * never throws — a verification hiccup must not affect the completed job.
- */
-async function crossCheckTwitterReply(
-  supabase: ReturnType<typeof createAdminClient>,
-  job: { id: string; platform: string; avatar_id: string | null; post_url: string | null; comment_text: string | null },
-): Promise<void> {
-  if (job.platform !== "twitter" || !isTikHubEnabled()) return;
-  const tweetId = tweetIdFromUrl(job.post_url);
-  if (!tweetId || !job.avatar_id || !job.comment_text) return;
-
-  try {
-    const { data: avatar } = await supabase
-      .from("avatars")
-      .select("twitter_credentials")
-      .eq("id", job.avatar_id)
-      .single();
-    const handle = (avatar?.twitter_credentials as { handle?: string } | null)?.handle;
-    if (!handle) return;
-
-    const result = await verifyTweetReply({ screenName: handle, targetTweetId: tweetId, text: job.comment_text });
-    if (!result.available) return;
-    console.log(`[Verify][${job.id}] twitter cross-check`, JSON.stringify({
-      handle,
-      tweetId,
-      confirmed: result.confirmed,
-      via: result.confirmed ? result.via : "shadowban_suspected",
-    }));
-  } catch (err) {
-    console.warn(`[Verify][${job.id}] twitter cross-check failed:`, err instanceof Error ? err.message : err);
-  }
 }
 
 /**
@@ -318,14 +275,11 @@ export async function POST(req: NextRequest) {
       .eq("id", job.id);
     await supabase.rpc("increment_campaign_counter", { p_campaign_id: job.campaign_id, p_counter: "total_responses_sent" });
 
-    // Secondary Twitter cross-check: the on-device gate already confirmed the
-    // reply was accepted; TikHub tells us whether it is visible on the avatar's
-    // own timeline (a shadow-ban / silent-drop misses here even though the post
-    // "succeeded"). Fire-and-forget — it only annotates logs and must not add
-    // its network latency to worker occupancy or the container-teardown path.
-    // `crossCheckTwitterReply` swallows all its own errors, so the floating
-    // promise can never reject.
-    void crossCheckTwitterReply(supabase, job);
+    // The independent TikHub confirmation is NOT done here: the platform needs
+    // time to index a fresh post, and blocking the worker (and the container
+    // teardown) on a 15s scrape per job would wreck throughput. A separate
+    // deferred pass (`/api/pipeline/verify`) re-reads the target once it's had
+    // time to index and sets `verification` (confirmed / unconfirmed).
   } else {
     // Pre-compose failures (nothing typed, nothing sent — guaranteed by the
     // `app_not_ready` contract) are re-queued with backoff instead of failed:

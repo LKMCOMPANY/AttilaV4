@@ -1,12 +1,25 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { CheckCircle2, ExternalLink, RotateCcw, X, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ExternalLink,
+  RotateCcw,
+  ShieldCheck,
+  ShieldQuestion,
+  X,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { DeviceScreenshot } from "./device-screenshot";
-import { JobErrorBadge, JobStatusIcon, JobStatusLabel } from "./pipeline-status";
+import {
+  JobErrorBadge,
+  JobStatusIcon,
+  JobStatusLabel,
+  JobVerificationBadge,
+} from "./pipeline-status";
 import { formatDistanceToNow, format } from "date-fns";
 import { parseJobError } from "@/lib/automation/errors";
 import type { CampaignJobWithAvatar, SocialPlatform } from "@/types";
@@ -78,6 +91,7 @@ export function PipelineJobRow({
           {job.status === "failed" && (
             <JobErrorBadge errorMessage={job.error_message} />
           )}
+          <JobVerificationBadge verification={job.verification} status={job.status} />
         </div>
       </div>
     </button>
@@ -173,14 +187,46 @@ const HINT_BY_SEVERITY: Record<string, string> = {
 
 export function JobVerdict({ job }: { job: CampaignJobWithAvatar }) {
   if (job.status === "done") {
+    // `verification` is the independent off-device (TikHub) cross-check, layered
+    // on top of the on-device "done": confirmed = seen on the target,
+    // unconfirmed = device said done but TikHub can't find it (silent drop),
+    // unchecked = still indexing / TikHub unavailable.
+    if (job.verification === "unconfirmed") {
+      return (
+        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2">
+          <ShieldQuestion className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-warning">Published — unconfirmed</p>
+            <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">
+              The device reported the comment as sent, but the independent
+              TikHub check can&apos;t find it on the target — a likely shadow-ban
+              or silent drop. Treat as not-yet-verified.
+            </p>
+          </div>
+        </div>
+      );
+    }
+    const confirmed = job.verification === "confirmed";
     return (
-      <div className="flex items-start gap-2 rounded-md border border-success/25 bg-success/10 px-2.5 py-2">
-        <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+      <div
+        className={cn(
+          "flex items-start gap-2 rounded-md border px-2.5 py-2",
+          confirmed ? "border-success/25 bg-success/10" : "border-success/20 bg-success/5",
+        )}
+      >
+        {confirmed ? (
+          <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+        ) : (
+          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" />
+        )}
         <div className="min-w-0">
-          <p className="text-xs font-semibold text-success">Comment published</p>
+          <p className="text-xs font-semibold text-success">
+            {confirmed ? "Published — confirmed live" : "Comment published"}
+          </p>
           <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-            Publication was confirmed on the device — the comment appeared in
-            the comments list after sending.
+            {confirmed
+              ? "Confirmed on the device AND independently on the target via TikHub."
+              : "Confirmed on the device — the comment appeared in the list after sending. Independent TikHub check pending."}
           </p>
         </div>
       </div>

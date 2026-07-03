@@ -468,8 +468,19 @@ export interface CampaignJob {
   duration_ms: number | null;
   /** Execution attempts consumed (auto-retry of pre-compose failures). */
   attempts: number;
+  /**
+   * Off-device (TikHub) confirmation of a `done` job, independent of `status`:
+   *   - `unchecked`   — not verified yet, or TikHub couldn't be reached
+   *   - `confirmed`   — our comment/reply was found on the target
+   *   - `unconfirmed` — checked, but absent (shadow-ban / silent drop): the
+   *                     device said done but the platform never showed it
+   */
+  verification: JobVerification;
+  verified_at: string | null;
   created_at: string;
 }
+
+export type JobVerification = "unchecked" | "confirmed" | "unconfirmed";
 
 export interface CampaignJobWithAvatar extends CampaignJob {
   avatar_name: string | null;

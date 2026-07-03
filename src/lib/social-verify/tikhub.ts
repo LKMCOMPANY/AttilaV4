@@ -9,7 +9,10 @@
  *      The reply shows there even when it is hidden inside the target thread —
  *      the exact case a target-thread scrape would miss. Absence there while the
  *      on-device post succeeded is a strong shadow-ban / drop signal.
- *   2. Analytics: post-hoc metrics (likes, replies, views) for the dashboard.
+ *   2. TikTok comment cross-check: read the target video's comment list
+ *      (`fetch_video_comments`) and match our text (preferring the avatar's
+ *      handle). Absence while the on-device post succeeded flags a silent drop.
+ *   3. Analytics: post-hoc metrics (likes, replies, views) for the dashboard.
  *
  * Everything here is best-effort and env-gated: with no `TIKHUB_API_KEY` the
  * helpers return `{ available: false }` and callers simply skip the cross-check.
@@ -160,6 +163,103 @@ export async function verifyTweetReply(params: {
     }
   }
   return { available: true, confirmed: false };
+}
+
+// ---------------------------------------------------------------------------
+// TikTok
+// ---------------------------------------------------------------------------
+
+interface RawTikTokComment {
+  text?: string;
+  cid?: string;
+  user?: {
+    unique_id?: string;
+    nickname?: string;
+    sec_uid?: string;
+  };
+}
+
+export type CommentVerification =
+  | { available: false }
+  | {
+      available: true;
+      /** Our comment was found in the target video's comment list. */
+      confirmed: boolean;
+      /** How the match was made, when confirmed. */
+      via?: "handle_text" | "text";
+      commentId?: string;
+    };
+
+/**
+ * Confirm an avatar actually posted a comment on a TikTok video, read from
+ * the target video's OWN comment list (off-device, so it catches an on-device
+ * "done" that TikTok silently dropped). Matches on our text — preferring the
+ * row whose author handle is the avatar (authoritative), falling back to a
+ * bare text match when the handle isn't echoed.
+ *
+ * IMPORTANT asymmetry vs Twitter: TikTok exposes no per-user comment history,
+ * so we can only scan the TARGET video's comments — and TikHub returns them
+ * sorted by "top"/relevance, not recency. On a busy video (thousands of
+ * comments) a fresh avatar comment is buried far below what any sane
+ * pagination reaches. So we ONLY return a terminal `confirmed:false`
+ * ("unconfirmed") when we actually EXHAUST the comment list; if the list is
+ * still longer than our page budget, we return `available:false` — an honest
+ * "can't tell" rather than a false silent-drop verdict.
+ */
+// Each page is a paid TikHub call, and a comment we can't find in the first
+// ~100 is almost certainly buried by the relevance sort (→ "can't tell", not a
+// silent-drop verdict). Keep the budget tight: it still fully exhausts any
+// video with ≤100 comments, which is exactly where a confirm/absent verdict is
+// actually reachable.
+const TIKTOK_COMMENT_PAGE = 50;
+const TIKTOK_MAX_PAGES = 2;
+
+export async function verifyTikTokComment(params: {
+  awemeId: string;
+  handle: string | null;
+  text: string;
+}): Promise<CommentVerification> {
+  if (!isTikHubEnabled()) return { available: false };
+
+  const wantText = textKey(params.text);
+  const wantHandle = params.handle?.replace(/^@/, "").toLowerCase() ?? null;
+  let cursor = 0;
+  let reachedEnd = false;
+  let textOnlyHit: string | undefined;
+
+  for (let page = 0; page < TIKTOK_MAX_PAGES; page++) {
+    const data = await tikhubGet<{ comments?: RawTikTokComment[]; has_more?: number | boolean; cursor?: number }>(
+      "/api/v1/tiktok/app/v3/fetch_video_comments",
+      { aweme_id: params.awemeId, count: String(TIKTOK_COMMENT_PAGE), cursor: String(cursor) },
+    );
+    if (!data) return { available: false };
+    const comments = Array.isArray(data.comments) ? data.comments : [];
+
+    for (const c of comments) {
+      if (!c.text || textKey(c.text) !== wantText) continue;
+      const handle = c.user?.unique_id?.toLowerCase();
+      // Handle + text match is authoritative — it's definitely our avatar's row.
+      if (wantHandle && handle === wantHandle) {
+        return { available: true, confirmed: true, via: "handle_text", commentId: c.cid };
+      }
+      // Text match without a handle confirmation: remember as a fallback but
+      // keep scanning for a stronger handle match first.
+      textOnlyHit ??= c.cid ?? "";
+    }
+
+    if (!data.has_more || comments.length === 0) {
+      reachedEnd = true;
+      break;
+    }
+    cursor = typeof data.cursor === "number" ? data.cursor : cursor + comments.length;
+  }
+
+  if (textOnlyHit !== undefined) {
+    return { available: true, confirmed: true, via: "text", commentId: textOnlyHit || undefined };
+  }
+  // Not found. Only a definitive "unconfirmed" if we saw the whole list;
+  // otherwise it's buried below our budget → can't tell (leave unchecked).
+  return reachedEnd ? { available: true, confirmed: false } : { available: false };
 }
 
 /** Post-hoc metrics for a tweet (campaign analytics). */

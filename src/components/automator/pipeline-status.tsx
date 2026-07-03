@@ -11,11 +11,13 @@ import {
   HelpCircle,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
   UserX,
   Filter,
   MessageSquare,
 } from "lucide-react";
-import type { CampaignJobStatus, CampaignPostStatus } from "@/types";
+import type { CampaignJobStatus, CampaignPostStatus, JobVerification } from "@/types";
 import {
   parseJobError,
   severityOf,
@@ -66,6 +68,65 @@ export function JobStatusLabel({ status }: { status: CampaignJobStatus }) {
       {JOB_STATUS_CONFIG[status].label}
     </span>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Off-device verification (TikHub) — independent of status. Only meaningful
+// on a `done` job; `unchecked` renders nothing (avoids nagging while a fresh
+// post is still indexing or when TikHub is disabled).
+// ---------------------------------------------------------------------------
+
+const VERIFICATION_CONFIG: Record<
+  Exclude<JobVerification, "unchecked">,
+  { icon: typeof ShieldCheck; label: string; color: string; bgColor: string; hint: string }
+> = {
+  confirmed: {
+    icon: ShieldCheck,
+    label: "Confirmed live",
+    color: "text-success",
+    bgColor: "bg-success/10",
+    hint: "Independently confirmed via TikHub — the comment is visible on the target.",
+  },
+  unconfirmed: {
+    icon: ShieldQuestion,
+    label: "Unconfirmed",
+    color: "text-warning",
+    bgColor: "bg-warning/10",
+    hint: "The device reported success, but TikHub can't find the comment on the target — a likely shadow-ban or silent drop.",
+  },
+};
+
+export function JobVerificationBadge({
+  verification,
+  status,
+  className,
+}: {
+  verification: JobVerification;
+  status: CampaignJobStatus;
+  className?: string;
+}) {
+  if (status !== "done" || verification === "unchecked") return null;
+  const config = VERIFICATION_CONFIG[verification];
+  const Icon = config.icon;
+  return (
+    <span
+      title={config.hint}
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+        config.color,
+        config.bgColor,
+        className,
+      )}
+    >
+      <Icon className="h-2.5 w-2.5" />
+      {config.label}
+    </span>
+  );
+}
+
+export function verificationHint(verification: JobVerification): string | null {
+  if (verification === "unchecked") return null;
+  return VERIFICATION_CONFIG[verification].hint;
 }
 
 // ---------------------------------------------------------------------------
