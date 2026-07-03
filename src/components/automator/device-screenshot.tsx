@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { cn } from "@/lib/utils";
 import { Smartphone, X, Maximize2, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,13 @@ interface DeviceScreenshotProps {
  * full frame. Phone captures rendered full-width dwarfed the panel and pushed
  * every other signal off screen — evidence is always a small labeled tile,
  * and inspection happens in the lightbox.
+ *
+ * The lightbox goes through Base UI's Dialog (same primitive the design
+ * system's Dialog is built on) so it PORTALS to the document body. A plain
+ * `position: fixed` overlay rendered inline here was trapped: the detail
+ * overlay sits inside a Base UI ScrollArea viewport, which establishes a
+ * containing block, so `fixed` clipped to the panel instead of the viewport
+ * and the "open big" click appeared to do nothing.
  */
 export function DeviceScreenshot({
   url,
@@ -84,42 +92,50 @@ export function DeviceScreenshot({
         tile
       )}
 
-      {lightbox && hasImage && (
-        <div
-          className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/85 p-8"
-          onClick={() => setLightbox(false)}
-        >
-          <div className="absolute right-4 top-4 flex items-center gap-1.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDownload();
-              }}
-            >
-              <Download className="h-4 w-4" />
-              <span className="sr-only">Download</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 rounded-full bg-white/10 text-white hover:bg-white/20 hover:text-white"
-              onClick={() => setLightbox(false)}
-            >
-              <X className="h-4 w-4" />
-              <span className="sr-only">Close</span>
-            </Button>
-          </div>
-
-          <img
-            src={url}
-            alt={alt}
-            className="max-h-full max-w-full rounded-lg object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
+      {hasImage && (
+        <DialogPrimitive.Root open={lightbox} onOpenChange={setLightbox}>
+          <DialogPrimitive.Portal>
+            <DialogPrimitive.Backdrop
+              className="fixed inset-0 z-[var(--z-modal-backdrop)] bg-black/85 duration-100 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
+            />
+            {/* Click-through wrapper so presses on the dark area reach the
+                backdrop (dismiss); the popup itself captures pointer events. */}
+            <div className="pointer-events-none fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-8">
+              <DialogPrimitive.Popup
+                className="pointer-events-auto relative outline-none duration-100 data-open:animate-in data-open:zoom-in-95 data-closed:animate-out data-closed:zoom-out-95"
+              >
+                <img
+                  src={url}
+                  alt={alt}
+                  className="max-h-[calc(100vh-4rem)] max-w-[calc(100vw-4rem)] rounded-lg object-contain shadow-2xl"
+                />
+                <div className="absolute right-2 top-2 flex items-center gap-1.5">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 rounded-full bg-black/40 text-white backdrop-blur-sm hover:bg-black/60 hover:text-white"
+                    onClick={handleDownload}
+                  >
+                    <Download className="h-4 w-4" />
+                    <span className="sr-only">Download</span>
+                  </Button>
+                  <DialogPrimitive.Close
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 rounded-full bg-black/40 text-white backdrop-blur-sm hover:bg-black/60 hover:text-white"
+                      />
+                    }
+                  >
+                    <X className="h-4 w-4" />
+                    <span className="sr-only">Close</span>
+                  </DialogPrimitive.Close>
+                </div>
+              </DialogPrimitive.Popup>
+            </div>
+          </DialogPrimitive.Portal>
+        </DialogPrimitive.Root>
       )}
     </>
   );
