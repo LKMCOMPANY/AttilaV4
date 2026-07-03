@@ -69,6 +69,35 @@ async function crossCheckTwitterReply(
 }
 
 /**
+ * An `executing` row this old is an orphan: the worker died mid-job (deploy
+ * restart, crash, OOM) and nothing will ever complete it. Real executions
+ * are bounded far below this by the automation modules' own timeouts.
+ * Orphans are poison — they hold their device in `busyDeviceIds` forever and
+ * shield its container from the reaper.
+ */
+const STALE_EXECUTING_MS = 15 * 60 * 1000;
+
+async function failStaleExecutingJobs(supabase: ReturnType<typeof createAdminClient>) {
+  const cutoff = new Date(Date.now() - STALE_EXECUTING_MS).toISOString();
+  const { data } = await supabase
+    .from("campaign_jobs")
+    .update({
+      status: "failed",
+      error_message: "[infrastructure] Worker restarted mid-execution — outcome unverifiable",
+      completed_at: new Date().toISOString(),
+    })
+    .eq("status", "executing")
+    .lt("started_at", cutoff)
+    .select("id, campaign_id");
+
+  for (const job of data ?? []) {
+    console.warn(`[Execute] Failed stale executing job ${job.id} (worker restart)`);
+    await supabase.rpc("increment_campaign_counter", { p_campaign_id: job.campaign_id, p_counter: "total_responses_failed" });
+    broadcastCampaignEvent(job.campaign_id, "pipeline", { action: "job_completed", status: "failed" });
+  }
+}
+
+/**
  * POST /api/pipeline/execute
  *
  * Claims and executes a single ready job. Prevents device collisions by
@@ -86,6 +115,11 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createAdminClient();
+
+  // -----------------------------------------------------------------------
+  // 0. Sweep orphaned `executing` jobs (worker died mid-run)
+  // -----------------------------------------------------------------------
+  await failStaleExecutingJobs(supabase);
 
   // -----------------------------------------------------------------------
   // 1. Find devices currently busy (executing) — exclude them from claim
