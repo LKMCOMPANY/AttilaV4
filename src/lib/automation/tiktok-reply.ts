@@ -53,6 +53,7 @@ import {
   isCommentsPanelOpen,
   countPostedMatches,
 } from "./adb-helpers";
+import { screenshotContainsText } from "./ocr";
 import { encodeJobError, JobError } from "./errors";
 
 const TIKTOK_PACKAGE = "com.zhiliaoapp.musically";
@@ -405,22 +406,26 @@ async function ensureCommentsPanelOpen(
 const SUBMIT_POLL_ATTEMPTS = 8;
 const SUBMIT_POLL_INTERVAL_MS = 1200;
 
+const OCR_MAX_ATTEMPTS = 2; // OCR is heavy — cap how many polls fall back to it
+
 /**
- * Confirm the comment was actually published — from the UI tree only, never
- * the screenshot (which can lag).
+ * Confirm the comment was actually published, from the device state only —
+ * never optimistically.
  *
- * The single positive signal is a NEW list item matching our text vs the
- * pre-compose baseline (`beforeMatches`). This is both:
- *   - foreign-safe — a stranger's comment bumping the panel count doesn't match
- *     our text, so it never counts as ours;
- *   - duplicate-safe — if the avatar had already posted this exact text, that
- *     copy is in the baseline, so only a genuinely new copy passes.
+ * Two independent positive signals, in order of cost:
+ *   1. Accessibility tree — a NEW list item matching our text vs the
+ *      pre-compose baseline (`beforeMatches`). Foreign-safe (must be our text)
+ *      and duplicate-safe (must be an increase over baseline).
+ *   2. Screenshot OCR fallback — TikTok's compressed tree intermittently omits
+ *      the freshly-posted row even when it's on screen. When the sheet is open
+ *      and the tree didn't match, we OCR the screenshot. This runs ONLY after
+ *      the tree has confirmed our text is no longer in the composer field, so
+ *      an OCR hit can only be the posted comment in the list — a lagged frame
+ *      yields a false negative (safe), never a false positive.
  *
  * Text still sitting in an `EditText` is a hard negative (`rate_limited`).
- * Leaving the TikTok foreground, or never getting a readable tree, is also
- * failure — we never pass optimistically. `countBefore/After` are logged as
- * diagnostics only, never as the deciding signal (a count bump alone can come
- * from another user's comment).
+ * Leaving the TikTok foreground, or never getting a readable tree, is also a
+ * failure. We never pass without one of the two positive signals.
  */
 async function verifySubmission(
   tunnelHostname: string,
@@ -429,6 +434,7 @@ async function verifySubmission(
   beforeMatches: number,
 ): Promise<void> {
   let sawReadableTree = false;
+  let ocrAttempts = 0;
 
   for (let attempt = 0; attempt < SUBMIT_POLL_ATTEMPTS; attempt++) {
     if (!(await isForegroundApp(tunnelHostname, dbId, TIKTOK_PACKAGE))) {
@@ -454,27 +460,34 @@ async function verifySubmission(
           "Comment not submitted — typed text still present in the input field (likely TikTok throttling or anti-spam)",
         );
       }
-      if (isCommentsPanelOpen(nodes) || findCommentEditText(nodes)) sawReadableTree = true;
 
-      // The ONLY success signal: a NEW list item matching OUR text vs baseline.
-      // Foreign-safe (must be our text) and duplicate-safe (must be an
-      // increase) — a bare comment-count bump is deliberately NOT trusted,
-      // because on a busy video a stranger's comment can bump it while ours is
-      // silently dropped. TikTok echoes the just-posted comment at the top of
-      // the still-open sheet, which is the window this poll captures.
+      const panelReadable = isCommentsPanelOpen(nodes) || findCommentEditText(nodes);
+      if (panelReadable) sawReadableTree = true;
+
+      // Signal 1 — tree shows a NEW matching list item vs baseline.
       if (countPostedMatches(nodes, text) > beforeMatches) {
         ttLog(dbId, "submission confirmed — our comment is in the list", { beforeMatches });
         return;
+      }
+
+      // Signal 2 — field is cleared (checked above) and the sheet is on screen,
+      // but the compressed tree didn't surface our row: OCR the screenshot.
+      if (panelReadable && ocrAttempts < OCR_MAX_ATTEMPTS) {
+        ocrAttempts++;
+        const shot = await screenshot(tunnelHostname, dbId);
+        if (await screenshotContainsText(shot, text)) {
+          ttLog(dbId, "submission confirmed — our comment found via OCR", { ocrAttempts });
+          return;
+        }
       }
     }
 
     await sleep(SUBMIT_POLL_INTERVAL_MS);
   }
 
-  // No new matching comment appeared in the open sheet. Either the send tap
-  // missed / the sheet closed (we never saw a readable comments list), or
-  // TikTok accepted then silently dropped it (anti-spam). Both are non-terminal
-  // and, crucially, are reported as FAILURES — never an optimistic "done".
+  // No positive signal from either the tree or OCR. Either the send tap missed
+  // / the sheet closed (never a readable list), or TikTok accepted then silently
+  // dropped it (anti-spam). Both are reported as FAILURES — never a false "done".
   throw new JobError(
     sawReadableTree ? "rate_limited" : "ui_unexpected",
     sawReadableTree
