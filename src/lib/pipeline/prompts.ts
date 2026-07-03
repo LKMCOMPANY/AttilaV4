@@ -41,13 +41,21 @@ export function buildAnalystSystemPrompt(guideline: {
   return parts.join("\n");
 }
 
-export function buildAnalystUserPrompt(post: PipelinePost): string {
+export function buildAnalystUserPrompt(post: PipelinePost, hasImage = false): string {
   const lines: string[] = [
     `Platform: ${post.platform}`,
     `Author: @${post.post_author ?? "unknown"} (${post.author_followers} followers${post.author_verified ? ", verified" : ""})`,
     `Engagement: ${post.total_engagement}`,
     `Language: ${post.language ?? "unknown"}`,
   ];
+
+  if (hasImage) {
+    lines.push(
+      post.platform === "tiktok"
+        ? "Attached image: the video's cover frame — captions are often just hashtags, so judge relevance primarily from what the image shows."
+        : "Attached image: media embedded in the post — use it alongside the text to judge relevance.",
+    );
+  }
 
   // V4 enrichments — surface Gorgone's pre-computed signals so the analyst
   // doesn't have to re-derive what's already known. The model is free to
@@ -105,11 +113,21 @@ export function buildWriterUserPrompt(
   post: PipelinePost,
   previousCommentsOnPost: string[],
   recentAvatarComments: string[],
+  hasImage = false,
 ): string {
   const lines: string[] = [
     `@${post.post_author ?? "unknown"} wrote:`,
     post.post_text,
   ];
+
+  if (hasImage) {
+    lines.push(
+      "",
+      post.platform === "tiktok"
+        ? "(The video's cover frame is attached — react to what you SEE, like a real viewer would, not just the caption.)"
+        : "(The post's media is attached — you can react to the image too.)",
+    );
+  }
 
   if (previousCommentsOnPost.length > 0) {
     lines.push(

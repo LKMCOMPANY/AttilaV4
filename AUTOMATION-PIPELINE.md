@@ -290,13 +290,21 @@ leurs rate limits, ni leurs cooldowns. Elle juge uniquement le post et dit
 
 ### Modele et implementation
 
-- `aleria` via Aleria inference (`https://inference.aleria.com/v1`)
+- `aleria-vl` (vision) via Aleria inference (`https://inference.aleria.com/v1`)
+- **Vision (07/2026)** : l'image du post (cover TikTok / media Twitter, extraite
+  par drill-down JSON dans `post-fetcher.ts`) est telechargee une fois par post
+  (`post-image.ts`, fetch 8s max, types jpeg/png/webp/gif, cap 4 MB) et attachee
+  en base64 a l'appel. Les captions TikTok sont souvent de purs hashtags — le
+  cover frame porte le vrai sujet. URL CDN morte / type non supporte → degrade
+  silencieusement en texte-seul ; echec de l'appel vision → retry texte-seul
+  (une image cassee ne coute jamais un post).
 - Utilise via `@ai-sdk/openai-compatible` (PAS `@ai-sdk/openai`, voir section Dependances)
 - `generateText()` simple + parsing JSON (`parseAleriaJSON()`) — PAS `Output.object()`
   car Aleria ne supporte pas `responseFormat`/structuredOutputs
-- `maxOutputTokens >= 2000` obligatoire (le reasoning interne consomme des tokens,
-  les posts courts avec 1000 tokens causent `content: null`)
-- Latence mesuree : 5-18s par appel selon le contenu
+- `maxOutputTokens` : 4000 analyst / 6000 writer — le reasoning interne compte
+  dans le budget completion et le raisonnement vision est long (>2500 tokens
+  observes sur un commentaire TikTok banal ; un budget trop bas = `content` vide)
+- Latence mesuree : 5-18s texte, 12-20s avec image
 
 ### Resultats des tests (avril 2026)
 
@@ -425,9 +433,12 @@ Le texte genere est nettoye avant insertion :
 
 ### Modele
 
-- `aleria` via `generateText()` simple (texte brut, pas de JSON)
-- `maxOutputTokens: 2000`
-- Latence mesuree : 1.8-4.2s par avatar
+- `aleria-vl` via `generateText()` simple (texte brut, pas de JSON)
+- L'image du post (fetchee une fois par le processor) est attachee au 1er
+  essai — le commentaire reagit a ce qu'on VOIT dans la video, pas juste a la
+  caption. Le retry (validation ou erreur) droppe l'image.
+- `maxOutputTokens: 6000` (reasoning vision long, compte dans le budget)
+- Latence mesuree : 1.8-4.2s texte, 12-20s avec image
 
 ---
 
@@ -738,13 +749,14 @@ Le Writer utilise `generateText()` simple (texte brut, pas de JSON).
 
 | Model ID | Usage | Latence mesuree |
 |----------|-------|-----------------|
-| `aleria` | Chat, analyse, redaction | 2-18s selon le contenu |
-| `aleria-vl` | Vision (screenshots, fallback) | ~9s |
+| `aleria-vl` | Analyst + Writer du pipeline (texte + image du post) | 5-20s |
+| `aleria` | Taches texte-seul hors pipeline (guideline generator) | 2-18s |
 
 ### Points critiques
 
-- **`maxOutputTokens >= 2000`** — le reasoning interne consomme des tokens. Avec 1000,
-  les posts courts causent `content: null` (tout part en reasoning).
+- **`maxOutputTokens` genereux obligatoire** (4000 analyst / 6000 writer) — le
+  reasoning interne consomme le budget completion, et le raisonnement vision
+  depasse facilement 2500 tokens. Budget trop bas = `content` vide.
 - **Posts courts** (< 80 chars, promos) : latence plus elevee (18s) car le reasoning
   est disproportionne par rapport au contenu. Posts longs : 5-6s.
 - **Reponses JSON** parfois wrappees dans des backticks markdown → `parseAleriaJSON()`
@@ -881,8 +893,9 @@ src/lib/pipeline/
   types.ts                  Types pipeline + withTimeout() + structured logging
   prompts.ts                Templates prompts Analyst et Writer + post-processing
   filter.ts                 Filtrage par regles (pure function)
-  analyst.ts                Appel LLM Analyst (generateText + parseAleriaJSON)
-  writer.ts                 Appel LLM Writer (generateText + post-processing)
+  analyst.ts                Appel LLM Analyst aleria-vl (image + texte, fallback texte-seul)
+  writer.ts                 Appel LLM Writer aleria-vl (image + texte, retry texte-seul)
+  post-image.ts             Fetch de l'image du post (CDN signee, 1x/post, fail-safe)
   avatar-selector.ts        Selection + rate-limiting + scoring (source unique)
   processor.ts              Orchestrateur : processNext() = 1 pipe complet
   executor.ts               Wrapper mince → appelle src/lib/automation/

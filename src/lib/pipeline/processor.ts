@@ -12,6 +12,7 @@ import type { PipelinePost, PipelineResult, PipelineTiming } from "./types";
 import { pipelineLog, pipelineError } from "./types";
 import { applyFilters } from "./filter";
 import { analyzePost } from "./analyst";
+import { fetchPostImage } from "./post-image";
 import { selectAvatars } from "./avatar-selector";
 import { generateComments, buildJobRows } from "./job-builder";
 import type { FullGorgonePost } from "@/lib/gorgone";
@@ -89,13 +90,16 @@ export async function processNext(): Promise<PipelineResult | null> {
       return result("filtered_rules", jobId, campaign.id, 0, timing, totalStart);
     }
 
-    // ANALYST — LLM relevance check (skipped on high-confidence Gorgone sentiment)
+    // ANALYST — vision LLM relevance check. The post's still image (TikTok
+    // cover / Twitter media) is fetched once here and shared with the writer;
+    // a dead CDN link just downgrades both stages to text-only.
     const analystStart = Date.now();
+    const postImage = await fetchPostImage(post.image_url, jobId);
     const decision = await analyzePost(post, {
       operational_context: campaign.operational_context,
       strategy: campaign.strategy,
       key_messages: campaign.key_messages,
-    });
+    }, postImage);
     timing.analystMs = Date.now() - analystStart;
 
     if (!decision.relevant) {
@@ -151,7 +155,7 @@ export async function processNext(): Promise<PipelineResult | null> {
       key_messages: campaign.key_messages,
     };
     const generatedComments = await generateComments({
-      post, selected, platform, guideline, supabase,
+      post, selected, platform, guideline, supabase, postImage,
     });
     timing.writerMs = Date.now() - writerStart;
 
@@ -421,6 +425,7 @@ function fullPostToPipelinePost(
     post_url: full.post_url,
     post_text: full.text,
     post_author: full.author_handle,
+    image_url: full.image_url,
     author_followers: full.author_followers,
     author_verified: full.author_verified,
     total_engagement: full.total_engagement,

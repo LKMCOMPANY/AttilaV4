@@ -1,6 +1,7 @@
 import { createGorgoneClient } from "./client";
 import type { GorgoneNetwork } from "@/types";
 import type { GorgonePostKind } from "./webhook-payload";
+import { embedOne, type EmbedOne } from "./postgrest";
 
 /**
  * Re-fetch the full payload of a Gorgone post when Attila's pipeline is
@@ -54,6 +55,12 @@ export interface FullGorgonePost {
   // Reconstructed share URL
   post_url: string | null;
 
+  // Best-available still image for the vision model: TikTok photo-carousel
+  // image, else TikTok video cover, else first Twitter media. Signed CDN
+  // URLs — they expire a few hours after collection, so consumers must
+  // degrade gracefully when the fetch fails.
+  image_url: string | null;
+
   // Network-specific flags surfaced for filters (rest stays in Gorgone)
   is_reply: boolean;
   is_repost: boolean;
@@ -84,19 +91,25 @@ interface RawPostRow {
   views: number | null;
   bookmarks: number | null;
   author: RawSocialUser | null;
-  // 1:1 extras (only the network we care about will be non-null)
-  twitter_post_extras: { source_url: string | null }[] | null;
-  tiktok_post_extras: {
+  // 1:1 extras (only the network we care about will be non-null).
+  // PostgREST returns to-one embeds as OBJECTS — normalized via embedOne.
+  twitter_post_extras: EmbedOne<{ source_url: string | null }>;
+  tiktok_post_extras: EmbedOne<{
     share_url: string | null;
     is_ads: boolean | null;
-  }[] | null;
-  // AI sidecars (LIMIT 1 each via the Supabase select syntax)
+  }>;
+  // AI sidecars (true to-many relations — real arrays)
   post_ai_classifications:
     | { label: string; score: number }[]
     | null;
   post_translations:
     | { text_translated: string; target_lang: string }[]
     | null;
+  // Narrow JSON-path picks from `raw` (never the full blob — TikTok payloads
+  // are tens of KB). PostgREST `->` drill-down keeps the wire cost to ~200 B.
+  tiktok_photo_url: string | null;
+  tiktok_cover_url: string | null;
+  twitter_media_url: string | null;
 }
 
 interface RawSocialUser {
@@ -106,15 +119,11 @@ interface RawSocialUser {
   followers_count: number | null;
   protected: boolean | null;
   avatar_url: string | null;
-  twitter_social_user_extras:
-    | {
-        blue_verified: boolean | null;
-        legacy_verified: boolean | null;
-      }[]
-    | null;
-  tiktok_social_user_extras:
-    | { verified: boolean | null }[]
-    | null;
+  twitter_social_user_extras: EmbedOne<{
+    blue_verified: boolean | null;
+    legacy_verified: boolean | null;
+  }>;
+  tiktok_social_user_extras: EmbedOne<{ verified: boolean | null }>;
 }
 
 const SELECT_CLAUSE = `
@@ -128,7 +137,10 @@ const SELECT_CLAUSE = `
   twitter_post_extras (source_url),
   tiktok_post_extras (share_url, is_ads),
   post_ai_classifications (label, score),
-  post_translations (text_translated, target_lang)
+  post_translations (text_translated, target_lang),
+  tiktok_photo_url:raw->image_post_info->images->0->display_image->url_list->>0,
+  tiktok_cover_url:raw->video->cover->url_list->>0,
+  twitter_media_url:raw->entities->media->0->>media_url_https
 `.trim();
 
 /**
@@ -158,8 +170,8 @@ export async function fetchFullGorgonePost(
 
 function mapRawToFull(row: RawPostRow): FullGorgonePost {
   const author = row.author;
-  const twitterExtras = row.twitter_post_extras?.[0];
-  const tiktokExtras = row.tiktok_post_extras?.[0];
+  const twitterExtras = embedOne(row.twitter_post_extras);
+  const tiktokExtras = embedOne(row.tiktok_post_extras);
   const sentiment = pickTopSentiment(row.post_ai_classifications);
   const translation = row.post_translations?.[0];
 
@@ -196,6 +208,7 @@ function mapRawToFull(row: RawPostRow): FullGorgonePost {
     author_is_private: Boolean(author?.protected),
     author_avatar: author?.avatar_url ?? null,
     post_url: buildPostUrl(row.network, author?.handle ?? null, row.network_id, twitterExtras?.source_url ?? null, tiktokExtras?.share_url ?? null),
+    image_url: pickImageUrl(row),
     is_reply: row.kind === "reply" || row.kind === "comment",
     is_repost: row.kind === "repost",
     is_ad: Boolean(tiktokExtras?.is_ads),
@@ -209,14 +222,31 @@ function mapRawToFull(row: RawPostRow): FullGorgonePost {
 function deriveVerified(network: GorgoneNetwork, author: RawSocialUser | null): boolean {
   if (!author) return false;
   if (network === "twitter") {
-    const x = author.twitter_social_user_extras?.[0];
+    const x = embedOne(author.twitter_social_user_extras);
     return Boolean(x?.blue_verified) || Boolean(x?.legacy_verified);
   }
   if (network === "tiktok") {
-    return Boolean(author.tiktok_social_user_extras?.[0]?.verified);
+    return Boolean(embedOne(author.tiktok_social_user_extras)?.verified);
   }
   // Other networks: not surfaced today (no automation module yet).
   return false;
+}
+
+/**
+ * Best still image for the vision analyst. Preference order:
+ * TikTok photo-carousel image (the actual content) > TikTok video cover
+ * (representative frame) > first Twitter media (photo or video thumb).
+ * All are signed CDN URLs harvested by Gorgone at collection time — they
+ * expire after a few hours, so a failed fetch downgrades to text-only.
+ */
+function pickImageUrl(row: RawPostRow): string | null {
+  if (row.network === "tiktok") {
+    return row.tiktok_photo_url ?? row.tiktok_cover_url ?? null;
+  }
+  if (row.network === "twitter") {
+    return row.twitter_media_url ?? null;
+  }
+  return null;
 }
 
 function buildPostUrl(

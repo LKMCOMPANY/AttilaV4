@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { CampaignPlatform, PlatformCapacityParams } from "@/types";
 import type { PipelinePost, SelectedAvatar } from "./types";
+import type { PostImage } from "./post-image";
 import { writeComment } from "./writer";
 
 interface GeneratedComment {
@@ -20,8 +21,10 @@ export async function generateComments(params: {
   platform: CampaignPlatform;
   guideline: { operational_context: string | null; strategy: string | null; key_messages: string | null };
   supabase: ReturnType<typeof createAdminClient>;
+  /** Fetched once by the caller — reused across every avatar's writer call. */
+  postImage?: PostImage | null;
 }): Promise<GeneratedComment[]> {
-  const { post, selected, platform, guideline, supabase } = params;
+  const { post, selected, platform, guideline, supabase, postImage } = params;
   const comments: GeneratedComment[] = [];
 
   for (const sel of selected) {
@@ -34,6 +37,7 @@ export async function generateComments(params: {
       guideline,
       previousCommentsOnPost: comments.map((c) => c.commentText),
       recentAvatarComments: recentComments,
+      postImage,
     });
 
     comments.push({

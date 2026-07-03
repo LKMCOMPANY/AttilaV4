@@ -1,4 +1,5 @@
 import type { CampaignPlatform, AnalystDecision, Avatar } from "@/types";
+import type { PostImage } from "./post-image";
 
 // ---------------------------------------------------------------------------
 // Source post — unified shape derived from a Gorgone V4 `posts` row
@@ -34,6 +35,11 @@ export interface PipelinePost extends FilterablePost {
   post_text: string;
   post_author: string | null;     // social_users.handle
   collected_at: string;           // posts.first_seen_at (when Gorgone observed it)
+
+  // Signed CDN still (TikTok cover / photo, Twitter media) for the vision
+  // analyst. Null when the post has no harvestable image; may 403 after the
+  // CDN signature expires — consumers degrade to text-only.
+  image_url?: string | null;
 
   is_reply?: boolean;
 
@@ -106,6 +112,8 @@ export interface WriterInput {
   };
   previousCommentsOnPost: string[];
   recentAvatarComments: string[];
+  /** Pre-fetched post still (one fetch per post, shared across avatars). */
+  postImage?: PostImage | null;
 }
 
 export interface WriterResult {

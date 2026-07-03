@@ -28,7 +28,7 @@ ALERIA_BASE_URL=https://inference.aleria.com/v1
 | Model ID | Usage | Testé |
 |----------|-------|-------|
 | `aleria` | Chat, génération de texte, embeddings (4096 dim) | ✅ |
-| `aleria-vl` | Vision (analyse d'images/screenshots) | ✅ |
+| `aleria-vl` | Vision — **modèle du pipeline (Analyst + Writer, image du post attachée)** | ✅ |
 | `aleria_thinking` | Reasoning explicite | Non testé |
 | `aleria-asr` | Speech recognition | Non testé |
 | `qwen-qwq` | Qwen reasoning | Non testé |
