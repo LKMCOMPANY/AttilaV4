@@ -6,7 +6,11 @@ import type { PipelinePost } from "./types";
 import { pipelineLog, pipelineError, withTimeout } from "./types";
 import { buildAnalystSystemPrompt, buildAnalystUserPrompt } from "./prompts";
 
-const ANALYST_TIMEOUT_MS = 60_000;
+// Aleria latency is normally 5-18s but degrades under load (observed 44s for a
+// trivial prompt). Give the analyst generous headroom — a post that times out
+// is re-queued by the processor (transient), so a higher ceiling mainly avoids
+// churning the retry budget during a slow spell. Overridable via env.
+const ANALYST_TIMEOUT_MS = Number(process.env.ANALYST_TIMEOUT_MS ?? 90_000);
 
 /**
  * Analyze a post and decide: relevant? how many avatars?
