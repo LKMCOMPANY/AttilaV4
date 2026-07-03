@@ -257,7 +257,13 @@ function buildPostUrl(
   tiktokShareUrl: string | null,
 ): string | null {
   if (network === "twitter") {
-    if (twitterSourceUrl) return twitterSourceUrl;
+    // `twitter_post_extras.source_url` is the CLIENT the tweet was posted from
+    // ("Twitter for iPhone", "mobile.twitter.com", "buffer.com"…), NOT a
+    // permalink — Gorgone extracts it from the tweet's `source` anchor. Using
+    // it as the deep-link target opens the X app home and the reply never
+    // lands on the thread. Only trust it if it is actually a status permalink;
+    // otherwise build the canonical URL from handle + id.
+    if (twitterSourceUrl && /\/status\/\d+/.test(twitterSourceUrl)) return twitterSourceUrl;
     if (handle) return `https://twitter.com/${handle}/status/${networkId}`;
     return null;
   }
