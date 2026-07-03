@@ -9,6 +9,7 @@
 
 import { shell, shellSafe, ContainerNotReadyError } from "@/lib/box-api";
 import { JobError } from "./errors";
+import { parseUiNodes, type UiNode } from "./ui-tree";
 
 const ADBKEYBOARD_PACKAGE = "com.android.adbkeyboard";
 const ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME";
@@ -135,6 +136,85 @@ export async function isPackageInstalled(
 ): Promise<boolean> {
   const result = await shell(tunnelHostname, dbId, `pm list packages ${packageName}`);
   return result.message.includes(`package:${packageName}`);
+}
+
+// ---------------------------------------------------------------------------
+// Runtime permissions
+// ---------------------------------------------------------------------------
+
+/**
+ * Pre-grant runtime permissions so the target app never raises a blocking
+ * system dialog ("Allow TikTok to take pictures…") mid-automation. These
+ * dialogs belong to `com.android.permissioncontroller`, steal focus, and
+ * swallow every subsequent tap — they were a top cause of jobs that looked
+ * successful while nothing was posted.
+ *
+ * Best-effort by design: a permission the app doesn't declare (or that isn't
+ * user-grantable on this AOSP build) makes `pm grant` fail harmlessly, so we
+ * use `shellSafe` and never let a grant error abort the job. Verified on
+ * AOSP 13 / box-1 (07/2026): granting CAMERA flips `granted=false → true`.
+ */
+export async function grantAppPermissions(
+  tunnelHostname: string,
+  dbId: string,
+  packageName: string,
+  permissions: readonly string[],
+): Promise<void> {
+  for (const permission of permissions) {
+    await shellSafe(tunnelHostname, dbId, `pm grant ${packageName} ${permission}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Foreground app gate
+// ---------------------------------------------------------------------------
+
+/**
+ * Wait until the target package owns the focused window. This is the TikTok
+ * equivalent of the Twitter `waitForFocus(TweetDetailActivity)` gate: after a
+ * deep link we must confirm the app actually came to the foreground before
+ * driving any tap. Without it the automation acted on the launcher, a splash
+ * screen, or a leftover notification shade — every tap missed and the job was
+ * still reported as done.
+ *
+ * `mCurrentFocus` reads `null` during the cold-start transition, so we reject
+ * both the empty state and any non-target package. Throws on timeout with the
+ * last observed focus so the caller can classify the failure.
+ */
+export async function waitForForegroundApp(
+  tunnelHostname: string,
+  dbId: string,
+  packageName: string,
+  timeoutMs = 15_000,
+): Promise<string> {
+  return poll<string>(
+    () => getCurrentFocus(tunnelHostname, dbId).catch(() => null),
+    (focus) => focus.includes(packageName) && !focus.includes("mCurrentFocus=null"),
+    { timeoutMs, intervalMs: 500, label: `waitForForegroundApp("${packageName}")` },
+  );
+}
+
+/** True when the target package currently owns the focused window. */
+export async function isForegroundApp(
+  tunnelHostname: string,
+  dbId: string,
+  packageName: string,
+): Promise<boolean> {
+  const focus = await getCurrentFocus(tunnelHostname, dbId).catch(() => "");
+  return focus.includes(packageName);
+}
+
+// ---------------------------------------------------------------------------
+// Tap helpers
+// ---------------------------------------------------------------------------
+
+/** Tap a screen coordinate. Thin wrapper for readability at call sites. */
+export async function tap(
+  tunnelHostname: string,
+  dbId: string,
+  point: { x: number; y: number },
+): Promise<void> {
+  await shell(tunnelHostname, dbId, `input tap ${Math.round(point.x)} ${Math.round(point.y)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -295,25 +375,67 @@ export async function waitForFocus(
 // blocking states (login screen, content unavailable, captcha…).
 // ---------------------------------------------------------------------------
 
+const UI_DUMP_ATTEMPTS = 4;
+const UI_DUMP_RETRY_MS = 900;
+
 /**
- * Best-effort `uiautomator dump --compressed`. Returns the raw XML on
- * success, `null` when uiautomator is not in an idle state (typical when
- * a video is playing or an animation is mid-frame). Callers must treat a
- * `null` result as "could not verify" rather than "no match".
+ * `uiautomator dump --compressed` with bounded retry.
+ *
+ * uiautomator refuses to dump while the window is animating or a video is
+ * mid-frame ("could not get idle state"), so a single attempt frequently
+ * returns nothing on TikTok. That flakiness is exactly why the old
+ * single-shot `tryUiDump` returned `null` so often — and why the caller then
+ * (wrongly) treated "couldn't read the screen" as "success". Retrying a few
+ * times turns most of those into a real dump; the split-out `dump` step and
+ * `cat` (instead of `&&`) means a failed dump still lets us read any stale
+ * file rather than masking the outcome.
+ *
+ * Returns the raw XML, or `null` only when every attempt failed. Callers must
+ * treat `null` as "could not verify" — for a success check that means FAILURE,
+ * never an optimistic pass.
+ */
+export async function dumpUiXml(
+  tunnelHostname: string,
+  dbId: string,
+  attempts = UI_DUMP_ATTEMPTS,
+): Promise<string | null> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const result = await shellSafe(
+      tunnelHostname,
+      dbId,
+      "uiautomator dump --compressed /sdcard/ui.xml 2>/dev/null; cat /sdcard/ui.xml 2>/dev/null",
+    );
+    if (result && result.code === 200 && result.message.includes("<hierarchy")) {
+      return result.message;
+    }
+    if (attempt < attempts - 1) await sleep(UI_DUMP_RETRY_MS);
+  }
+  return null;
+}
+
+/**
+ * Parsed variant of {@link dumpUiXml}. Returns the typed node list, or `null`
+ * when the dump could not be captured. Preferred entry point for flows that
+ * reason about on-screen elements (composer open, text landed, dialog present).
+ */
+export async function dumpUiNodes(
+  tunnelHostname: string,
+  dbId: string,
+  attempts = UI_DUMP_ATTEMPTS,
+): Promise<UiNode[] | null> {
+  const xml = await dumpUiXml(tunnelHostname, dbId, attempts);
+  return xml ? parseUiNodes(xml) : null;
+}
+
+/**
+ * Back-compat alias for the legacy name. Same resilient implementation.
+ * @deprecated prefer {@link dumpUiXml} / {@link dumpUiNodes}.
  */
 export async function tryUiDump(
   tunnelHostname: string,
   dbId: string,
 ): Promise<string | null> {
-  const result = await shellSafe(
-    tunnelHostname,
-    dbId,
-    "uiautomator dump --compressed /sdcard/ui.xml > /dev/null 2>&1 && cat /sdcard/ui.xml",
-  );
-  if (!result || result.code !== 200) return null;
-  if (result.message.includes("could not get idle state")) return null;
-  if (!result.message.includes("<hierarchy")) return null;
-  return result.message;
+  return dumpUiXml(tunnelHostname, dbId);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,3 +444,13 @@ export async function tryUiDump(
 // ---------------------------------------------------------------------------
 
 export { shell, shellSafe, screenshot } from "@/lib/box-api";
+// Only the UI-tree helpers the platform modules actually consume are re-exported
+// here (so automation code has a single import surface). Pure/internal helpers
+// like nodeCenter / normalizedIncludes stay private to `ui-tree`.
+export {
+  findCommentEditText,
+  editTextContains,
+  findInterstitialDismiss,
+  isCommentsPanelOpen,
+  countPostedMatches,
+} from "./ui-tree";

@@ -1,5 +1,3 @@
-import type { CampaignPlatform } from "@/types";
-
 /**
  * Single source of truth for the keys we write into
  * `campaign_posts.post_metrics` per platform.
@@ -42,17 +40,6 @@ export const ENGAGEMENT_METRIC_KEYS: readonly EngagementMetricKey[] = [
   ...TWITTER_METRIC_KEYS,
   ...TIKTOK_METRIC_KEYS,
 ] as const;
-
-const KEYS_BY_PLATFORM: Record<CampaignPlatform, readonly EngagementMetricKey[]> = {
-  twitter: TWITTER_METRIC_KEYS,
-  tiktok: TIKTOK_METRIC_KEYS,
-};
-
-export function metricKeysForPlatform(
-  platform: CampaignPlatform,
-): readonly EngagementMetricKey[] {
-  return KEYS_BY_PLATFORM[platform];
-}
 
 /**
  * Sum every numeric engagement metric in a `post_metrics` jsonb blob.

@@ -85,8 +85,20 @@ instead).
 
 This is **not** a screenshot of the post going live — that signal is
 unreliable on X (most-relevant sort, shadow ban, propagation delay). The
-real success signal is `getCurrentFocus()` returning to the tweet detail
+on-device success signal is `getCurrentFocus()` returning to the tweet detail
 state right after the submit tap.
+
+### Off-device cross-check (TikHub) — shadow-ban robust
+
+The focus-return gate confirms the app *accepted* the reply, not that it is
+live. A secondary, non-blocking check (`src/lib/social-verify/tikhub.ts`,
+gated by `TIKHUB_API_KEY`) fetches the **avatar's own** reply timeline
+(`fetch_user_tweet_replies`) and matches on `in_reply_to_status_id_str` /
+text. This is shadow-ban robust: a reply hidden inside the target thread
+still shows on the author's timeline. Run after a successful X job in
+`api/pipeline/execute`; it only annotates logs (confirmed vs
+shadowban-suspected) and never flips the job. Also pre-grants runtime
+permissions (`grantAppPermissions`) so no system dialog blocks the reply.
 
 VMOS caches `/container_api/v1/screenshots/<dbId>` server-side for ~5 s.
 `screenshot()` in `box-api.ts` retries up to 3× when the SHA-256 of the

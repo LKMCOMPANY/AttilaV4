@@ -1,18 +1,6 @@
+// Public entry points consumed outside the pipeline package (the two API
+// routes). Everything else is imported directly from its module — keeping this
+// barrel minimal avoids the dead re-export surface flagged in the audit.
 export { processNext } from "./processor";
-export { applyFilters } from "./filter";
-export { analyzePost } from "./analyst";
-export { writeComment } from "./writer";
-export { selectAvatars } from "./avatar-selector";
 export { executeJob } from "./executor";
 export { uploadProofScreenshot } from "./storage";
-export { generateComments, buildJobRows, getRecentAvatarComments } from "./job-builder";
-export type {
-  PipelinePost,
-  PipelineResult,
-  PipelineTiming,
-  FilterResult,
-  WriterInput,
-  WriterResult,
-  SelectedAvatar,
-  ExecutionResult,
-} from "./types";

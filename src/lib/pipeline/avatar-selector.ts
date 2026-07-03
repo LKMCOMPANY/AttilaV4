@@ -46,8 +46,14 @@ export async function selectAvatars(params: {
 
   const armyAvatarIds = armyLinks.map((l) => l.avatar_id);
 
-  // 2. Load eligible avatars with their device + box
+  // 2. Load eligible avatars with their device + box.
+  //    "Has a real account on this platform" mirrors the operator UI exactly:
+  //    the network toggle is ON *and* credentials carry a handle. The toggle
+  //    alone is not enough — an enabled avatar with no handle has no account
+  //    created/connected, so we must never route a job to it.
   const platformEnabledCol = platform === "twitter" ? "twitter_enabled" : "tiktok_enabled";
+  const platformHandleCol =
+    platform === "twitter" ? "twitter_credentials->>handle" : "tiktok_credentials->>handle";
 
   const { data: avatars } = await supabase
     .from("avatars")
@@ -55,6 +61,8 @@ export async function selectAvatars(params: {
     .in("id", armyAvatarIds)
     .eq("status", "active")
     .eq(platformEnabledCol, true)
+    .not(platformHandleCol, "is", null)
+    .neq(platformHandleCol, "")
     .not("device_id", "is", null)
     .eq("account_id", accountId);
 
@@ -162,5 +170,34 @@ function shuffleArray<T>(arr: T[]): void {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+/**
+ * Tag an avatar as blocked on a platform after an account-level failure
+ * (logged out, suspended, captcha). This is the write-side counterpart to the
+ * `blocked_${platform}` exclusion in `selectAvatars` above: once tagged, the
+ * avatar is skipped by future selection until an operator clears the tag. The
+ * avatar's `status` is deliberately left untouched — blocking is per-platform
+ * and reversible, not a hard deactivation. Idempotent and best-effort.
+ */
+export async function tagAvatarBlocked(
+  supabase: ReturnType<typeof createAdminClient>,
+  avatarId: string,
+  platform: CampaignPlatform,
+): Promise<void> {
+  const tag = `blocked_${platform}`;
+  const { data } = await supabase.from("avatars").select("tags").eq("id", avatarId).single();
+  const tags: string[] = Array.isArray(data?.tags) ? (data.tags as string[]) : [];
+  if (tags.includes(tag)) return;
+
+  const { error } = await supabase
+    .from("avatars")
+    .update({ tags: [...tags, tag] })
+    .eq("id", avatarId);
+  if (error) {
+    pipelineLog("execute", null, "Failed to tag avatar blocked", { avatarId, tag, error: error.message });
+  } else {
+    pipelineLog("execute", null, "Avatar tagged blocked after account-level failure", { avatarId, tag });
   }
 }

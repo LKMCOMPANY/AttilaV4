@@ -30,46 +30,46 @@ The caller (`pipeline/executor` or the CLI script) is responsible for:
 
 ---
 
-## Flow (validated step-by-step)
+## Flow (validated step-by-step, 07/2026)
+
+Every load-bearing step is verified from the UI tree; a step that can't be
+proven aborts with a typed error instead of pressing on.
 
 | Step | Action | What it does |
 |---|---|---|
 | 1 | `isPackageInstalled(com.zhiliaoapp.musically)` | Throws `device_setup_required` if missing |
-| 2 | `wakeDevice()` | WAKEUP + MENU + verify |
-| 3 | `am force-stop com.zhiliaoapp.musically` | Clean cold-start on the target video |
-| 4 | `am start -a VIEW -d <video>` | Deep link routes to native app |
-| 5 | sleep `videoLoad` (8 s) | Cold start + first frame |
-| 6 | `tryUiDump()` + `detectBlockingState()` | Throws `consent_required` / `account_logged_out` / `content_unavailable` if matched |
-| 7 | `screenshot()` → **SOURCE** | Adaptive cache busting via hash retry |
-| 8 | `input tap 970 1500` | Opens the comments panel (right-column comment icon) |
-| 9 | sleep `panelSlide` (2.5 s) | Bottom sheet slide animation |
-| 10 | `input tap 450 2262` | Focuses the comment input field |
-| 11 | `activateAdbKeyboard()` | `pm enable` + `ime enable` + `ime set` + verify |
-| 12 | `input tap 450 2262` | Re-tap — composer steals focus during IME swap |
-| 13 | `typeText(text)` | `am broadcast -a ADB_INPUT_TEXT --es msg "…"` |
-| 14 | `screenshot()` → **PROOF** | Composer + typed text + active ↑ submit button |
-| 15 | `input tap 970 1515` | Submit |
-| 16 | sleep `postSubmit` (4 s) | Network round-trip |
-| 17 | `tryUiDump()` + `isTextStuckInEditText(text)` | Throws `rate_limited` if the typed text is still in an EditText |
-| 18 | `input keyevent KEYCODE_BACK` | Best-effort: collapse the panel |
+| 2 | `grantAppPermissions()` | Pre-grants CAMERA/RECORD_AUDIO/notifications so no system dialog blocks mid-flow |
+| 3 | `wakeDevice()` | WAKEUP + MENU + verify |
+| 4 | `am force-stop` then `am start -a VIEW -d <video> com.zhiliaoapp.musically` | **Package qualifier is required** — without it the intent often lands on the For-You feed / an ad, not the target video |
+| 5 | `waitForForegroundApp(com.zhiliaoapp.musically)` | Gate 1 — TikTok must own the foreground (catches splash/launcher/notification) |
+| 6 | sleep `videoSettle` (8 s) | Right action column only becomes tappable after first frames |
+| 7 | `dumpUiXml()` + `detectBlockingState()` | Throws `consent_required` / `account_logged_out` / `content_unavailable` |
+| 8 | `screenshot()` → **SOURCE** | Evidence only |
+| 9 | `openCommentsPanel()` | Gate 2 — tap comment icon candidates, POLL until the "Comments" sheet or an `EditText` is observed (never re-tap an open panel — that closes it) |
+| 10 | snapshot comment count | Baseline for the post-submit +1 check |
+| 11 | tap field → `activateAdbKeyboard()` → re-tap → `typeText()` | Compose blind (NO dump — a dump collapses the composer) |
+| 12 | `screenshot()` → **PROOF** | Composer + typed text, evidence only |
+| 13 | `input tap` send | Submit |
+| 14 | `verifySubmission()` | Gate 3 — positive confirmation (comment in list OR count +1); `rate_limited` on silent drop; `ui_unexpected` if unreadable |
+| 15 | `input keyevent KEYCODE_BACK` | Best-effort: collapse the panel |
 
-Total typical duration: **~38 s**. The big chunks are the 8 s video
-load and the ~12 s `uiautomator dump` (TikTok rarely reaches the idle
-state required by uiautomator while the video is playing).
+Total typical duration: **~40 s**. Validated live on box-1 (07/2026): confirmed
+publication via count increment on multiple videos; a rapid duplicate correctly
+rejected as `rate_limited`.
 
 ---
 
-## Coordinates (1080 × 2340, FR locale)
+## Coordinates (1080 × 2340)
 
 | Element | Coordinates | Notes |
 |---|---:|---|
-| Comment icon (right action column) | `(970, 1500)` | Speech bubble — opens the comments panel |
-| Comment input field | `(450, 2262)` | Centre of "Ajouter un commentaire" placeholder |
-| Submit button (active ↑) | `(970, 1515)` | Same column as comment icon — only visible while composer is up |
+| Comment icon (right action column) | candidates `(980,1535)`, `(980,1600)`, `(980,1475)` | Y drifts per video (caption length). The video surface has no a11y nodes, so we try candidates in the safe band **between** the like heart (~1360) and the bookmark (~1720) and verify the panel opened. Never higher — tapping the heart likes the video. |
+| Comment input bar | `(540, 2262)` | Bottom-centre "Add a comment" bar; tapping it spawns the real `EditText` |
+| Submit button (active ↑) | `(970, 1515)` | Only clickable once the composer holds text |
 
-⚠️ The submit button is at the same X as the comment icon, just visible
-in a different state. Always tap **after** the composer is open with
-text in the field, otherwise the tap collapses the panel.
+⚠️ Opening is gated by observation, not a blind tap: `openCommentsPanel`
+polls the tree after each candidate tap and stops as soon as the "Comments"
+sheet / an `EditText` appears — re-tapping an already-open panel closes it.
 
 ---
 
@@ -87,21 +87,34 @@ would falsely flag the success as failure.
 
 ---
 
-## Submit verification — best-effort
+## Submit verification — positive confirmation (rewritten 07/2026)
 
-TikTok keeps the composer open after a successful submit (only the field
-is cleared). We don't get a focus change like X. The verification path is:
+> The old "best-effort" check trusted the submit whenever it *couldn't* read
+> the tree. On TikTok that dump fails constantly, so ~90% of a live campaign's
+> "done" jobs had posted nothing (splash screens, logged-out accounts,
+> permission pop-ups). The rule is now inverted: **"cannot verify" = FAILURE,
+> never success**, and success needs a POSITIVE signal.
 
-1. After the submit tap and `postSubmit` sleep, `tryUiDump()` (compressed).
-2. If the dump succeeds and the typed text is still present in an
-   `EditText` node → throw `rate_limited`.
-3. If the dump fails (uiautomator idle state lost — common on TikTok)
-   or no `EditText` is exposed (Compose-style composer compressed) → trust
-   the submit and return success.
+Screenshots are evidence only — never an input to the success decision (a
+laggy frame must not create a false `done`). Confirmation comes from the UI
+accessibility tree:
 
-This is intentionally best-effort: we only flag a positive failure
-signal, never a missing-evidence one. False negatives on the verification
-are caught by operators monitoring the comment count on the video.
+1. Snapshot the comment count from the panel title *before* the send tap.
+2. After the send tap, poll the tree (up to `SUBMIT_POLL_ATTEMPTS`) for a
+   POSITIVE signal:
+   - our comment rendered as a **posted item** in the list — any node that is
+     NOT the input `EditText` whose text matches (definitive), or
+   - the **comment count incremented** by ≥1 while our text is no longer in an
+     `EditText` (corroborating).
+3. Typed text still sitting in an `EditText` → `rate_limited` (hard negative).
+4. TikTok left the foreground (permission dialog, launcher, login) → failure.
+5. Field cleared but neither positive signal after the full poll → treat as a
+   silent drop / throttle → `rate_limited`. A tree we could never read →
+   `ui_unexpected`. Never an optimistic pass.
+
+Note the composer phase runs with **no `uiautomator dump`** between focusing the
+field and the send tap — a dump collapses TikTok's composer and drops input
+focus (verified on box-1). All verification is deferred to after the submit.
 
 ---
 

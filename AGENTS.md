@@ -50,9 +50,14 @@ regress on them:
    open with text typed (BEFORE the submit tap).** Don't re-deeplink the
    post just to capture a "proof" — the screenshot endpoint is cached for
    ~5 s server-side and you'll get the cold-start splash.
-6. **Verify success actively, never optimistically.** Twitter: focus must
-   return to `TweetDetailActivity`. TikTok: typed text must no longer be in
-   any `EditText` node.
+6. **Verify success from the UI tree with a POSITIVE signal — never
+   optimistically, never from a screenshot.** "Cannot verify" = failure.
+   Twitter: focus must return to `TweetDetailActivity` (+ optional TikHub
+   timeline cross-check, shadow-ban robust). TikTok: our comment must appear
+   as a posted item in the list OR the comment count must increment; text
+   still stuck in an `EditText`, or an unreadable tree, is a failure. The
+   compose phase runs with NO `uiautomator dump` (a dump collapses TikTok's
+   composer). See `TIKTOK-AUTOMATE.md` / `X-AUTOMATE.md`.
 7. **Always throw a `JobError` with a typed category for known failure
    modes** (`account_logged_out`, `content_unavailable`, etc.). This is
    what the operator sees as a coloured badge in the automator panel —

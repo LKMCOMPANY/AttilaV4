@@ -112,17 +112,22 @@ async function getArmyAvatarCounts(
 
   const { data, error } = await supabase
     .from("avatar_armies")
-    .select("avatar:avatars!avatar_id(id, status, twitter_enabled, tiktok_enabled)")
+    .select(
+      "avatar:avatars!avatar_id(id, status, twitter_enabled, tiktok_enabled, twitter_credentials, tiktok_credentials)"
+    )
     .in("army_id", armyIds);
 
   if (error) throw new Error(`avatar counts: ${error.message}`);
   if (!data) return empty;
 
+  type Creds = { handle?: string } | null;
   type AvatarRow = {
     id: string;
     status: string;
     twitter_enabled: boolean;
     tiktok_enabled: boolean;
+    twitter_credentials: Creds;
+    tiktok_credentials: Creds;
   };
   const seen = new Map<string, AvatarRow>();
   for (const row of data as unknown as { avatar: AvatarRow | null }[]) {
@@ -130,6 +135,11 @@ async function getArmyAvatarCounts(
       seen.set(row.avatar.id, row.avatar);
     }
   }
+
+  // Mirror `selectAvatars` exactly: an avatar counts on a platform only when
+  // the toggle is ON *and* credentials carry a handle. Counting toggle-only
+  // avatars would overstate runnable capacity vs what the pipeline will pick.
+  const hasHandle = (creds: Creds): boolean => !!creds?.handle && creds.handle.trim().length > 0;
 
   const counts: AvatarCountsByPlatform = {
     twitter: { total: 0, active: 0 },
@@ -139,7 +149,8 @@ async function getArmyAvatarCounts(
     for (const platform of ["twitter", "tiktok"] as const) {
       const enabled =
         platform === "twitter" ? avatar.twitter_enabled : avatar.tiktok_enabled;
-      if (!enabled) continue;
+      const creds = platform === "twitter" ? avatar.twitter_credentials : avatar.tiktok_credentials;
+      if (!enabled || !hasHandle(creds)) continue;
       counts[platform].total++;
       if (avatar.status === "active") counts[platform].active++;
     }

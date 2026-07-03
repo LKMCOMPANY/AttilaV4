@@ -47,10 +47,17 @@ export async function POST(req: NextRequest) {
 
   const targets = idle.filter((d) => !busyIds.has(d.id));
   let reaped = 0;
+  // Boxes whose tunnel is down this cycle. Once one call to a box fails at the
+  // transport layer (Cloudflare 5xx / timeout) we skip the rest of that box's
+  // devices instead of retrying each one — that per-device retry storm was
+  // filling the logs with hundreds of identical 530s every couple of minutes.
+  const unreachableBoxes = new Set<string>();
 
   for (const d of targets) {
     const box = d.boxes as unknown as { tunnel_hostname: string } | null;
     if (!box?.tunnel_hostname) continue;
+    if (unreachableBoxes.has(d.box_id)) continue;
+
     try {
       await stopContainer(box.tunnel_hostname, d.db_id);
       await supabase
@@ -61,10 +68,15 @@ export async function POST(req: NextRequest) {
       reaped++;
       console.log(`[Reaper] stopped idle device ${d.db_id} on box ${d.box_id}`);
     } catch (err) {
-      console.error(
-        `[Reaper] failed to stop ${d.db_id}:`,
-        err instanceof Error ? err.message : err,
-      );
+      if (isBoxUnreachable(err)) {
+        unreachableBoxes.add(d.box_id);
+        await markBoxOffline(supabase, d.box_id, box.tunnel_hostname);
+      } else {
+        console.error(
+          `[Reaper] failed to stop ${d.db_id}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
     }
   }
 
@@ -72,5 +84,30 @@ export async function POST(req: NextRequest) {
     action: reaped > 0 ? "reaped" : "idle",
     reaped,
     candidates: targets.length,
+    unreachableBoxes: unreachableBoxes.size,
   });
+}
+
+/**
+ * A box is "unreachable" when the tunnel origin is down — Cloudflare returns
+ * 5xx (commonly 530), or the request times out / DNS fails. These are box-wide,
+ * not device-specific, so the reaper should skip the whole box for this cycle.
+ */
+function isBoxUnreachable(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b(5\d\d)\b/.test(msg) || /timeout|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|fetch failed/i.test(msg);
+}
+
+/**
+ * Reflect an unreachable box in the dashboard and log it once per cycle
+ * instead of once per orphaned device. `last_heartbeat` is left untouched so
+ * the gateway sync remains the source of truth for recovery.
+ */
+async function markBoxOffline(
+  supabase: ReturnType<typeof createAdminClient>,
+  boxId: string,
+  tunnelHostname: string,
+): Promise<void> {
+  console.warn(`[Reaper] box ${tunnelHostname} unreachable — skipping its idle devices this cycle`);
+  await supabase.from("boxes").update({ status: "offline" }).eq("id", boxId);
 }

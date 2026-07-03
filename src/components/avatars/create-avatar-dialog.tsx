@@ -11,7 +11,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { ChevronLeft, ChevronRight, Loader2, Check } from "lucide-react";
-import { createAvatar, type CreateAvatarInput } from "@/app/actions/avatars";
+import { createAvatar } from "@/app/actions/avatars";
+import type { CreateAvatarInput } from "@/app/actions/_avatar-schemas";
 import { StepCountry } from "./steps/step-country";
 import { StepIdentity } from "./steps/step-identity";
 import { StepPersonality } from "./steps/step-personality";

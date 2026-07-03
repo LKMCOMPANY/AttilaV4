@@ -324,8 +324,15 @@ Un avatar est eligible si **toutes** ces conditions sont remplies :
 1. **Membre de l'army** de la campagne (`avatar_armies`)
 2. **Status `active`** (pas `inactive` ou `suspended`)
 3. **Plateforme activee** (`twitter_enabled` ou `tiktok_enabled` selon le post)
+   **ET credentials présents** (`{platform}_credentials->>'handle'` non vide) —
+   parité exacte avec la définition Operator d'un compte « créé et connecté ».
+   Le toggle seul ne suffit pas : un avatar activé sans handle n'a pas de compte
+   et ne doit jamais recevoir de job.
 4. **Device assigne** (`device_id IS NOT NULL`)
-5. **Pas de tag `blocked_{platform}`** (avatar qui a echoue recemment)
+5. **Pas de tag `blocked_{platform}`** — posé automatiquement par le gateway sur
+   un échec account-level (`account_logged_out` / `account_blocked` /
+   `account_captcha`) via `tagAvatarBlocked`, levé manuellement par l'opérateur.
+   Le `status` de l'avatar n'est pas touché (blocage par plateforme, réversible).
 6. **Pas de job en cours** : aucun `campaign_jobs` avec `status IN ('ready', 'executing')` pour cet avatar
 7. **Rate limit horaire** : nombre de jobs dans la derniere heure < `capacity_params.max_responses_per_hour`
 8. **Rate limit journalier** : nombre de jobs dans les dernieres 24h < `capacity_params.max_responses_per_day`
@@ -580,22 +587,37 @@ Patterns:
   tap field → `activateAdbKeyboard` → re-tap → `typeText` → PROOF → submit
   → verify field is empty.
 
-### Vérification du succès — pas de heuristique
+### Vérification du succès — confirmation positive (refonte 07/2026)
 
-L'ancien filet `detectIdenticalScreenshots` (compare byte length source vs
-proof) a été supprimé : ce n'était qu'une heuristique fragile qui produisait
-des faux négatifs (proof légitimement plus petit) et passait les vrais
-échecs (deux captures différentes mais ni l'une ni l'autre ne montrait le
-post). Remplacé par :
+Règle unique : **le screenshot n'est jamais une entrée de la décision** (un lag
+d'image ne doit pas créer un faux `done`) ; la décision vient de l'arbre
+d'accessibilité (`uiautomator dump`), et « je ne peux pas vérifier » = **échec**,
+jamais succès. Un audit de campagne a montré que l'ancienne heuristique TikTok
+(`isTextStuckInEditText` avec dump `null` traité comme succès) produisait ~90%
+de faux `done`.
 
-- **Twitter** : `getCurrentFocus()` après tap submit. Le composer X est un
-  fragment dans `TweetDetailActivity` ; s'il est encore ouvert, le focus est
-  toujours sur la même activity mais le tap submit a généralement causé un
-  popup d'erreur. La vérification est complétée par le UI dump `tryUiDump`
-  pour matcher des patterns d'erreur spécifiques.
-- **TikTok** : `tryUiDump()` puis `isTextStuckInEditText(text)` — on cible
-  uniquement les `EditText` (le commentaire posté apparaît aussi dans la
-  liste rendue en `TextView`, ce qui causerait un faux positif).
+- **TikTok** : après l'envoi, on exige un signal POSITIF — notre commentaire
+  présent comme item posté dans la liste (`postedCommentPresent`, nœud non-
+  `EditText`) OU le compteur de commentaires incrémenté (N→N+1). Texte encore
+  dans l'`EditText` → `rate_limited`. Champ vidé sans signal positif → drop
+  silencieux → `rate_limited`. Arbre illisible → `ui_unexpected`. La phase de
+  saisie tourne **sans dump** (un dump referme le composer). Voir
+  `TIKTOK-AUTOMATE.md`.
+- **Twitter** : `getCurrentFocus()` doit revenir sur `TweetDetailActivity` après
+  l'envoi (gate on-device). En secondaire non bloquant, un cross-check TikHub
+  (`fetch_user_tweet_replies` sur le handle de l'avatar) confirme la présence de
+  la réponse sur la timeline propre de l'avatar — robuste au shadow-ban (une
+  réponse masquée dans le thread cible reste visible sur la timeline de
+  l'auteur). Voir `src/lib/social-verify/tikhub.ts`.
+
+### Preuve de publication off-device (TikHub) — secondaire
+
+`src/lib/social-verify/tikhub.ts` fournit une couche secondaire, jamais un gate
+bloquant (un scraper tiers peut manquer un post réellement publié). Activée par
+`TIKHUB_API_KEY`. Deux usages : cross-check Twitter anti shadow-ban (ci-dessus)
+et analytics de campagne a posteriori (métriques tweet, santé de compte). TikTok
+n'y est pas fiable pour la validation (le scrape de commentaires dépend de la
+vidéo/région) — on s'appuie sur la confirmation on-device.
 
 ### Reporting d'erreur — JobError
 

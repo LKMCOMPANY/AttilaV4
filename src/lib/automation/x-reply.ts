@@ -21,17 +21,31 @@ import {
   sleep,
   wakeDevice,
   isPackageInstalled,
+  grantAppPermissions,
   activateAdbKeyboard,
   typeText,
   getCurrentFocus,
   waitForFocus,
-  tryUiDump,
+  dumpUiXml,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
 
 const X_PACKAGE = "com.twitter.android";
 const TWEET_DETAIL_FOCUS_HINT = "TweetDetailActivity";
 const COMPOSER_FOCUS_HINT = "ComposerActivity";
+
+/**
+ * Pre-granted so X never raises a focus-stealing runtime permission dialog
+ * (photos/camera/notifications) mid-reply. Best-effort — see
+ * `grantAppPermissions`.
+ */
+const X_PERMISSIONS = [
+  "android.permission.CAMERA",
+  "android.permission.RECORD_AUDIO",
+  "android.permission.POST_NOTIFICATIONS",
+  "android.permission.READ_MEDIA_IMAGES",
+  "android.permission.READ_MEDIA_VIDEO",
+] as const;
 
 /**
  * Blocking states detected from the UI tree right after the tweet loads.
@@ -149,6 +163,9 @@ export async function postReply(
       );
     }
 
+    // Pre-grant so a runtime permission dialog never blocks the reply flow.
+    await grantAppPermissions(tunnelHostname, dbId, X_PACKAGE, X_PERMISSIONS);
+
     await wakeDevice(tunnelHostname, dbId);
 
     // Force-stop X to guarantee a clean entry point — avoids inheriting a
@@ -164,7 +181,7 @@ export async function postReply(
     } catch {
       // The intent never reached the tweet detail screen. Either the app is
       // stuck on a login wall or the URL routes to an error page.
-      const ui = await tryUiDump(tunnelHostname, dbId);
+      const ui = await dumpUiXml(tunnelHostname, dbId);
       const blocker = ui ? detectBlockingState(ui) : null;
       if (blocker) throw blocker;
       throw new JobError(
@@ -176,7 +193,7 @@ export async function postReply(
 
     // Detect blocking states (login wall, deleted post, suspended account)
     // before we start interacting — better to fail fast with a clear cause.
-    const preUi = await tryUiDump(tunnelHostname, dbId);
+    const preUi = await dumpUiXml(tunnelHostname, dbId);
     if (preUi) {
       const blocker = detectBlockingState(preUi);
       if (blocker) throw blocker;
