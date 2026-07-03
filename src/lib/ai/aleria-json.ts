@@ -28,13 +28,52 @@ export function parseAleriaJSON<T = unknown>(content: string): T {
     .replace(/\s*```$/i, "")
     .trim();
 
+  // Aleria sometimes appends prose after the JSON object (e.g. a closing
+  // explanation), which makes a strict `JSON.parse` of the whole string throw
+  // "Unexpected non-whitespace character after JSON". Parse the first balanced
+  // JSON object/array instead so trailing commentary never loses a post.
+  const candidate = extractFirstJsonValue(cleaned) ?? cleaned;
+
   try {
-    return JSON.parse(cleaned) as T;
+    return JSON.parse(candidate) as T;
   } catch (err) {
     const preview = cleaned.slice(0, 200).replace(/\s+/g, " ");
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Aleria JSON parse failed (${message}): ${preview}`);
   }
+}
+
+/**
+ * Return the first balanced JSON object/array substring in `text`, or null if
+ * none. Scans with brace/bracket depth while respecting string literals and
+ * escapes, so braces inside string values don't confuse the matcher.
+ */
+function extractFirstJsonValue(text: string): string | null {
+  const start = text.search(/[{[]/);
+  if (start === -1) return null;
+
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null; // unbalanced — let the caller surface the parse error
 }
 
 /**
