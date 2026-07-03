@@ -14,10 +14,11 @@ import { buildAnalystSystemPrompt, buildAnalystUserPrompt } from "./prompts";
 const ANALYST_TIMEOUT_MS = Number(process.env.ANALYST_TIMEOUT_MS ?? 90_000);
 
 // aleria-vl is a reasoner: `reasoning_content` counts against the completion
-// budget, and image reasoning runs long. In prod, 4000 starved ~20% of vision
-// calls into the text-only fallback (an extra 90s round-trip each); 6000
-// matches the writer's ceiling and lets long chains finish with the image.
-const ANALYST_MAX_TOKENS = 6000;
+// budget, and image reasoning runs long. Prod starvation rates ("empty
+// content" → text-only fallback, an extra round-trip each): ~20% @ 4000,
+// ~17% @ 6000. 8000 buys the long tail; genuinely runaway chains still get
+// cut and recovered by the fallback.
+const ANALYST_MAX_TOKENS = 8000;
 
 /**
  * Analyze a post and decide: relevant? how many avatars?
