@@ -25,7 +25,8 @@ import {
   activateAdbKeyboard,
   typeText,
   getCurrentFocus,
-  waitForFocus,
+  waitForSystemReady,
+  relaunchUntilFocus,
   dumpUiXml,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
@@ -112,13 +113,15 @@ const COORDS = {
 // whole flow look natural even when the cache cooperates.
 const TIMING = {
   afterForceStop: 800,
+  systemReadyMs: 30_000,     // wait for launcher to own mCurrentFocus after boot
   beforeSourceShot: 1800,    // simulate reading the tweet
   composerOpen: 1500,
   afterImeSwitch: 800,
   afterType: 2000,           // reread before sending
   beforeSubmit: 1200,        // pause before the decisive tap
   postSubmit: 4000,
-  focusOpenTimeoutMs: 15_000,
+  focusOpenTimeoutMs: 15_000, // per deep-link attempt
+  launchAttempts: 3,          // re-fire the deep link up to 3× before failing
 } as const;
 
 export interface ReplyResult {
@@ -168,26 +171,40 @@ export async function postReply(
 
     await wakeDevice(tunnelHostname, dbId);
 
+    // Wait for the window system to settle onto a real focused window before
+    // deep-linking — on a loaded host `boot_completed` fires while services
+    // are still starting and the launch gets swallowed (see tiktok-reply).
+    await waitForSystemReady(tunnelHostname, dbId, TIMING.systemReadyMs);
+
     // Force-stop X to guarantee a clean entry point — avoids inheriting a
     // stale composer or an unrelated tweet from a prior interrupted job.
     await shell(tunnelHostname, dbId, `am force-stop ${X_PACKAGE}`);
     await sleep(TIMING.afterForceStop);
 
-    // Open the tweet via deep link — Android routes x.com URLs to the app.
-    await shell(tunnelHostname, dbId, `am start -a android.intent.action.VIEW -d ${tweetUrl}`);
-
-    try {
-      await waitForFocus(tunnelHostname, dbId, TWEET_DETAIL_FOCUS_HINT, TIMING.focusOpenTimeoutMs);
-    } catch {
-      // The intent never reached the tweet detail screen. Either the app is
-      // stuck on a login wall or the URL routes to an error page.
+    // Open the tweet via deep link and confirm the tweet-detail screen owns
+    // the focus, re-firing the (cheap) intent if a loaded box swallowed the
+    // first launch — cheaper than failing the job and cold-restarting (~120s).
+    const deepLink = `am start -a android.intent.action.VIEW -d ${tweetUrl}`;
+    const opened = await relaunchUntilFocus(
+      tunnelHostname,
+      dbId,
+      deepLink,
+      TWEET_DETAIL_FOCUS_HINT,
+      {
+        attempts: TIMING.launchAttempts,
+        perAttemptMs: TIMING.focusOpenTimeoutMs,
+        onRetry: (n) => xLog(dbId, `tweet detail not open — re-firing deep link (attempt ${n + 1})`),
+      },
+    );
+    if (!opened) {
+      // Either the app is stuck on a login wall / error page, or the launch
+      // never took. Classify a blocker; otherwise fail retryable (pre-compose).
       const ui = await dumpUiXml(tunnelHostname, dbId);
       const blocker = ui ? detectBlockingState(ui) : null;
       if (blocker) throw blocker;
-      // Pre-compose: nothing typed yet, safe for the executor to retry.
       throw new JobError(
         "app_not_ready",
-        `Tweet detail did not open within ${TIMING.focusOpenTimeoutMs / 1000}s after deep link`,
+        `Tweet detail did not open after ${TIMING.launchAttempts} deep-link attempts`,
       );
     }
     await sleep(TIMING.beforeSourceShot); // give content a beat to render

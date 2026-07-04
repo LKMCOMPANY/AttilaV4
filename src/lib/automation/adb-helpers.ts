@@ -169,31 +169,6 @@ export async function grantAppPermissions(
 // Foreground app gate
 // ---------------------------------------------------------------------------
 
-/**
- * Wait until the target package owns the focused window. This is the TikTok
- * equivalent of the Twitter `waitForFocus(TweetDetailActivity)` gate: after a
- * deep link we must confirm the app actually came to the foreground before
- * driving any tap. Without it the automation acted on the launcher, a splash
- * screen, or a leftover notification shade — every tap missed and the job was
- * still reported as done.
- *
- * `mCurrentFocus` reads `null` during the cold-start transition, so we reject
- * both the empty state and any non-target package. Throws on timeout with the
- * last observed focus so the caller can classify the failure.
- */
-export async function waitForForegroundApp(
-  tunnelHostname: string,
-  dbId: string,
-  packageName: string,
-  timeoutMs = 15_000,
-): Promise<string> {
-  return poll<string>(
-    () => getCurrentFocus(tunnelHostname, dbId).catch(() => null),
-    (focus) => focus.includes(packageName) && !focus.includes("mCurrentFocus=null"),
-    { timeoutMs, intervalMs: 500, label: `waitForForegroundApp("${packageName}")` },
-  );
-}
-
 /** True when the target package currently owns the focused window. */
 export async function isForegroundApp(
   tunnelHostname: string,
@@ -368,6 +343,69 @@ export async function waitForFocus(
     (focus) => focus.includes(substring),
     { timeoutMs, intervalMs: 500, label: `waitForFocus("${substring}")` },
   );
+}
+
+/**
+ * Wait until the window system has settled onto a REAL focused window (the
+ * launcher/home), i.e. `mCurrentFocus` names a `Window{…}` rather than `null`.
+ *
+ * Right after `sys.boot_completed=1` a loaded host is still starting system
+ * services and `mCurrentFocus` reads `null` for a while. Firing a deep link
+ * into that window race makes the target app fail to reach the foreground
+ * (verified on box-1: deep link fired pre-settle → app never foregrounds in
+ * 40s; fired once `mCurrentFocus` is the launcher → foreground in ~5s). Gating
+ * on a real focused window makes the launch adapt to the box's actual speed
+ * instead of a fixed sleep.
+ *
+ * Best-effort: returns `false` on timeout rather than throwing — the caller's
+ * launch-retry loop is the real backstop.
+ */
+export async function waitForSystemReady(
+  tunnelHostname: string,
+  dbId: string,
+  timeoutMs = 30_000,
+): Promise<boolean> {
+  try {
+    await poll<string>(
+      () => getCurrentFocus(tunnelHostname, dbId).catch(() => null),
+      (focus) => focus.includes("Window{") && !focus.includes("mCurrentFocus=null"),
+      { timeoutMs, intervalMs: 1000, label: "waitForSystemReady" },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fire a deep link and confirm the target window reaches the foreground,
+ * re-firing the (cheap) `am start` if it doesn't within a per-attempt budget.
+ *
+ * On a loaded host the first launch can be swallowed while the system settles;
+ * re-firing reliably lands it — far cheaper than failing the whole job and
+ * cold-restarting the container (~120s on a slow box). Returns `true` once
+ * `focusSubstring` owns `mCurrentFocus`, `false` if every attempt timed out
+ * (the caller then classifies a blocker or fails as retryable).
+ */
+export async function relaunchUntilFocus(
+  tunnelHostname: string,
+  dbId: string,
+  deepLinkCmd: string,
+  focusSubstring: string,
+  opts: { attempts?: number; perAttemptMs?: number; onRetry?: (attempt: number) => void } = {},
+): Promise<boolean> {
+  const attempts = opts.attempts ?? 3;
+  const perAttemptMs = opts.perAttemptMs ?? 25_000;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    await shell(tunnelHostname, dbId, deepLinkCmd);
+    try {
+      await waitForFocus(tunnelHostname, dbId, focusSubstring, perAttemptMs);
+      return true;
+    } catch {
+      if (attempt < attempts) opts.onRetry?.(attempt);
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------

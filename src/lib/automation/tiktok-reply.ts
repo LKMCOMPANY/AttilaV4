@@ -40,11 +40,12 @@ import {
   wakeDevice,
   isPackageInstalled,
   grantAppPermissions,
-  waitForForegroundApp,
   isForegroundApp,
   activateAdbKeyboard,
   typeText,
   tap,
+  waitForSystemReady,
+  relaunchUntilFocus,
   dumpUiXml,
   dumpUiNodes,
   parseUiNodes,
@@ -96,7 +97,10 @@ const COMMENT_BUTTON_CANDIDATES = [
 
 const TIMING = {
   afterForceStop: 800,
-  foregroundTimeoutMs: 20_000, // cold start to MainActivity (~4s observed) + margin
+  systemReadyMs: 30_000,       // wait for the launcher to own mCurrentFocus after boot
+  foregroundTimeoutMs: 22_000, // per deep-link attempt (warm foregrounds in ~5s;
+                               // a loaded cold box needs the margin + a re-fire)
+  launchAttempts: 3,           // re-fire the deep link up to 3× before failing
   videoSettle: 8000,           // right action column only becomes tappable after
                                // the first frames load (~8s measured on box-1)
   panelSettle: 1800,           // comments bottom-sheet slide
@@ -238,26 +242,44 @@ export async function postTikTokComment(
 
     await wakeDevice(tunnelHostname, dbId);
 
+    // Gate 0 — wait for the window system to settle onto a real focused window
+    // before firing the deep link. On a loaded host `sys.boot_completed=1`
+    // fires while services are still starting and `mCurrentFocus` is null;
+    // deep-linking into that race makes TikTok never reach the foreground.
+    await waitForSystemReady(tunnelHostname, dbId, TIMING.systemReadyMs);
+
     // Force-stop guarantees the deep link cold-starts on the target video
     // instead of resuming a stale session on a different feed item.
     await shell(tunnelHostname, dbId, `am force-stop ${TIKTOK_PACKAGE}`);
     await sleep(TIMING.afterForceStop);
 
-    // Route the deep link explicitly to TikTok (the trailing package). Without
-    // it the intent occasionally resolves to the For-You feed or an ad instead
-    // of the target video, and every subsequent tap then acts on the wrong
-    // screen. Verified on box-1 (07/2026): the package qualifier lands on the
-    // exact video detail.
-    await shell(
+    // Gate 1 — route the deep link explicitly to TikTok (trailing package, so
+    // the intent lands on the exact video detail, not the FYP) and confirm
+    // TikTok owns the foreground. On a slow/loaded box the first `am start` is
+    // sometimes swallowed while the system settles, so we re-fire the (cheap)
+    // deep link a few times before giving up — far cheaper than failing the
+    // whole job and cold-restarting the container. Validated on box-1 (07/2026).
+    const deepLink = `am start -a android.intent.action.VIEW -d ${videoUrl} ${TIKTOK_PACKAGE}`;
+    const foregrounded = await relaunchUntilFocus(
       tunnelHostname,
       dbId,
-      `am start -a android.intent.action.VIEW -d ${videoUrl} ${TIKTOK_PACKAGE}`,
+      deepLink,
+      TIKTOK_PACKAGE,
+      {
+        attempts: TIMING.launchAttempts,
+        perAttemptMs: TIMING.foregroundTimeoutMs,
+        onRetry: (n) => ttLog(dbId, `TikTok not foreground — re-firing deep link (attempt ${n + 1})`),
+      },
     );
-
-    // Gate 1 — TikTok must actually own the foreground. Without this the old
-    // flow tapped the launcher / a splash / a notification shade and still
-    // reported success.
-    await ensureTikTokForeground(tunnelHostname, dbId);
+    if (!foregrounded) {
+      const xml = await dumpUiXml(tunnelHostname, dbId);
+      const blocker = xml ? detectBlockingState(xml) : null;
+      if (blocker) throw blocker;
+      throw new JobError(
+        "app_not_ready",
+        `TikTok did not reach the foreground after ${TIMING.launchAttempts} deep-link attempts`,
+      );
+    }
     await sleep(TIMING.videoSettle);
 
     // Gate 2 — fail fast on a known blocking screen (consent, logged out,
@@ -341,35 +363,6 @@ export async function postTikTokComment(
 // ---------------------------------------------------------------------------
 // Flow steps — each throws a typed JobError on an unrecoverable state
 // ---------------------------------------------------------------------------
-
-/**
- * Wait for TikTok to own the foreground after the deep link. On timeout, dump
- * once to classify *why* (login wall, consent, unavailable) before giving up
- * with a generic `ui_unexpected`.
- */
-async function ensureTikTokForeground(
-  tunnelHostname: string,
-  dbId: string,
-): Promise<void> {
-  try {
-    await waitForForegroundApp(
-      tunnelHostname,
-      dbId,
-      TIKTOK_PACKAGE,
-      TIMING.foregroundTimeoutMs,
-    );
-  } catch {
-    const xml = await dumpUiXml(tunnelHostname, dbId);
-    const blocker = xml ? detectBlockingState(xml) : null;
-    if (blocker) throw blocker;
-    // Nothing typed yet — a slow cold start (CPU contention right after the
-    // container boots) is the common cause, and a later retry usually lands.
-    throw new JobError(
-      "app_not_ready",
-      `TikTok did not reach the foreground within ${TIMING.foregroundTimeoutMs / 1000}s of the deep link`,
-    );
-  }
-}
 
 /**
  * Open the comments panel and PROVE it is up (an EditText or the "Comments"

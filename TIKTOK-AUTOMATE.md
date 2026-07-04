@@ -40,8 +40,8 @@ proven aborts with a typed error instead of pressing on.
 | 1 | `isPackageInstalled(com.zhiliaoapp.musically)` | Throws `device_setup_required` if missing |
 | 2 | `grantAppPermissions()` | Pre-grants CAMERA/RECORD_AUDIO/notifications so no system dialog blocks mid-flow |
 | 3 | `wakeDevice()` | WAKEUP + MENU + verify |
-| 4 | `am force-stop` then `am start -a VIEW -d <video> com.zhiliaoapp.musically` | **Package qualifier is required** — without it the intent often lands on the For-You feed / an ad, not the target video |
-| 5 | `waitForForegroundApp(com.zhiliaoapp.musically)` | Gate 1 — TikTok must own the foreground (catches splash/launcher/notification) |
+| 3b | `waitForSystemReady()` | Gate 0 — wait until the launcher owns `mCurrentFocus` (a real `Window{…}`, not `null`). On a loaded host `boot_completed` fires while services still start; deep-linking into that race makes the app never foreground |
+| 4 | `am force-stop`, then `relaunchUntilFocus(am start -a VIEW -d <video> com.zhiliaoapp.musically)` | **Package qualifier required** (else the intent lands on the For-You feed). Gate 1 — fire the deep link and confirm TikTok owns the foreground; a loaded/slow box sometimes swallows the first launch, so re-fire the cheap `am start` up to 3× (22 s each) before failing `app_not_ready`. Far cheaper than failing → cold-restarting (~120 s on a slow box). Validated on box-1 (07/2026) |
 | 6 | sleep `videoSettle` (8 s) | Right action column only becomes tappable after first frames |
 | 7 | `dumpUiXml()` + `detectBlockingState()` | Throws `consent_required` / `account_logged_out` / `content_unavailable` |
 | 8 | `screenshot()` → **SOURCE** | Evidence only |
