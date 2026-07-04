@@ -27,6 +27,7 @@ import {
   getCurrentFocus,
   waitForSystemReady,
   relaunchUntilFocus,
+  androidDeepLink,
   dumpUiXml,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
@@ -184,7 +185,9 @@ export async function postReply(
     // Open the tweet via deep link and confirm the tweet-detail screen owns
     // the focus, re-firing the (cheap) intent if a loaded box swallowed the
     // first launch — cheaper than failing the job and cold-restarting (~120s).
-    const deepLink = `am start -a android.intent.action.VIEW -d ${tweetUrl}`;
+    // `androidDeepLink` canonicalises + quotes the url (drops any `?…` query
+    // that would split the shell command on `&`).
+    const deepLink = androidDeepLink(tweetUrl);
     const opened = await relaunchUntilFocus(
       tunnelHostname,
       dbId,

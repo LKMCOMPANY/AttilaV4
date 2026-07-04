@@ -378,6 +378,33 @@ export async function waitForSystemReady(
 }
 
 /**
+ * Build a safe `am start -a VIEW` deep-link command.
+ *
+ * Two problems this solves, both proven live on box-1 (07/2026):
+ *   1. Gorgone stores TikTok SHARE urls with tracking query params
+ *      (`?_r=1&u_code=…&source=h5_m`). Passed raw to the VMOS shell the `&`
+ *      splits the command — the url is truncated at the first `&` and the
+ *      trailing package qualifier is lost, so the intent lands on the For-You
+ *      feed, not the target video (the comment panel then never opens).
+ *   2. Even parsed whole, a share url with `u_code`/`source=h5_m` makes TikTok
+ *      redirect to the FYP rather than the specific video.
+ * So we deep-link to the CANONICAL url (origin + path, query/fragment dropped
+ * — the video/tweet id lives in the path) and single-quote it. A clean
+ * canonical url foregrounds the target in ~5s (measured); the share url fails.
+ */
+export function androidDeepLink(url: string, packageName?: string): string {
+  let target = url;
+  try {
+    const u = new URL(url);
+    target = u.origin + u.pathname;
+  } catch {
+    // Not a parseable URL — fall back to the raw value (still quoted below).
+  }
+  const quoted = `'${target.replace(/'/g, "'\\''")}'`;
+  return `am start -a android.intent.action.VIEW -d ${quoted}${packageName ? ` ${packageName}` : ""}`;
+}
+
+/**
  * Fire a deep link and confirm the target window reaches the foreground,
  * re-firing the (cheap) `am start` if it doesn't within a per-attempt budget.
  *

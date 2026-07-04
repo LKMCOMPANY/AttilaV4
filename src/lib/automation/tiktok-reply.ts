@@ -46,6 +46,7 @@ import {
   tap,
   waitForSystemReady,
   relaunchUntilFocus,
+  androidDeepLink,
   dumpUiXml,
   dumpUiNodes,
   parseUiNodes,
@@ -255,11 +256,14 @@ export async function postTikTokComment(
 
     // Gate 1 — route the deep link explicitly to TikTok (trailing package, so
     // the intent lands on the exact video detail, not the FYP) and confirm
-    // TikTok owns the foreground. On a slow/loaded box the first `am start` is
-    // sometimes swallowed while the system settles, so we re-fire the (cheap)
-    // deep link a few times before giving up — far cheaper than failing the
-    // whole job and cold-restarting the container. Validated on box-1 (07/2026).
-    const deepLink = `am start -a android.intent.action.VIEW -d ${videoUrl} ${TIKTOK_PACKAGE}`;
+    // TikTok owns the foreground. `androidDeepLink` uses the CANONICAL url
+    // (drops the `?_r=1&u_code=…&source=h5_m` share params that both break the
+    // shell command and make TikTok redirect to the FYP) and quotes it. On a
+    // slow/loaded box the first `am start` is sometimes swallowed while the
+    // system settles, so we re-fire the (cheap) deep link a few times before
+    // giving up — far cheaper than failing and cold-restarting. Validated on
+    // box-1 (07/2026).
+    const deepLink = androidDeepLink(videoUrl, TIKTOK_PACKAGE);
     const foregrounded = await relaunchUntilFocus(
       tunnelHostname,
       dbId,
