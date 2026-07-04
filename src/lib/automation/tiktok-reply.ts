@@ -162,8 +162,41 @@ const AUTH_WALL_PAIRS: ReadonlyArray<readonly [login: string, signup: string]> =
   ["Accedi", "Registrati"],               // IT
 ];
 
+// Third auth-wall shape: the full-screen SAVED-ACCOUNTS picker ("Welcome back"
+// + account rows + "Add another account / Manage accounts"), seen on box-1
+// (07/2026) on devices whose session expired but which remember past logins.
+// No login/signup pair is present (each account row IS the login button), so
+// the pair heuristic above misses it. Compound greeting+action match — a
+// logged-in session never shows this full-screen picker in our flow.
+const ACCOUNT_PICKER_GREETINGS = [
+  "Welcome back",
+  "Willkommen zurück",
+  "Bienvenido de nuevo",
+  "Content de te revoir",
+  "Bon retour",
+  "Bentornato",
+];
+const ACCOUNT_PICKER_ACTIONS = [
+  "Add another account",
+  "Manage accounts",
+  "Ajouter un autre compte",
+  "Gérer les comptes",
+  "Konto hinzufügen",
+  "Konten verwalten",
+  "Añadir otra cuenta",
+  "Administrar cuentas",
+  "Aggiungi un altro account",
+  "Gestisci account",
+];
+
 function isAuthWall(uiXml: string): boolean {
-  return AUTH_WALL_PAIRS.some(([login, signup]) => uiXml.includes(login) && uiXml.includes(signup));
+  if (AUTH_WALL_PAIRS.some(([login, signup]) => uiXml.includes(login) && uiXml.includes(signup))) {
+    return true;
+  }
+  return (
+    ACCOUNT_PICKER_GREETINGS.some((m) => uiXml.includes(m)) &&
+    ACCOUNT_PICKER_ACTIONS.some((m) => uiXml.includes(m))
+  );
 }
 
 const CONTENT_UNAVAILABLE_MARKERS = [
