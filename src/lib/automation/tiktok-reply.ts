@@ -41,6 +41,7 @@ import {
   isPackageInstalled,
   grantAppPermissions,
   isForegroundApp,
+  getCurrentFocus,
   activateAdbKeyboard,
   typeText,
   tap,
@@ -198,6 +199,15 @@ function isAuthWall(uiXml: string): boolean {
     ACCOUNT_PICKER_ACTIONS.some((m) => uiXml.includes(m))
   );
 }
+
+// Language-independent auth signal: when the session is expired, TikTok
+// routes ANY deep link to an activity of its auth package —
+// `com.ss.android.ugc.aweme.account.login.…` (I18nSignUpActivity seen live on
+// box-1, 07/2026). The window focus names it verbatim, so this catches every
+// locale and A/B skin that the text heuristics above might miss. The package
+// match alone is deliberate: every activity under `.account.login.` means the
+// user must authenticate before the app is usable.
+const TIKTOK_AUTH_ACTIVITY_RE = /\.account\.login\.|SignUpActivity|LoginActivity/;
 
 const CONTENT_UNAVAILABLE_MARKERS = [
   "Vidéo non disponible",
@@ -379,6 +389,20 @@ export async function postTikTokComment(
       throw new JobError(
         "app_not_ready",
         `TikTok did not reach the foreground after ${TIMING.launchAttempts} deep-link attempts`,
+      );
+    }
+
+    // Auth check on the WINDOW itself (language-independent): an expired
+    // session routes the deep link to TikTok's login package, which satisfies
+    // the package foreground gate above but can never reach a video. The
+    // focus string names the activity verbatim, unlike UI-text dumps which
+    // lag or vary by locale (observed live: focus = I18nSignUpActivity while
+    // the dump was still an empty FrameLayout).
+    const postLaunchFocus = await getCurrentFocus(tunnelHostname, dbId).catch(() => "");
+    if (postLaunchFocus && TIKTOK_AUTH_ACTIVITY_RE.test(postLaunchFocus)) {
+      throw new JobError(
+        "account_logged_out",
+        "TikTok routed the deep link to its login screen — session expired, operator must sign in again",
       );
     }
     await sleep(TIMING.videoSettle);
