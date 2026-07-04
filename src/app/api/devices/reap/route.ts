@@ -37,13 +37,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ action: "idle", reaped: 0 });
   }
 
-  // Never reap a device the automator still needs.
+  // Never reap a device the automator still needs — but "needs" means work
+  // that is imminent: a job executing, or a `ready` job already DUE. A device
+  // whose only jobs are `ready` but scheduled in the FUTURE (retry backoff /
+  // stagger) is genuinely idle right now; keeping its container running just
+  // burns an automator slot (the deadlock this backstops). It will cold-start
+  // fresh when the job becomes due.
+  const nowMs = Date.now();
   const { data: busy } = await supabase
     .from("campaign_jobs")
-    .select("device_id")
+    .select("device_id, status, scheduled_at")
     .in("device_id", idle.map((d) => d.id))
     .in("status", ["ready", "executing"]);
-  const busyIds = new Set((busy ?? []).map((b) => b.device_id));
+  const busyIds = new Set(
+    (busy ?? [])
+      .filter((b) => b.status === "executing" || new Date(b.scheduled_at).getTime() <= nowMs)
+      .map((b) => b.device_id),
+  );
 
   const targets = idle.filter((d) => !busyIds.has(d.id));
   let reaped = 0;

@@ -430,7 +430,18 @@ async function confirmBootCompleted(
 }
 
 /**
- * Stop the container if no other ready/executing jobs target this device.
+ * Stop the container unless this device still has *imminent* work: a job
+ * executing now, or a `ready` job that is already DUE (`scheduled_at <= now`).
+ *
+ * A `ready` job scheduled in the FUTURE (retry backoff, staggered send) must
+ * NOT keep the container alive. Otherwise a container started for a job that
+ * fails pre-compose and re-queues with a 2-min backoff stays running, idle,
+ * for the whole backoff — and these idle containers accumulate until they
+ * saturate the box's automator slots, deadlocking every other job on the box
+ * (observed live: box-1 stuck ~9h behind two idle retry containers). Stopping
+ * now frees the slot; a later cycle cold-starts the container fresh when the
+ * retry is actually due — which is also the better state to retry from.
+ *
  * Best-effort: a network failure is logged but does not throw.
  */
 export async function stopContainerIfIdle(
@@ -439,14 +450,15 @@ export async function stopContainerIfIdle(
   deviceId: string,
   supabase: ReturnType<typeof import("@/lib/supabase/admin").createAdminClient>,
 ): Promise<void> {
+  const nowIso = new Date().toISOString();
   const { count } = await supabase
     .from("campaign_jobs")
     .select("*", { count: "exact", head: true })
     .eq("device_id", deviceId)
-    .in("status", ["ready", "executing"]);
+    .or(`status.eq.executing,and(status.eq.ready,scheduled_at.lte.${nowIso})`);
 
   if (count && count > 0) {
-    console.log(`[Container] ${dbId} kept running — ${count} pending jobs on this device`);
+    console.log(`[Container] ${dbId} kept running — ${count} due/executing job(s) on this device`);
     return;
   }
 
