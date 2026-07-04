@@ -175,6 +175,40 @@ const CONTENT_UNAVAILABLE_MARKERS = [
   "Compte introuvable",
 ];
 
+// TikTok's full-screen network-error state ("Une erreur est survenue /
+// Réessaie plus tard / [Réessayer]"). Seen when the device's proxy is dead or
+// the exit IP is blocked by TikTok: the app foregrounds fine but no content
+// ever loads (verified on box-1, 07/2026 — screenshot showed this screen while
+// a healthy device loaded the same video instantly). Compound match (error
+// phrase + retry affordance on the same screen) to avoid false positives on
+// in-feed toasts. Retrying the job cannot help — the operator must fix or
+// replace the device proxy — so this maps to `network_unavailable`.
+const NETWORK_ERROR_PHRASES = [
+  "Une erreur est survenue",       // FR
+  "Something went wrong",          // EN
+  "No network connection",         // EN variant
+  "Pas de connexion réseau",       // FR variant
+  "Se ha producido un error",      // ES
+  "Ein Fehler ist aufgetreten",    // DE
+  "Si è verificato un errore",     // IT
+];
+const NETWORK_RETRY_LABELS = [
+  "Réessayer",
+  "Réessaie plus tard",
+  "Retry",
+  "Try again",
+  "Reintentar",
+  "Erneut versuchen",
+  "Riprova",
+];
+
+function isNetworkErrorScreen(uiXml: string): boolean {
+  return (
+    NETWORK_ERROR_PHRASES.some((m) => uiXml.includes(m)) &&
+    NETWORK_RETRY_LABELS.some((m) => uiXml.includes(m))
+  );
+}
+
 function detectBlockingState(uiXml: string): JobError | null {
   if (CONSENT_BLOCKERS.some((m) => uiXml.includes(m))) {
     return new JobError(
@@ -194,7 +228,37 @@ function detectBlockingState(uiXml: string): JobError | null {
       "Video is deleted, private, or unavailable in this region — skip this post",
     );
   }
+  if (isNetworkErrorScreen(uiXml)) {
+    return new JobError(
+      "network_unavailable",
+      "TikTok cannot load any content on this device — its proxy is down or the exit IP is blocked; check/replace the device proxy",
+    );
+  }
   return null;
+}
+
+/**
+ * One recovery attempt for the network-error screen: tap the retry button and
+ * re-check. A transient blip recovers here; a dead proxy fails again and the
+ * caller escalates with `network_unavailable`. Returns the latest dump.
+ */
+async function tapNetworkRetryOnce(
+  tunnelHostname: string,
+  dbId: string,
+  uiXml: string,
+): Promise<string> {
+  const nodes = parseUiNodes(uiXml);
+  const retry = nodes.find(
+    (n) =>
+      n.bounds &&
+      NETWORK_RETRY_LABELS.some((label) => n.text === label || n.contentDesc === label),
+  );
+  if (!retry?.bounds) return uiXml;
+  const [x1, y1, x2, y2] = retry.bounds;
+  ttLog(dbId, "network-error screen — tapping retry once");
+  await tap(tunnelHostname, dbId, { x: (x1 + x2) / 2, y: (y1 + y2) / 2 });
+  await sleep(TIMING.videoSettle);
+  return (await dumpUiXml(tunnelHostname, dbId)) ?? uiXml;
 }
 
 export interface TikTokReplyResult {
@@ -287,8 +351,12 @@ export async function postTikTokComment(
     await sleep(TIMING.videoSettle);
 
     // Gate 2 — fail fast on a known blocking screen (consent, logged out,
-    // unavailable) using a resilient dump.
-    const preXml = await dumpUiXml(tunnelHostname, dbId);
+    // unavailable, network error) using a resilient dump. The network-error
+    // screen gets ONE retry tap first (transient blip vs dead proxy).
+    let preXml = await dumpUiXml(tunnelHostname, dbId);
+    if (preXml && isNetworkErrorScreen(preXml)) {
+      preXml = await tapNetworkRetryOnce(tunnelHostname, dbId, preXml);
+    }
     if (preXml) {
       const blocker = detectBlockingState(preXml);
       if (blocker) throw blocker;

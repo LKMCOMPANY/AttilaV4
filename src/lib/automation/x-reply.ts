@@ -79,11 +79,45 @@ const X_CONTENT_UNAVAILABLE_MARKERS = [
   "compte a été suspendu",
 ];
 
+// X's full-screen network-error state ("Something went wrong. Try reloading."
+// / « Un problème est survenu. Réessayez. »). Same failure mode as TikTok's
+// (see tiktok-reply): a dead device proxy or blocked exit IP — the app
+// foregrounds but no content loads, and job retries cannot help. Compound
+// match (error phrase + reload affordance) to avoid false positives.
+const X_NETWORK_ERROR_PHRASES = [
+  "Something went wrong",
+  "Un problème est survenu",
+  "Une erreur s'est produite",
+  "Algo salió mal",
+  "Etwas ist schiefgelaufen",
+];
+const X_NETWORK_RETRY_LABELS = [
+  "Try reloading",
+  "Try again",
+  "Retry",
+  "Réessayer",
+  "Reintentar",
+  "Erneut versuchen",
+];
+
+function isNetworkErrorScreen(ui: string): boolean {
+  return (
+    X_NETWORK_ERROR_PHRASES.some((m) => ui.includes(m)) &&
+    X_NETWORK_RETRY_LABELS.some((m) => ui.includes(m))
+  );
+}
+
 function detectBlockingState(ui: string): JobError | null {
   if (X_LOGGED_OUT_MARKERS.some((m) => ui.includes(m))) {
     return new JobError(
       "account_logged_out",
       "X session expired or no avatar logged in on this device — operator must sign in again",
+    );
+  }
+  if (isNetworkErrorScreen(ui)) {
+    return new JobError(
+      "network_unavailable",
+      "X cannot load any content on this device — its proxy is down or the exit IP is blocked; check/replace the device proxy",
     );
   }
   if (X_CONTENT_UNAVAILABLE_MARKERS.some((m) => ui.includes(m))) {

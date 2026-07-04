@@ -17,6 +17,9 @@ export type JobErrorCategory =
                               // — always safe to retry automatically
   // Setup — fixable on the device by an admin / one-time provisioning
   | "device_setup_required"   // ADBKeyboard missing, app missing, etc.
+  | "network_unavailable"     // the device's proxy/network cannot load app
+                              // content (app shows its network-error screen);
+                              // retrying is pointless until the proxy is fixed
   | "consent_required"        // first-launch GDPR / ads dialog
   // Account-level — operator must intervene on the avatar's session
   | "account_logged_out"      // session expired / not signed in
@@ -43,6 +46,7 @@ const SEVERITY_BY_CATEGORY: Record<JobErrorCategory, JobErrorSeverity> = {
   infrastructure: "transient",
   app_not_ready: "transient",
   device_setup_required: "action_required",
+  network_unavailable: "action_required",
   consent_required: "action_required",
   account_logged_out: "action_required",
   account_blocked: "action_required",

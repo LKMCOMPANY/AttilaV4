@@ -16,6 +16,7 @@ import {
   UserX,
   Filter,
   MessageSquare,
+  WifiOff,
 } from "lucide-react";
 import type { CampaignJobStatus, CampaignPostStatus, JobVerification } from "@/types";
 import {
@@ -190,6 +191,7 @@ const CATEGORY_CONFIG: Record<
   infrastructure: { icon: RefreshCw, label: "Network / box" },
   app_not_ready: { icon: RefreshCw, label: "App not ready" },
   device_setup_required: { icon: ShieldAlert, label: "Device setup" },
+  network_unavailable: { icon: WifiOff, label: "Device proxy down" },
   consent_required: { icon: ShieldAlert, label: "Consent dialog" },
   account_logged_out: { icon: UserX, label: "Account logged out" },
   account_blocked: { icon: Ban, label: "Account blocked" },
