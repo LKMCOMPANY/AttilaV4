@@ -29,6 +29,8 @@ import {
   relaunchUntilFocus,
   androidDeepLink,
   dumpUiXml,
+  parseUiNodes,
+  editTextContains,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
 
@@ -100,7 +102,19 @@ const X_NETWORK_RETRY_LABELS = [
   "Erneut versuchen",
 ];
 
+// X's tweet-detail content-error state has NO retry button (seen live 07/2026:
+// a job proof showed "Cannot retrieve posts at this time. Please try again
+// later." on a dead-proxy device — and the job was wrongly marked done). These
+// phrases never appear in a healthy thread, so they match standalone.
+const X_CONTENT_ERROR_MARKERS = [
+  "Cannot retrieve posts at this time",
+  "Impossible de récupérer les posts",
+  "Impossible de récupérer les Tweets",
+  "No se pueden recuperar las publicaciones",
+];
+
 function isNetworkErrorScreen(ui: string): boolean {
+  if (X_CONTENT_ERROR_MARKERS.some((m) => ui.includes(m))) return true;
   return (
     X_NETWORK_ERROR_PHRASES.some((m) => ui.includes(m)) &&
     X_NETWORK_RETRY_LABELS.some((m) => ui.includes(m))
@@ -277,6 +291,21 @@ export async function postReply(
     await typeText(tunnelHostname, dbId, text);
     await sleep(TIMING.afterType);
 
+    // Gate — the text must actually be sitting in the composer's EditText
+    // before we tap send. Unlike TikTok, X tolerates uiautomator dumps with
+    // the composer open (verified live 07/2026: the dump returns the
+    // `tweet_text` EditText with the typed content and the composer keeps
+    // focus), so we can check positively. Catches dead-IME / mistargeted-tap
+    // flows that previously tapped send on an EMPTY composer and were still
+    // reported done (8/8 of yesterday's "done" tweets were never published).
+    const composerXml = await dumpUiXml(tunnelHostname, dbId);
+    if (!composerXml || !editTextContains(parseUiNodes(composerXml), text)) {
+      throw new JobError(
+        "app_not_ready",
+        "Typed text never landed in the X composer — IME or focus failure before submit",
+      );
+    }
+
     xLog(dbId, "proof screenshot (composer ready)");
     proof = await screenshot(tunnelHostname, dbId);
     await sleep(TIMING.beforeSubmit);
@@ -288,9 +317,22 @@ export async function postReply(
     await shell(tunnelHostname, dbId, `input tap ${submit.x} ${submit.y}`);
     await sleep(TIMING.postSubmit);
 
-    // Verify: focus must come back to the tweet detail screen. If the
-    // composer is still on screen (inline or fullscreen) the submit did
-    // not go through (text too long, rate limit, captcha, network…).
+    // Verify the send actually went through — two independent signals:
+    //   1. No EditText may still hold our text. If it does, the submit tap
+    //      did not fire (rate limit, disabled button, dead network). NOT
+    //      auto-retryable: X can park the reply in drafts/outbox and flush it
+    //      later, so a blind retry risks a double-post.
+    //   2. Focus must be back on the tweet detail without the composer.
+    // A posted reply shows as a TextView in the thread, never an EditText, so
+    // signal 1 cannot false-positive on success. TikHub's deferred sweep
+    // (`verification` column) remains the independent off-device arbiter.
+    const postXml = await dumpUiXml(tunnelHostname, dbId);
+    if (postXml && editTextContains(parseUiNodes(postXml), text)) {
+      throw new JobError(
+        "ui_unexpected",
+        "Submit tap did not send — the reply text is still in the composer (rate limit or dead network)",
+      );
+    }
     const focus = await getCurrentFocus(tunnelHostname, dbId);
     if (!focus.includes(TWEET_DETAIL_FOCUS_HINT) || focus.includes(COMPOSER_FOCUS_HINT)) {
       throw new JobError(
