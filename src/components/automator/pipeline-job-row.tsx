@@ -269,10 +269,12 @@ export function JobEvidence({ job }: { job: CampaignJobWithAvatar }) {
   if (!job.source_screenshot && !job.proof_screenshot) return null;
 
   // The proof means different things on the two outcomes: on success the
-  // backend upgrades it to the comment LIVE in the list; on failure it is the
-  // last state captured before the flow aborted.
+  // backend upgrades it to the post LIVE (comment in list / reply in thread);
+  // on failure it is the device's actual END state (the list without our
+  // comment, a stuck composer, or a blocker screen) — never the pre-submit
+  // composer, which would look like success.
   const proofCaption =
-    job.status === "done" ? "Comment live in list" : "Last state before failure";
+    job.status === "done" ? "Published — live on platform" : "Result on device (not published)";
 
   return (
     <div>

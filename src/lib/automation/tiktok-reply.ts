@@ -479,6 +479,14 @@ export async function postTikTokComment(
   } catch (err) {
     const error = encodeJobError(err);
     const durationMs = Date.now() - start;
+    // Honest failure evidence: overwrite the pre-submit composer shot with the
+    // ACTUAL end state (e.g. the comments list WITHOUT our comment on a silent
+    // drop, the stuck composer, or a blocker screen). A composer-with-text shot
+    // looks like success to a human even though the job failed — the operator
+    // must see reality. Best-effort: keep the earlier shot if this capture
+    // fails or comes back empty.
+    const endState = await screenshot(tunnelHostname, dbId).catch(() => Buffer.alloc(0));
+    if (endState.length > 0) proof = endState;
     ttLog(dbId, "postTikTokComment FAILED", {
       error,
       durationMs,

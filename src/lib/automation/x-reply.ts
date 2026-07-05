@@ -341,6 +341,13 @@ export async function postReply(
       );
     }
 
+    // Upgrade the proof from "composer with text" (pre-submit) to the thread
+    // AFTER the send, so the operator sees the actual posted state, not a shot
+    // that merely proves we typed. Best-effort — keep the composer shot if this
+    // capture fails.
+    const postedShot = await screenshot(tunnelHostname, dbId).catch(() => Buffer.alloc(0));
+    if (postedShot.length > 0) proof = postedShot;
+
     const durationMs = Date.now() - start;
     xLog(dbId, "postReply SUCCESS", {
       durationMs,
@@ -352,6 +359,11 @@ export async function postReply(
   } catch (err) {
     const error = encodeJobError(err);
     const durationMs = Date.now() - start;
+    // Honest failure evidence: replace the pre-submit composer shot with the
+    // actual end state (error page, stuck composer, blocker) so a failed job
+    // never shows a success-looking screenshot. Best-effort.
+    const endState = await screenshot(tunnelHostname, dbId).catch(() => Buffer.alloc(0));
+    if (endState.length > 0) proof = endState;
     xLog(dbId, "postReply FAILED", {
       error,
       durationMs,
