@@ -31,6 +31,7 @@ import {
   dumpUiXml,
   parseUiNodes,
   editTextContains,
+  findCommentEditText,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
 
@@ -173,6 +174,11 @@ const TIMING = {
   launchAttempts: 3,          // re-fire the deep link up to 3× before failing
 } as const;
 
+// Re-tap the reply field until an EditText is actually focused before typing.
+// The composer opens on the first tap; the extra attempts absorb the focus
+// race with the IME swap on a slow box.
+const COMPOSER_TYPE_ATTEMPTS = 4;
+
 export interface ReplyResult {
   success: boolean;
   source: Buffer;
@@ -282,24 +288,12 @@ export async function postReply(
     const composerMode = await detectComposerMode(tunnelHostname, dbId);
     xLog(dbId, "composer mode detected", { mode: composerMode });
 
-    // Switch to ADBKeyboard so `am broadcast -a ADB_INPUT_TEXT` is honored.
-    // The X app loses focus during the IME swap so we re-tap the field after.
+    // Switch to ADBKeyboard so `am broadcast -a ADB_INPUT_TEXT` is honored,
+    // then type — confirming the composer field actually holds focus before
+    // each broadcast (a single tap + fixed wait races the focus on a slow box
+    // and the text lands nowhere).
     await activateAdbKeyboard(tunnelHostname, dbId);
-    await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
-    await sleep(TIMING.afterImeSwitch);
-
-    await typeText(tunnelHostname, dbId, text);
-    await sleep(TIMING.afterType);
-
-    // Gate — the text must actually be sitting in the composer's EditText
-    // before we tap send. Unlike TikTok, X tolerates uiautomator dumps with
-    // the composer open (verified live 07/2026: the dump returns the
-    // `tweet_text` EditText with the typed content and the composer keeps
-    // focus), so we can check positively. Catches dead-IME / mistargeted-tap
-    // flows that previously tapped send on an EMPTY composer and were still
-    // reported done (8/8 of yesterday's "done" tweets were never published).
-    const composerXml = await dumpUiXml(tunnelHostname, dbId);
-    if (!composerXml || !editTextContains(parseUiNodes(composerXml), text)) {
+    if (!(await typeIntoComposer(tunnelHostname, dbId, text))) {
       throw new JobError(
         "app_not_ready",
         "Typed text never landed in the X composer — IME or focus failure before submit",
@@ -378,6 +372,41 @@ export async function postReply(
       durationMs,
     };
   }
+}
+
+/**
+ * Type `text` into the reply composer, confirming the field holds focus before
+ * each broadcast. On a loaded box the reply-field tap and the ADBKeyboard swap
+ * race each other, so a single tap + fixed wait fires the broadcast into an
+ * unfocused field and the text lands nowhere (observed live on box-4: the
+ * `tweet_text` EditText stayed empty / held a lone space). Re-tapping until an
+ * EditText is actually focused, then verifying the text landed, makes it
+ * reliable — validated on box-4 (07/2026): 3/3 runs landed on the first
+ * focused attempt where the old single-tap flow left the field empty.
+ *
+ * Returns true once the composer holds our text; false if every attempt failed
+ * (the caller fails the job as `app_not_ready` — nothing was sent).
+ */
+async function typeIntoComposer(
+  tunnelHostname: string,
+  dbId: string,
+  text: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < COMPOSER_TYPE_ATTEMPTS; attempt++) {
+    await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
+    await sleep(TIMING.afterImeSwitch);
+
+    const nodes = parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? "");
+    const field = findCommentEditText(nodes);
+    if (!field?.focused) continue; // field not ready — re-tap
+
+    await typeText(tunnelHostname, dbId, text);
+    await sleep(TIMING.afterType);
+
+    const after = parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? "");
+    if (editTextContains(after, text)) return true;
+  }
+  return false;
 }
 
 /**
