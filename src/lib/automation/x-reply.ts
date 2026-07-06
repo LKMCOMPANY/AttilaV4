@@ -24,6 +24,7 @@ import {
   grantAppPermissions,
   activateAdbKeyboard,
   typeText,
+  tap,
   getCurrentFocus,
   waitForSystemReady,
   relaunchUntilFocus,
@@ -173,9 +174,9 @@ const TIMING = {
   launchAttempts: 3,          // re-fire the deep link up to 3× before failing
 } as const;
 
-// Tap the reply field until its EditText is actually focused before typing.
-// The composer opens + focuses on the first tap; the extra attempts absorb a
-// slow-box lag where the field isn't focus-ready on the first dump.
+// First iteration opens the composer, the next taps the field at its real
+// bounds and types; extra attempts absorb a slow-box lag where the EditText
+// isn't in the tree yet on the first dump.
 const COMPOSER_TYPE_ATTEMPTS = 4;
 
 export interface ReplyResult {
@@ -374,14 +375,18 @@ export async function postReply(
 }
 
 /**
- * Open the reply composer and type `text`, confirming the field actually holds
- * focus before each broadcast. The tap opens the composer and focuses the
- * `tweet_text` EditText; we verify `focused` before broadcasting (a broadcast
- * into an unfocused field lands nowhere) and re-tap otherwise. Runs with the
- * ADBKeyboard already active — swapping the IME after the composer is open
- * moves the field and drops focus (see the caller). Validated on box-4
- * (07/2026): 2/2 runs landed on the first focused attempt where the previous
- * IME-after-open order left the field empty.
+ * Open the reply composer and type `text`, tapping the composer's EditText at
+ * its REAL bounds (read from the UI tree) rather than a fixed coordinate.
+ *
+ * Root cause this fixes (proven live on box-1 AND box-4, latin AND arabic,
+ * 07/2026): the reply field's Y position is not stable. The collapsed reply
+ * bar sits at the very bottom, but once the composer opens and the keyboard
+ * mounts the `tweet_text` EditText moves UP (measured to `[0,2031][1080,2157]`,
+ * centre y≈2094). The old flow re-tapped a hardcoded `(540,2277)` — ~180px
+ * below the moved field, landing on the toolbar/IME strip — so the broadcast
+ * fired into an unfocused field and the text never landed (this is why 8/8 of
+ * the earlier X "done" jobs were never actually published). Tapping the field's
+ * own centre lands the text every time.
  *
  * Returns true once the composer holds our text; false if every attempt failed
  * (the caller fails the job as `app_not_ready` — nothing was sent).
@@ -392,18 +397,26 @@ async function typeIntoComposer(
   text: string,
 ): Promise<boolean> {
   for (let attempt = 0; attempt < COMPOSER_TYPE_ATTEMPTS; attempt++) {
-    await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
-    await sleep(TIMING.afterImeSwitch);
+    const field = findCommentEditText(parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? ""));
+    if (!field?.bounds) {
+      // Composer not up yet — tap the collapsed reply bar to open it.
+      await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
+      await sleep(TIMING.afterImeSwitch);
+      continue;
+    }
 
-    const nodes = parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? "");
-    const field = findCommentEditText(nodes);
-    if (!field?.focused) continue; // field not ready — re-tap
+    // Tap the field's own centre to guarantee focus lands on it (a fixed coord
+    // misses it once the keyboard shifts the field up), then type.
+    const [x1, y1, x2, y2] = field.bounds;
+    await tap(tunnelHostname, dbId, { x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) });
+    await sleep(TIMING.afterImeSwitch);
 
     await typeText(tunnelHostname, dbId, text);
     await sleep(TIMING.afterType);
 
-    const after = parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? "");
-    if (editTextContains(after, text)) return true;
+    if (editTextContains(parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? ""), text)) {
+      return true;
+    }
   }
   return false;
 }
