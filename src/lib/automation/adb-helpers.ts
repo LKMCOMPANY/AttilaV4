@@ -7,6 +7,7 @@
  *   - never silently ignore failures (use `shellSafe` for explicit cleanup)
  */
 
+import { gunzipSync } from "node:zlib";
 import { shell, shellSafe, ContainerNotReadyError } from "@/lib/box-api";
 import { JobError } from "./errors";
 import { parseUiNodes, type UiNode } from "./ui-tree";
@@ -443,19 +444,42 @@ export async function relaunchUntilFocus(
 const UI_DUMP_ATTEMPTS = 4;
 const UI_DUMP_RETRY_MS = 900;
 
+// The VMOS shell API truncates a command's stdout at ~4 KB (measured: 4120
+// bytes, hard cap regardless of `head -c`). A `uiautomator dump` of a rich
+// screen is 8–12 KB, so a plain `cat` returns a TRUNCATED tree — nodes past
+// the cut (e.g. X's `tweet_text` composer field, which sits low in the tree)
+// silently vanish. Every UI-tree check then reasons about a partial screen:
+// the X composer looked empty, blocker/verification scans missed late nodes.
+// gzip+base64 the dump on-device (an 11 KB tree compresses to ~2.4 KB of
+// base64, well under the cap) and inflate it here. This is THE fix for the
+// "typed text never landed" X failures and a class of silent TikTok misreads.
+const UI_DUMP_CMD =
+  "uiautomator dump --compressed /sdcard/ui.xml >/dev/null 2>&1; " +
+  "gzip -c /sdcard/ui.xml 2>/dev/null | base64 2>/dev/null | tr -d '\\n'";
+
+/** Inflate the gzip+base64 payload; returns null if it isn't a valid dump. */
+function decodeUiDump(payload: string): string | null {
+  const b64 = payload.trim();
+  if (!b64) return null;
+  try {
+    const xml = gunzipSync(Buffer.from(b64, "base64")).toString("utf8");
+    return xml.includes("<hierarchy") ? xml : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * `uiautomator dump --compressed` with bounded retry.
+ * `uiautomator dump --compressed` with bounded retry, retrieved WITHOUT
+ * truncation (see `UI_DUMP_CMD`).
  *
- * uiautomator refuses to dump while the window is animating or a video is
+ * uiautomator also refuses to dump while the window is animating or a video is
  * mid-frame ("could not get idle state"), so a single attempt frequently
- * returns nothing on TikTok. That flakiness is exactly why the old
- * single-shot `tryUiDump` returned `null` so often — and why the caller then
- * (wrongly) treated "couldn't read the screen" as "success". Retrying a few
- * times turns most of those into a real dump; the split-out `dump` step and
- * `cat` (instead of `&&`) means a failed dump still lets us read any stale
- * file rather than masking the outcome.
+ * returns nothing on TikTok — hence the bounded retry. A failed dump still
+ * leaves the previous `/sdcard/ui.xml`, but we only accept a payload that
+ * inflates to a real `<hierarchy>`.
  *
- * Returns the raw XML, or `null` only when every attempt failed. Callers must
+ * Returns the full XML, or `null` only when every attempt failed. Callers must
  * treat `null` as "could not verify" — for a success check that means FAILURE,
  * never an optimistic pass.
  */
@@ -465,13 +489,10 @@ export async function dumpUiXml(
   attempts = UI_DUMP_ATTEMPTS,
 ): Promise<string | null> {
   for (let attempt = 0; attempt < attempts; attempt++) {
-    const result = await shellSafe(
-      tunnelHostname,
-      dbId,
-      "uiautomator dump --compressed /sdcard/ui.xml 2>/dev/null; cat /sdcard/ui.xml 2>/dev/null",
-    );
-    if (result && result.code === 200 && result.message.includes("<hierarchy")) {
-      return result.message;
+    const result = await shellSafe(tunnelHostname, dbId, UI_DUMP_CMD);
+    if (result && result.code === 200) {
+      const xml = decodeUiDump(result.message);
+      if (xml) return xml;
     }
     if (attempt < attempts - 1) await sleep(UI_DUMP_RETRY_MS);
   }
