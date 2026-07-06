@@ -165,8 +165,7 @@ const TIMING = {
   afterForceStop: 800,
   systemReadyMs: 30_000,     // wait for launcher to own mCurrentFocus after boot
   beforeSourceShot: 1800,    // simulate reading the tweet
-  composerOpen: 1500,
-  afterImeSwitch: 800,
+  afterImeSwitch: 800,       // field focus to settle after a reply-field tap
   afterType: 2000,           // reread before sending
   beforeSubmit: 1200,        // pause before the decisive tap
   postSubmit: 4000,
@@ -174,9 +173,9 @@ const TIMING = {
   launchAttempts: 3,          // re-fire the deep link up to 3× before failing
 } as const;
 
-// Re-tap the reply field until an EditText is actually focused before typing.
-// The composer opens on the first tap; the extra attempts absorb the focus
-// race with the IME swap on a slow box.
+// Tap the reply field until its EditText is actually focused before typing.
+// The composer opens + focuses on the first tap; the extra attempts absorb a
+// slow-box lag where the field isn't focus-ready on the first dump.
 const COMPOSER_TYPE_ATTEMPTS = 4;
 
 export interface ReplyResult {
@@ -277,28 +276,28 @@ export async function postReply(
     xLog(dbId, "source screenshot");
     source = await screenshot(tunnelHostname, dbId);
 
-    // Open composer. Depending on the device / account / build, this either
-    // expands an inline composer fragment inside TweetDetailActivity OR
-    // launches the standalone ComposerActivity full-screen. Both are valid
-    // entry points; the only difference for us is the position of the
-    // submit button — we detect the mode and pick the right coords.
-    await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
-    await sleep(TIMING.composerOpen);
-
-    const composerMode = await detectComposerMode(tunnelHostname, dbId);
-    xLog(dbId, "composer mode detected", { mode: composerMode });
-
-    // Switch to ADBKeyboard so `am broadcast -a ADB_INPUT_TEXT` is honored,
-    // then type — confirming the composer field actually holds focus before
-    // each broadcast (a single tap + fixed wait races the focus on a slow box
-    // and the text lands nowhere).
+    // ADBKeyboard FIRST — before opening the composer. Swapping the IME AFTER
+    // the composer is open steals focus AND shifts the field down (measured on
+    // box-4: tweet_text goes focused=true@y~1400 → focused=false@y~2100 once
+    // the keyboard mounts), so a tap at the fixed reply-field coord then lands
+    // below the moved field and the text never arrives. With the IME already
+    // active, opening the composer focuses the field directly.
     await activateAdbKeyboard(tunnelHostname, dbId);
+
+    // Open the composer + type, confirming the field holds focus before each
+    // broadcast. The X composer opens inline (TweetDetailActivity) or as the
+    // fullscreen ComposerActivity depending on device/account — both are fine.
     if (!(await typeIntoComposer(tunnelHostname, dbId, text))) {
       throw new JobError(
         "app_not_ready",
         "Typed text never landed in the X composer — IME or focus failure before submit",
       );
     }
+
+    // Detect inline vs fullscreen now that the composer is open — it decides
+    // which submit-button coord to tap.
+    const composerMode = await detectComposerMode(tunnelHostname, dbId);
+    xLog(dbId, "composer mode detected", { mode: composerMode });
 
     xLog(dbId, "proof screenshot (composer ready)");
     proof = await screenshot(tunnelHostname, dbId);
@@ -375,14 +374,14 @@ export async function postReply(
 }
 
 /**
- * Type `text` into the reply composer, confirming the field holds focus before
- * each broadcast. On a loaded box the reply-field tap and the ADBKeyboard swap
- * race each other, so a single tap + fixed wait fires the broadcast into an
- * unfocused field and the text lands nowhere (observed live on box-4: the
- * `tweet_text` EditText stayed empty / held a lone space). Re-tapping until an
- * EditText is actually focused, then verifying the text landed, makes it
- * reliable — validated on box-4 (07/2026): 3/3 runs landed on the first
- * focused attempt where the old single-tap flow left the field empty.
+ * Open the reply composer and type `text`, confirming the field actually holds
+ * focus before each broadcast. The tap opens the composer and focuses the
+ * `tweet_text` EditText; we verify `focused` before broadcasting (a broadcast
+ * into an unfocused field lands nowhere) and re-tap otherwise. Runs with the
+ * ADBKeyboard already active — swapping the IME after the composer is open
+ * moves the field and drops focus (see the caller). Validated on box-4
+ * (07/2026): 2/2 runs landed on the first focused attempt where the previous
+ * IME-after-open order left the field empty.
  *
  * Returns true once the composer holds our text; false if every attempt failed
  * (the caller fails the job as `app_not_ready` — nothing was sent).
