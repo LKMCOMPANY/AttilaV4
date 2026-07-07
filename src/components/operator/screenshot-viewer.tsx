@@ -24,7 +24,10 @@ export function ScreenshotViewer({
   const [src, setSrc] = useState<string>("");
   const bufferRef = useRef<HTMLImageElement | null>(null);
 
-  const screenshotUrl = `/api/box/${boxId}/container_api/v1/screenshots/${dbId}`;
+  // `no_cache=true` bypasses VMOS's ~5s server-side screenshot cache (Edge
+  // screenshots v2); `&t=` additionally busts the browser/HTTP cache per poll.
+  // Both are needed for a live-ish view — matching the server automation path.
+  const screenshotUrl = `/api/box/${boxId}/container_api/v1/screenshots/${dbId}?no_cache=true`;
 
   useEffect(() => {
     let mounted = true;
@@ -44,7 +47,7 @@ export function ScreenshotViewer({
       img.onerror = () => {
         if (mounted) setSrc("");
       };
-      img.src = `${screenshotUrl}?t=${Date.now()}`;
+      img.src = `${screenshotUrl}&t=${Date.now()}`;
       bufferRef.current = img;
     }
 

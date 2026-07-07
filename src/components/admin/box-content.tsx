@@ -62,8 +62,15 @@ export function BoxContent({
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [addingAccount, setAddingAccount] = useState(false);
 
+  // "All" means all ACTIVE devices — `removed` (ghosts whose container no longer
+  // exists on the box) are only shown under the explicit "Removed" filter.
+  const activeDevices = useMemo(
+    () => devices.filter((d) => d.state !== "removed"),
+    [devices],
+  );
+
   const filteredDevices = useMemo(() => {
-    let result = devices;
+    let result = stateFilter === "all" ? activeDevices : devices;
     if (stateFilter !== "all") {
       result = result.filter((d) => d.state === stateFilter);
     }
@@ -77,7 +84,7 @@ export function BoxContent({
       );
     }
     return result;
-  }, [devices, search, stateFilter]);
+  }, [devices, activeDevices, search, stateFilter]);
 
   const activeAccounts = useMemo(
     () => allAccounts.filter((a) => a.status === "active"),
@@ -256,7 +263,7 @@ export function BoxContent({
             Devices
           </span>
           <Badge variant="secondary" className="text-xs">
-            {devices.length}
+            {activeDevices.length}
           </Badge>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">

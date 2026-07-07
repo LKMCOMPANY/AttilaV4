@@ -60,6 +60,7 @@ export async function selectAvatars(params: {
     .select("*, device:devices!avatars_device_id_fkey(id, box_id, state)")
     .in("id", armyAvatarIds)
     .eq("status", "active")
+    .is("archived_at", null)
     .eq(platformEnabledCol, true)
     .not(platformHandleCol, "is", null)
     .neq(platformHandleCol, "")

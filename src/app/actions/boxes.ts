@@ -10,6 +10,7 @@ import {
   fetchContainerDetail,
   fetchTimezoneLocale,
   fetchProxyConfig,
+  aospFromDetail,
 } from "@/lib/box-api";
 import type { Account, Box, BoxWithRelations } from "@/types";
 
@@ -291,10 +292,17 @@ export async function syncBox(
 
     await syncBoxDevices(boxId, box.tunnel_hostname);
   } catch {
+    // Box unreachable: mark offline AND reconcile its devices — nothing runs on
+    // a down box, so any lingering `running` rows are stale (capacity/UI truth).
     await supabase
       .from("boxes")
       .update({ status: "offline" })
       .eq("id", boxId);
+    await supabase
+      .from("devices")
+      .update({ state: "stopped", last_seen: new Date().toISOString() })
+      .eq("box_id", boxId)
+      .eq("state", "running");
 
     revalidatePath("/admin/infrastructure");
     return { error: "Box is offline or unreachable." };
@@ -391,7 +399,10 @@ async function syncBoxDevices(boxId: string, tunnelHostname: string) {
 
     if (detail) {
       updates.image = detail.image;
-      if (detail.aosp_version) updates.aosp_version = detail.aosp_version;
+      // Derive from the image when the reported value is missing/"initializing"
+      // so we never persist junk (see aospFromDetail).
+      const aosp = aospFromDetail(detail);
+      if (aosp) updates.aosp_version = aosp;
       updates.resolution = `${detail.width}x${detail.height}`;
       updates.memory_mb = detail.memory;
       updates.dpi = parseInt(detail.dpi, 10) || null;

@@ -1,10 +1,13 @@
 "use server";
 
+import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireSession } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
 import { fetchContainerList } from "@/lib/box-api";
 import { accountDeviceScopeFilter } from "@/lib/devices/access";
+import { redactDeviceSecrets } from "@/lib/devices/redact";
 import {
   createAvatarSchema,
   updateAvatarSchema,
@@ -35,7 +38,7 @@ export async function getAccountDevices(
     .order("user_name", { ascending: true });
 
   if (error) throw new Error(error.message);
-  return (data ?? []) as Device[];
+  return (data ?? []).map((d) => redactDeviceSecrets(d as Device));
 }
 
 export async function getAccountUsers(
@@ -98,6 +101,7 @@ export async function getAvatars(
       avatar_operators(operator:profiles(*))`
     )
     .eq("account_id", accountId)
+    .is("archived_at", null)
     .order("updated_at", { ascending: false });
 
   if (error) throw new Error(error.message);
@@ -118,7 +122,7 @@ export async function getAvatars(
     const { avatar_armies: _aa, avatar_operators: _ao, ...rest } = row;
     return {
       ...rest,
-      device: (row.device as Device | null) || null,
+      device: redactDeviceSecrets((row.device as Device | null) || null),
       armies,
       operators,
     } as AvatarWithRelations;
@@ -130,6 +134,32 @@ export async function getAvatars(
   // through the Cloudflare tunnel (~0.6-1.7s each). The page shows the
   // last-known DB state immediately and converges to box truth a moment later.
   return avatars;
+}
+
+export interface ArchivedAvatar {
+  id: string;
+  first_name: string;
+  last_name: string;
+  created_at: string;
+  archived_at: string;
+}
+
+/** Archived avatars for an account (lean list for the restore dialog). */
+export async function getArchivedAvatars(accountId: string): Promise<ArchivedAvatar[]> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  if (!isAdmin && session.profile.account_id !== accountId) throw new Error("Forbidden");
+
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("avatars")
+    .select("id, first_name, last_name, created_at, archived_at")
+    .eq("account_id", accountId)
+    .not("archived_at", "is", null)
+    .order("archived_at", { ascending: false });
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ArchivedAvatar[];
 }
 
 // ---------------------------------------------------------------------------
@@ -285,6 +315,159 @@ export async function updateAvatar(
     .eq("id", avatarId);
 
   if (error) return { error: error.message };
+
+  revalidatePath("/dashboard/operator");
+  return { error: null };
+}
+
+// ---------------------------------------------------------------------------
+// Attach / detach / swap the device on an EXISTING avatar.
+// Single validated path for device changes (device_id is deliberately absent
+// from updateAvatarSchema): enforces account scope + one-device-per-active-avatar.
+// ---------------------------------------------------------------------------
+
+export interface SetAvatarDeviceResult {
+  error: string | null;
+  /** Redacted device now attached (null when detached). */
+  device: Device | null;
+}
+
+export async function setAvatarDevice(
+  avatarId: string,
+  deviceId: string | null,
+): Promise<SetAvatarDeviceResult> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  const isManager = session.profile.role === "manager";
+  if (!isAdmin && !isManager) {
+    return { error: "Only admins and managers can change devices", device: null };
+  }
+
+  if (!z.string().uuid().safeParse(avatarId).success) {
+    return { error: "Invalid avatar ID", device: null };
+  }
+  if (deviceId !== null && !z.string().uuid().safeParse(deviceId).success) {
+    return { error: "Invalid device ID", device: null };
+  }
+
+  const supabase = await createClient();
+
+  const { data: avatar } = await supabase
+    .from("avatars")
+    .select("account_id")
+    .eq("id", avatarId)
+    .single();
+  if (!avatar) return { error: "Avatar not found", device: null };
+  if (!isAdmin && session.profile.account_id !== avatar.account_id) {
+    return { error: "Forbidden", device: null };
+  }
+
+  let device: Device | null = null;
+  if (deviceId !== null) {
+    // Device must be in the account's scope (directly assigned OR via account_boxes).
+    const scope = await accountDeviceScopeFilter(supabase, avatar.account_id as string);
+    const { data: dev } = await supabase
+      .from("devices")
+      .select("*")
+      .eq("id", deviceId)
+      .or(scope)
+      .maybeSingle();
+    if (!dev) return { error: "Device not available for this account", device: null };
+
+    // 1:1 guard (the partial unique index is the DB-level safety net).
+    const { data: holder } = await supabase
+      .from("avatars")
+      .select("id")
+      .eq("device_id", deviceId)
+      .is("archived_at", null)
+      .neq("id", avatarId)
+      .maybeSingle();
+    if (holder) {
+      return { error: "That device is already attached to another avatar", device: null };
+    }
+
+    device = redactDeviceSecrets(dev as Device);
+  }
+
+  const { error, count } = await supabase
+    .from("avatars")
+    .update({ device_id: deviceId }, { count: "exact" })
+    .eq("id", avatarId);
+  if (error) {
+    if (error.code === "23505") {
+      return { error: "That device was just attached to another avatar", device: null };
+    }
+    return { error: error.message, device: null };
+  }
+  if (count === 0) return { error: "Could not update the avatar's device", device: null };
+
+  revalidatePath("/dashboard/operator");
+  return { error: null, device };
+}
+
+// ---------------------------------------------------------------------------
+// Archive / restore an avatar (reversible soft-delete).
+// Archiving detaches the device (frees it), cancels queued jobs, and hides the
+// avatar from the active list. Executing jobs are left to finish.
+// ---------------------------------------------------------------------------
+
+type AvatarManageCtx =
+  | { ok: false; error: string }
+  | { ok: true; accountId: string; supabase: Awaited<ReturnType<typeof createClient>> };
+
+async function requireAvatarManage(avatarId: string): Promise<AvatarManageCtx> {
+  const session = await requireSession();
+  const isAdmin = session.profile.role === "admin";
+  const isManager = session.profile.role === "manager";
+  if (!isAdmin && !isManager) return { ok: false, error: "Only admins and managers can manage avatars" };
+  if (!z.string().uuid().safeParse(avatarId).success) return { ok: false, error: "Invalid avatar ID" };
+
+  const supabase = await createClient();
+  const { data: avatar } = await supabase
+    .from("avatars")
+    .select("account_id")
+    .eq("id", avatarId)
+    .single();
+  if (!avatar) return { ok: false, error: "Avatar not found" };
+  if (!isAdmin && session.profile.account_id !== avatar.account_id) return { ok: false, error: "Forbidden" };
+
+  return { ok: true, accountId: avatar.account_id as string, supabase };
+}
+
+export async function archiveAvatar(avatarId: string): Promise<{ error: string | null }> {
+  const ctx = await requireAvatarManage(avatarId);
+  if (!ctx.ok) return { error: ctx.error };
+
+  // Cancel this avatar's queued jobs (ready); executing jobs finish on their own.
+  // campaign_jobs is service-role only, and the caller is already authorized.
+  await createAdminClient()
+    .from("campaign_jobs")
+    .update({ status: "cancelled", completed_at: new Date().toISOString() })
+    .eq("avatar_id", avatarId)
+    .eq("status", "ready");
+
+  const { error, count } = await ctx.supabase
+    .from("avatars")
+    .update({ device_id: null, archived_at: new Date().toISOString() }, { count: "exact" })
+    .eq("id", avatarId);
+  if (error) return { error: error.message };
+  if (count === 0) return { error: "Could not archive the avatar" };
+
+  revalidatePath("/dashboard/operator");
+  return { error: null };
+}
+
+export async function unarchiveAvatar(avatarId: string): Promise<{ error: string | null }> {
+  const ctx = await requireAvatarManage(avatarId);
+  if (!ctx.ok) return { error: ctx.error };
+
+  // Restore only; the device is NOT re-attached (it may be in use elsewhere).
+  const { error, count } = await ctx.supabase
+    .from("avatars")
+    .update({ archived_at: null }, { count: "exact" })
+    .eq("id", avatarId);
+  if (error) return { error: error.message };
+  if (count === 0) return { error: "Could not restore the avatar" };
 
   revalidatePath("/dashboard/operator");
   return { error: null };

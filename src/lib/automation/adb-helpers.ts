@@ -513,17 +513,6 @@ export async function dumpUiNodes(
   return xml ? parseUiNodes(xml) : null;
 }
 
-/**
- * Back-compat alias for the legacy name. Same resilient implementation.
- * @deprecated prefer {@link dumpUiXml} / {@link dumpUiNodes}.
- */
-export async function tryUiDump(
-  tunnelHostname: string,
-  dbId: string,
-): Promise<string | null> {
-  return dumpUiXml(tunnelHostname, dbId);
-}
-
 // ---------------------------------------------------------------------------
 // Re-exports — convenience for automation modules so they import from a
 // single place (every helper they need lives in `adb-helpers`).

@@ -24,23 +24,75 @@ function getCfHeaders() {
 // Low-level fetch
 // ---------------------------------------------------------------------------
 
+/** Default per-request deadline. Covers slow shell commands; caller can override. */
+const BOX_FETCH_TIMEOUT_MS = 30_000;
+const BOX_FETCH_RETRY_BACKOFF_MS = 400;
+
+export interface BoxFetchInit extends RequestInit {
+  /** Abort the request after this many ms (default 30s). */
+  timeoutMs?: number;
+  /**
+   * Retry count on transport failure / timeout / 5xx / 429. Defaults to 2 for
+   * idempotent GETs and 0 for POSTs — a POST like `shell` (`input tap`) is NOT
+   * safe to replay, so callers that want POST retries must opt in explicitly.
+   */
+  retries?: number;
+}
+
+function isRetryableError(err: unknown): boolean {
+  // AbortError (timeout) and low-level network errors (ECONNRESET, tunnel
+  // hiccup) are transient; a fresh attempt commonly succeeds.
+  if (err instanceof Error) {
+    return err.name === "AbortError" || err.name === "TypeError" || /network|fetch failed|ECONN|ETIMEDOUT|socket/i.test(err.message);
+  }
+  return false;
+}
+
 async function boxFetch<T>(
   tunnelHostname: string,
   path: string,
-  init?: RequestInit
+  init?: BoxFetchInit
 ): Promise<T> {
   const url = `https://${tunnelHostname}${path}`;
-  const headers = new Headers(init?.headers);
+  const { timeoutMs = BOX_FETCH_TIMEOUT_MS, retries, ...requestInit } = init ?? {};
+  const method = (requestInit.method ?? "GET").toUpperCase();
+  const maxRetries = retries ?? (method === "GET" ? 2 : 0);
+
+  const headers = new Headers(requestInit.headers);
   Object.entries(getCfHeaders()).forEach(([k, v]) => headers.set(k, v));
-  if (!headers.has("content-type") && init?.method === "POST") {
+  if (!headers.has("content-type") && method === "POST") {
     headers.set("content-type", "application/json");
   }
 
-  const res = await fetch(url, { ...init, headers, cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`Box API error: ${res.status} ${res.statusText} — ${url}`);
+  let attempt = 0;
+  for (;;) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...requestInit, headers, cache: "no-store", signal: controller.signal });
+      if (!res.ok) {
+        if (attempt < maxRetries && (res.status >= 500 || res.status === 429)) {
+          attempt++;
+          await new Promise((r) => setTimeout(r, BOX_FETCH_RETRY_BACKOFF_MS * attempt));
+          continue;
+        }
+        throw new Error(`Box API error: ${res.status} ${res.statusText} — ${url}`);
+      }
+      return (await res.json()) as T;
+    } catch (err) {
+      if (attempt < maxRetries && isRetryableError(err)) {
+        attempt++;
+        await new Promise((r) => setTimeout(r, BOX_FETCH_RETRY_BACKOFF_MS * attempt));
+        continue;
+      }
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new Error(`Box API timeout after ${timeoutMs}ms — ${url}`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
-  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +182,23 @@ export async function fetchContainerList(tunnelHostname: string) {
   return res.data;
 }
 
+/**
+ * Best-effort Android major version for a device.
+ *
+ * `get_android_detail.aosp_version` is unreliable — it is frequently absent,
+ * `"initializing"`, or empty right after boot, which is why so many device rows
+ * store `null`/`"initializing"` despite running an Android-13 image. The image
+ * name always encodes the version (`vcloud_android13_edge_…`), so we derive from
+ * it when the reported value isn't a clean number. Returns null when neither
+ * source yields a version (so callers can skip the write rather than store junk).
+ */
+export function aospFromDetail(detail: Pick<VmosContainerDetail, "aosp_version" | "image">): string | null {
+  const reported = (detail.aosp_version ?? "").trim();
+  if (/^\d+$/.test(reported)) return reported;
+  const fromImage = (detail.image ?? "").match(/android(\d+)/i);
+  return fromImage ? fromImage[1] : null;
+}
+
 export async function fetchContainerDetail(
   tunnelHostname: string,
   dbId: string
@@ -166,6 +235,58 @@ export async function fetchProxyConfig(
   return res.data.proxy_config;
 }
 
+/**
+ * Result of the magicbox-proxy `/proxy-test/{dbId}` connectivity probe. This is
+ * a REAL routing test: the box asks the per-container mihomo engine to time a
+ * request to a neutral 204 endpoint THROUGH the upstream proxy, so it fails when
+ * the upstream is blocked/dead — unlike `proxy_get`, which only reports what is
+ * configured. `error` carries the box's machine code (`proxy_not_provisioned`,
+ * `engine_unreachable`, `unreachable`, …) for a precise operator message.
+ */
+export interface ProxyDelayTest {
+  ok: boolean;
+  delayMs: number | null;
+  error: string | null;
+}
+
+/**
+ * Probe live proxy reachability via the on-box `/proxy-test/{dbId}` endpoint
+ * (magicbox-proxy, NOT a VMOS API). Never throws: transport/HTTP failures are
+ * mapped to a typed `{ ok:false, error }` so the caller can always render a
+ * result. The container must be running (mihomo only listens while up).
+ */
+export async function fetchProxyDelayTest(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<ProxyDelayTest> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await fetch(`https://${tunnelHostname}/proxy-test/${dbId}`, {
+      headers: getCfHeaders(),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const body = (await res.json().catch(() => null)) as
+      | { ok?: boolean; delayMs?: number; error?: string }
+      | null;
+    if (!body) return { ok: false, delayMs: null, error: `http_${res.status}` };
+    return {
+      ok: !!body.ok,
+      delayMs: typeof body.delayMs === "number" ? body.delayMs : null,
+      error: body.ok ? null : body.error ?? `http_${res.status}`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      delayMs: null,
+      error: err instanceof Error && err.name === "AbortError" ? "timeout" : "transport",
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export type ProxyKind = "socks5" | "http";
 
 export interface SetProxyInput {
@@ -199,6 +320,16 @@ export class ProxyTargetNotRunningError extends Error {
  * "instance not running" (a proxy set at create time is instead persisted and
  * applied on first start).
  */
+// Proxy anti-leak defaults. See PROXY-STRATEGY.md for the rationale:
+//   - dnsOverProxyDisabled=false → DNS resolves THROUGH the proxy exit (no leak).
+//   - udpDisabled: residential SOCKS5 often lacks UDP; leaving it enabled risks
+//     QUIC/WebRTC falling back to the real uplink. Kept false for compatibility
+//     today; the recommendation is to flip to true for the creation profile once
+//     validated on the reference box.
+const PROXY_DNS_SERVERS = ["8.8.8.8", "8.8.4.4"];
+const PROXY_UDP_DISABLED = false;
+const PROXY_DNS_OVER_PROXY_DISABLED = false;
+
 export async function setProxyConfig(
   tunnelHostname: string,
   dbId: string,
@@ -216,9 +347,9 @@ export async function setProxyConfig(
         port: cfg.port,
         account: cfg.account,
         password: cfg.password,
-        dnsServers: ["8.8.8.8", "8.8.4.4"],
-        udpDisabled: false,
-        dnsOverProxyDisabled: false,
+        dnsServers: PROXY_DNS_SERVERS,
+        udpDisabled: PROXY_UDP_DISABLED,
+        dnsOverProxyDisabled: PROXY_DNS_OVER_PROXY_DISABLED,
       }),
     },
   );
@@ -228,6 +359,27 @@ export async function setProxyConfig(
     throw new ProxyTargetNotRunningError(dbId);
   }
   throw new Error(`proxy_set failed (code ${res.code}): ${res.msg ?? "unknown error"}`);
+}
+
+/**
+ * Disable/clear the proxy on the device via VMOS `proxy_stop`. cbs_go forwards
+ * to the container's HTTP service (:18183), tears down the mihomo route, and
+ * clears the stored proxy config — the device falls back to a direct
+ * connection. Requires the container running (same constraint as `proxy_set`).
+ */
+export async function clearProxyConfig(
+  tunnelHostname: string,
+  dbId: string,
+): Promise<void> {
+  const res = await boxFetch<VmosResponse<unknown>>(
+    tunnelHostname,
+    `/android_api/v1/proxy_stop/${dbId}`,
+  );
+  if (res.code === 200) return;
+  if (res.code === 0 || /not running|未运行/i.test(res.msg ?? "")) {
+    throw new ProxyTargetNotRunningError(dbId);
+  }
+  throw new Error(`proxy_stop failed (code ${res.code}): ${res.msg ?? "unknown error"}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -335,23 +487,32 @@ export async function shellSafe(
  * Returns an empty buffer on transport failure so a missing debug screenshot
  * never aborts the automation.
  */
+const SCREENSHOT_TIMEOUT_MS = 15_000;
+
 export async function screenshot(
   tunnelHostname: string,
   dbId: string,
 ): Promise<Buffer> {
   const start = Date.now();
   const url = `https://${tunnelHostname}/container_api/v1/screenshots/${dbId}?no_cache=true`;
-  const res = await fetch(url, { headers: getCfHeaders(), cache: "no-store" });
-  const ms = Date.now() - start;
-
-  if (!res.ok) {
-    console.error(`[ADB][${dbId}] screenshot FAILED`, JSON.stringify({ httpStatus: res.status, ms }));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SCREENSHOT_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { headers: getCfHeaders(), cache: "no-store", signal: controller.signal });
+    const ms = Date.now() - start;
+    if (!res.ok) {
+      console.error(`[ADB][${dbId}] screenshot FAILED`, JSON.stringify({ httpStatus: res.status, ms }));
+      return Buffer.alloc(0);
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    console.log(`[ADB][${dbId}] screenshot OK`, JSON.stringify({ bytes: buf.length, ms }));
+    return buf;
+  } catch (err) {
+    console.error(`[ADB][${dbId}] screenshot FAILED`, JSON.stringify({ error: err instanceof Error ? err.name : "unknown", ms: Date.now() - start }));
     return Buffer.alloc(0);
+  } finally {
+    clearTimeout(timer);
   }
-
-  const buf = Buffer.from(await res.arrayBuffer());
-  console.log(`[ADB][${dbId}] screenshot OK`, JSON.stringify({ bytes: buf.length, ms }));
-  return buf;
 }
 
 // ---------------------------------------------------------------------------

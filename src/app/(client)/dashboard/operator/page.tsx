@@ -34,12 +34,16 @@ export default async function OperatorPage({
     .select("*", { count: "exact", head: true })
     .or(filter);
 
+  const canManage =
+    session.profile.role === "admin" || session.profile.role === "manager";
+
   return (
     <OperatorLayout
       accountId={accountId}
       avatars={avatars}
       deviceCount={deviceCount ?? 0}
       displayName={session.profile.display_name ?? session.profile.email}
+      canManage={canManage}
     />
   );
 }

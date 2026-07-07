@@ -3,10 +3,13 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveDeviceAccess } from "@/lib/devices/access";
 import {
   setProxyConfig,
+  clearProxyConfig,
   fetchProxyConfig,
+  fetchProxyDelayTest,
   ProxyTargetNotRunningError,
 } from "@/lib/box-api";
 
@@ -33,9 +36,43 @@ export interface AppliedProxy {
   account: string | null;
 }
 
+/**
+ * Real reachability of the applied proxy, from the on-box `/proxy-test` probe
+ * (mihomo delay through the upstream). `reachable === null` when the probe
+ * could not run (e.g. device stopped); otherwise `ok` is the routing verdict.
+ */
+export interface ProxyReachability {
+  ok: boolean;
+  delayMs: number | null;
+  reason: string | null;
+}
+
 export interface VerifyProxyResult {
   error: string | null;
   applied: AppliedProxy | null;
+  reachable: ProxyReachability | null;
+}
+
+/** Map the box's machine error codes to a short operator-facing reason. */
+function proxyTestReason(code: string | null): string | null {
+  switch (code) {
+    case null:
+      return null;
+    case "proxy_not_provisioned":
+      return "No proxy engine on this device";
+    case "mihomo_config_incomplete":
+      return "Proxy config incomplete on device";
+    case "engine_unreachable":
+      return "Device/proxy engine not running";
+    case "timeout":
+      return "Timed out reaching the proxy";
+    case "unreachable":
+      return "Upstream proxy did not respond";
+    case "transport":
+      return "Could not reach the box";
+    default:
+      return code;
+  }
 }
 
 export interface UpdateProxyResult {
@@ -70,11 +107,17 @@ export async function verifyDeviceProxy(deviceId: string): Promise<VerifyProxyRe
   try {
     const { deviceId: id, dbId, tunnelHostname } = await resolveDeviceAccess(deviceId);
 
-    const live = await fetchProxyConfig(tunnelHostname, dbId);
+    // Read the applied config and run the REAL routing test concurrently.
+    const [live, delay] = await Promise.all([
+      fetchProxyConfig(tunnelHostname, dbId),
+      fetchProxyDelayTest(tunnelHostname, dbId),
+    ]);
+
     if (!live) {
       return {
         error: "Could not read the proxy from the device — start it and retry.",
         applied: null,
+        reachable: null,
       };
     }
 
@@ -88,7 +131,7 @@ export async function verifyDeviceProxy(deviceId: string): Promise<VerifyProxyRe
 
     // Keep the DB in sync with what the device actually reports.
     const supabase = await createClient();
-    await supabase
+    const { error: dbError } = await supabase
       .from("devices")
       .update({
         proxy_enabled: applied.enabled,
@@ -99,11 +142,18 @@ export async function verifyDeviceProxy(deviceId: string): Promise<VerifyProxyRe
         proxy_password: live.password ?? null,
       })
       .eq("id", id);
+    if (dbError) {
+      return { error: `Read the device but could not save: ${dbError.message}`, applied, reachable: null };
+    }
 
     revalidatePath("/dashboard/operator");
-    return { error: null, applied };
+    return {
+      error: null,
+      applied,
+      reachable: { ok: delay.ok, delayMs: delay.delayMs, reason: proxyTestReason(delay.error) },
+    };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : "Unknown error", applied: null };
+    return { error: err instanceof Error ? err.message : "Unknown error", applied: null, reachable: null };
   }
 }
 
@@ -128,12 +178,28 @@ export async function updateDeviceProxy(
   try {
     const { deviceId: id, dbId, tunnelHostname } = await resolveDeviceAccess(deviceId);
 
+    // The real password is never sent to the browser (redacted on read), so an
+    // empty password on an existing auth-proxy means "keep current". Look it up
+    // server-side (admin client — the caller is already authorized) so editing
+    // e.g. only the host never silently wipes the stored credentials.
+    let effectivePassword = password;
+    if (!effectivePassword && account) {
+      const { data: current } = await createAdminClient()
+        .from("devices")
+        .select("proxy_password, proxy_account")
+        .eq("id", id)
+        .single();
+      if (current?.proxy_account === account && current.proxy_password) {
+        effectivePassword = current.proxy_password as string;
+      }
+    }
+
     await setProxyConfig(tunnelHostname, dbId, {
       proxyType,
       ip: host,
       port,
       account,
-      password,
+      password: effectivePassword,
     });
 
     const proxy: DeviceProxyFields = {
@@ -142,18 +208,72 @@ export async function updateDeviceProxy(
       proxy_host: host,
       proxy_port: port,
       proxy_account: account || null,
-      proxy_password: password || null,
+      proxy_password: effectivePassword || null,
     };
 
     const supabase = await createClient();
-    const { error } = await supabase.from("devices").update(proxy).eq("id", id);
-    if (error) return { error: error.message, proxy: null };
+    const { error, count } = await supabase
+      .from("devices")
+      .update(proxy, { count: "exact" })
+      .eq("id", id);
+    // VMOS already has the new proxy; if the DB write is blocked (RLS) or errors,
+    // surface it instead of silently returning stale success (the historical
+    // "proxy editing doesn't stick" bug). count===0 means RLS matched no row.
+    if (error) return { error: `Applied on device but not saved: ${error.message}`, proxy: null };
+    if (count === 0) {
+      return {
+        error: "Applied on device but you don't have permission to save it. Contact an admin.",
+        proxy: null,
+      };
+    }
 
     revalidatePath("/dashboard/operator");
     return { error: null, proxy };
   } catch (err) {
     if (err instanceof ProxyTargetNotRunningError) {
       return { error: "Start the device before updating its proxy.", proxy: null };
+    }
+    return { error: err instanceof Error ? err.message : "Unknown error", proxy: null };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Clear — disable the proxy on the device (VMOS `proxy_stop`) + persist
+// ---------------------------------------------------------------------------
+
+export async function clearDeviceProxy(deviceId: string): Promise<UpdateProxyResult> {
+  const parsed = z.string().uuid().safeParse(deviceId);
+  if (!parsed.success) return { error: "Invalid device ID", proxy: null };
+
+  try {
+    const { deviceId: id, dbId, tunnelHostname } = await resolveDeviceAccess(parsed.data);
+
+    await clearProxyConfig(tunnelHostname, dbId);
+
+    const proxy: DeviceProxyFields = {
+      proxy_enabled: false,
+      proxy_type: null,
+      proxy_host: null,
+      proxy_port: null,
+      proxy_account: null,
+      proxy_password: null,
+    };
+
+    const supabase = await createClient();
+    const { error, count } = await supabase
+      .from("devices")
+      .update(proxy, { count: "exact" })
+      .eq("id", id);
+    if (error) return { error: `Cleared on device but not saved: ${error.message}`, proxy: null };
+    if (count === 0) {
+      return { error: "Cleared on device but you don't have permission to save it. Contact an admin.", proxy: null };
+    }
+
+    revalidatePath("/dashboard/operator");
+    return { error: null, proxy };
+  } catch (err) {
+    if (err instanceof ProxyTargetNotRunningError) {
+      return { error: "Start the device before clearing its proxy.", proxy: null };
     }
     return { error: err instanceof Error ? err.message : "Unknown error", proxy: null };
   }

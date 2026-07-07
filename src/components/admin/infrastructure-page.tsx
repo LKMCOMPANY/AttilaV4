@@ -164,7 +164,10 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
         <Accordion onValueChange={handleAccordionChange} className="space-y-3">
           {filteredBoxes.map((box, index) => {
             const devices = devicesByBox[box.id] ?? [];
-            const runningCount = devices.filter((d) => d.state === "running").length;
+            // Count only ACTIVE devices (exclude `removed` ghosts) so the
+            // expanded header matches box.device_count (RPC, also active-only).
+            const activeDevices = devices.filter((d) => d.state !== "removed");
+            const runningCount = activeDevices.filter((d) => d.state === "running").length;
             const isLoaded = loadedBoxIds.has(box.id);
 
             return (
@@ -203,7 +206,7 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
                           {isLoaded ? (
                             <>
                               <span className="font-medium text-foreground">{runningCount}</span>
-                              /{devices.length}
+                              /{activeDevices.length}
                             </>
                           ) : (
                             <span className="font-medium text-foreground">{box.device_count}</span>

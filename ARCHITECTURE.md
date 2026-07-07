@@ -2,6 +2,24 @@
 
 > Documentation de référence pour le développement. Mise à jour le 15 avril 2026.
 
+> ⚠️ **SECTIONS OBSOLÈTES — le "Gateway" par box n'a jamais été construit.**
+> Ce document décrit un service `site-gateway` / `device-bridge` sur chaque box
+> qui synchroniserait Supabase et exécuterait les automations toutes les 30s.
+> **Ce composant n'existe pas.** L'architecture réelle en production :
+> - La synchronisation box/devices est **à la demande** : bouton "Sync" admin
+>   (`syncBox` dans [src/app/actions/boxes.ts](src/app/actions/boxes.ts)),
+>   `refreshDeviceStates` côté opérateur, et le reaper (`/api/devices/reap`).
+>   Il n'y a **pas** de heartbeat périodique de 30s ni de daemon par box.
+> - Les automations s'exécutent dans le **web service** via
+>   [src/app/api/pipeline/execute/route.ts](src/app/api/pipeline/execute/route.ts),
+>   orchestré par les **worker loops de [server.mjs](server.mjs)** (process,
+>   execute, reap, verify) — pas par un gateway sur la box.
+> - Toute connexion box passe par `https://{tunnel_hostname}` + CF-Access via
+>   [src/lib/box-api.ts](src/lib/box-api.ts) ; la box n'exécute que
+>   `cloudflared` + `magicbox-proxy` (voir [infra/boxes](infra/boxes)).
+> Les mentions de "gateway", "sync toutes les 30s" et
+> `src/infrastructure/magicbox/device-bridge.ts` ci-dessous sont périmées.
+
 ---
 
 ## Vue d'ensemble

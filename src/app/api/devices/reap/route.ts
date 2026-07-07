@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       if (isBoxUnreachable(err)) {
         unreachableBoxes.add(d.box_id);
-        await markBoxOffline(supabase, d.box_id, box.tunnel_hostname);
+        await markBoxOffline(supabase, d.box_id, box.tunnel_hostname, cutoff);
       } else {
         console.error(
           `[Reaper] failed to stop ${d.db_id}:`,
@@ -109,15 +109,27 @@ function isBoxUnreachable(err: unknown): boolean {
 }
 
 /**
- * Reflect an unreachable box in the dashboard and log it once per cycle
- * instead of once per orphaned device. `last_heartbeat` is left untouched so
- * the gateway sync remains the source of truth for recovery.
+ * Reflect an unreachable box in the dashboard and reconcile stale device state.
+ *
+ * If the tunnel origin is down, nothing is actually running on it, so a device
+ * still marked `running` is stale (this is why offline box-3 kept 7 "running"
+ * rows). We only flip devices whose `last_seen` is older than the idle `cutoff`
+ * — a device with a fresh heartbeat (active operator stream) is spared, so a
+ * transient one-cycle 5xx never yanks a live session offline. `last_heartbeat`
+ * is left untouched so an admin sync stays the source of truth for recovery.
  */
 async function markBoxOffline(
   supabase: ReturnType<typeof createAdminClient>,
   boxId: string,
   tunnelHostname: string,
+  cutoff: string,
 ): Promise<void> {
-  console.warn(`[Reaper] box ${tunnelHostname} unreachable — skipping its idle devices this cycle`);
+  console.warn(`[Reaper] box ${tunnelHostname} unreachable — marking offline + reconciling stale running devices`);
   await supabase.from("boxes").update({ status: "offline" }).eq("id", boxId);
+  await supabase
+    .from("devices")
+    .update({ state: "stopped", last_seen: new Date().toISOString() })
+    .eq("box_id", boxId)
+    .eq("state", "running")
+    .lt("last_seen", cutoff);
 }

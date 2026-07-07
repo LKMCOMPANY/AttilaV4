@@ -27,6 +27,7 @@ interface OperatorLayoutProps {
   avatars: AvatarWithRelations[];
   deviceCount: number;
   displayName: string;
+  canManage: boolean;
 }
 
 function stableSort(
@@ -47,6 +48,7 @@ export function OperatorLayout({
   avatars,
   deviceCount,
   displayName,
+  canManage,
 }: OperatorLayoutProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(
     avatars[0]?.id ?? null
@@ -133,6 +135,11 @@ export function OperatorLayout({
     []
   );
 
+  // Archiving removes the avatar from the active list (it is soft-deleted).
+  const handleAvatarArchived = useCallback((avatarId: string) => {
+    setLocalAvatars((prev) => prev.filter((a) => a.id !== avatarId));
+  }, []);
+
   const selectedAvatar = useMemo(
     () => avatarsWithLiveState.find((a) => a.id === selectedAvatarId) ?? null,
     [avatarsWithLiveState, selectedAvatarId]
@@ -218,6 +225,7 @@ export function OperatorLayout({
           onSearchChange={setSearchQuery}
           deviceCount={deviceCount}
           accountId={accountId}
+          canManage={canManage}
           automatorStatuses={automatorStatuses}
           presenceMap={presenceMap}
         />
@@ -235,7 +243,9 @@ export function OperatorLayout({
         <AvatarDetailPanel
           avatar={selectedAvatar}
           accountId={accountId}
+          canManage={canManage}
           onAvatarUpdated={handleAvatarUpdated}
+          onAvatarArchived={handleAvatarArchived}
         />
       </Panel>
     </Group>

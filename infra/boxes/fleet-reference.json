@@ -1,11 +1,25 @@
 {
   "$comment": "Golden target versions for the VMOS Edge fleet. This is the REFERENCE every box must converge to. The vendor layer (cbs_go, kernel, android image) is not shippable from this repo (proprietary binaries) — it is propagated box-to-box from the reference box via scripts/deploy-vendor.sh. The proxy version is NOT recorded here: it is read from infra/magicbox-proxy/package.json (the code IS the source of truth). check-drift.mjs compares every live box against these values.",
   "reference_box": 5,
-  "captured_at": "2026-07-01",
-  "captured_from": "box-5.attila.army /v1/systeminfo + list_names image",
+  "captured_at": "2026-07-07",
+  "captured_from": "box-5.attila.army /v1/systeminfo + list_names image + cloudflared tunnel connection",
   "vendor": {
     "cbs_version": "1.1.6.29.1",
     "kernel_version": "2.0.57_k1",
     "android_image": "vcloud_android13_edge_20260626203150"
+  },
+  "minimums": {
+    "$comment": "Floor required for the Android Control API v2 (input/click, accessibility/dump, node find-and-act). New devices/boxes must meet these. Source: help.vmosedge.com/en/sdk/agent-api.",
+    "cbs_version": "1.1.1.10",
+    "android_image_date": "20260201"
+  },
+  "provisioning": {
+    "$comment": "New devices MUST be created on this image so they are born fleet-aligned. Pass it to MagicBox-Industrial provisioning as --image-repository <golden_image> (it defaults to VMOS's ancient built-in image otherwise). This file is the single source of truth for the value.",
+    "golden_image": "vcloud_android13_edge_20260626203150"
+  },
+  "cloudflared_version": "2026.6.1",
+  "reference_capacity": {
+    "$comment": "Fleet policy (2026-07-07): max_concurrent_containers = 10 on every box — the VMOS host ceiling (AGENTS.md) proven on box-5 at 16GB RAM. box-1 has 32GB, box-2/4 have 16GB like box-5, so 10 is safe fleet-wide. operator_reserve stays 1 (automator uses max-1). check-drift flags divergence from this value.",
+    "max_concurrent_containers": 10
   }
 }

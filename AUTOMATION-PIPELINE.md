@@ -3,6 +3,17 @@
 > Pipeline d'automatisation des commentaires sur Twitter/X et TikTok.
 > Concu le 15 avril 2026. Refactor 18 avril 2026.
 
+> ⚠️ **Terminologie périmée : "gateway".** Le document parle d'un "gateway"
+> Node.js **sur chaque box** qui poll `campaign_jobs` et exécute les jobs. Ce
+> service n'existe pas. En production, l'exécution se fait dans le **web
+> service** : [src/app/api/pipeline/execute/route.ts](src/app/api/pipeline/execute/route.ts)
+> (claim → `ensureContainerReady` → `executeJob` → `stopContainerIfIdle`),
+> déclenché par les **worker loops de [server.mjs](server.mjs)**. Partout où on
+> lit "le gateway" ci-dessous, comprendre "la route `/api/pipeline/execute`
+> pilotée par les workers de server.mjs". La logique décrite (claim `scheduled_at
+> <= now()`, expiration, reset des `executing` au démarrage) reste correcte —
+> seul l'emplacement (box → web service) a changé.
+
 ---
 
 ## ⚡ État actuel — refactor 18 avril 2026

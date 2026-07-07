@@ -13,19 +13,25 @@ import {
   Check,
   X,
   Loader2,
+  Trash2,
+  ClipboardPaste,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { InfoTip } from "@/components/ui/info-tip";
 import { cn } from "@/lib/utils";
 import { Section, InfoRow } from "./device-info";
 import {
   verifyDeviceProxy,
   updateDeviceProxy,
+  clearDeviceProxy,
   type DeviceProxyFields,
   type AppliedProxy,
+  type ProxyReachability,
 } from "@/app/actions/device-proxy";
+import { parseProxyString } from "@/lib/proxy/parse-proxy";
 import type { Device } from "@/types";
 
 interface ProxySectionProps {
@@ -47,7 +53,10 @@ function draftFromDevice(device: Device): Draft {
     host: device.proxy_host ?? "",
     port: device.proxy_port != null ? String(device.proxy_port) : "",
     account: device.proxy_account ?? "",
-    password: device.proxy_password ?? "",
+    // The real password is never sent to the client. Left blank on edit; the
+    // server keeps the stored password when this is empty and the host/account
+    // are unchanged, so editing another field never wipes auth.
+    password: "",
   };
 }
 
@@ -56,13 +65,33 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
   const [draft, setDraft] = useState<Draft>(() => draftFromDevice(device));
   const [saving, setSaving] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [paste, setPaste] = useState("");
   const [applied, setApplied] = useState<AppliedProxy | null>(null);
+  const [reachable, setReachable] = useState<ProxyReachability | null>(null);
 
   const hasProxy = device.proxy_enabled || !!device.proxy_host;
+
+  // Parse a pasted proxy string (Oxylabs host:port:user:pass, socks5:// URL,
+  // user:pass@host:port …) into the form fields so operators don't hand-split.
+  const applyPaste = (value: string) => {
+    setPaste(value);
+    const parsed = parseProxyString(value);
+    if (parsed) {
+      setDraft({
+        proxyType: parsed.proxyType,
+        host: parsed.host,
+        port: String(parsed.port),
+        account: parsed.account,
+        password: parsed.password,
+      });
+    }
+  };
 
   const runVerify = async () => {
     setVerifying(true);
     setApplied(null);
+    setReachable(null);
     try {
       const result = await verifyDeviceProxy(device.id);
       if (result.error || !result.applied) {
@@ -70,6 +99,7 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
         return;
       }
       setApplied(result.applied);
+      setReachable(result.reachable);
       onProxyUpdated({
         proxy_enabled: result.applied.enabled,
         proxy_type: result.applied.type,
@@ -78,7 +108,13 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
         proxy_account: result.applied.account,
         proxy_password: device.proxy_password,
       });
-      toast.success("Proxy read from device");
+      if (result.reachable?.ok) {
+        toast.success(`Proxy routes (${result.reachable.delayMs ?? "?"} ms)`);
+      } else if (result.reachable) {
+        toast.error(result.reachable.reason ?? "Proxy does not route");
+      } else {
+        toast.success("Proxy read from device");
+      }
     } catch {
       toast.error("Verification failed");
     } finally {
@@ -88,7 +124,27 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
 
   const startEdit = () => {
     setDraft(draftFromDevice(device));
+    setPaste("");
     setEditing(true);
+  };
+
+  const clear = async () => {
+    setClearing(true);
+    try {
+      const result = await clearDeviceProxy(device.id);
+      if (result.error || !result.proxy) {
+        toast.error(result.error ?? "Failed to clear proxy");
+        return;
+      }
+      onProxyUpdated(result.proxy);
+      setApplied(null);
+      setReachable(null);
+      toast.success("Proxy removed from the device");
+    } catch {
+      toast.error("Failed to clear proxy");
+    } finally {
+      setClearing(false);
+    }
   };
 
   const save = async () => {
@@ -109,6 +165,7 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
       onProxyUpdated(result.proxy);
       setEditing(false);
       setApplied(null);
+      setPaste("");
       toast.success("Proxy applied to the device");
     } catch {
       toast.error("Failed to update proxy");
@@ -137,6 +194,23 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
         }
       >
         <div className="space-y-2.5 pt-1">
+          <Field htmlFor="proxy-paste" label="Paste">
+            <div className="relative">
+              <ClipboardPaste className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="proxy-paste"
+                value={paste}
+                onChange={(e) => applyPaste(e.target.value)}
+                placeholder="host:port:user:pass"
+                className="h-7 pl-7 text-[11px]"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+          </Field>
+          <p className="-mt-1 text-[10px] leading-snug text-muted-foreground/70">
+            Paste any format (Oxylabs <code>host:port:user:pass</code>, <code>socks5://user:pass@host:port</code>) — the fields below auto-fill.
+          </p>
           <Field htmlFor="proxy-type" label="Type">
             <NativeSelect
               id="proxy-type"
@@ -159,7 +233,7 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
             <Input id="proxy-account" value={draft.account} onChange={(e) => setDraft((d) => ({ ...d, account: e.target.value }))} placeholder="username" className="h-7 text-[11px]" autoComplete="off" spellCheck={false} />
           </Field>
           <Field htmlFor="proxy-password" label="Password">
-            <Input id="proxy-password" type="password" value={draft.password} onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))} placeholder="••••••••" className="h-7 text-[11px]" autoComplete="off" />
+            <Input id="proxy-password" type="password" value={draft.password} onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))} placeholder={hasProxy ? "leave blank to keep current" : "password"} className="h-7 text-[11px]" autoComplete="off" />
           </Field>
           <p className="text-[10px] leading-snug text-muted-foreground/70">
             Applied to the device immediately. The device must be running.
@@ -178,12 +252,24 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
       icon={Shield}
       action={
         <>
-          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-[10px]" onClick={runVerify} disabled={verifying}>
+          <ProxyHelpTooltip />
+          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-[10px]" onClick={runVerify} disabled={verifying || clearing}>
             {verifying ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />} Verify
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-[10px]" onClick={startEdit}>
+          <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-[10px]" onClick={startEdit} disabled={clearing}>
             <Pencil className="h-3 w-3" /> Edit
           </Button>
+          {hasProxy && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-[10px] text-destructive hover:text-destructive"
+              onClick={clear}
+              disabled={clearing || verifying}
+            >
+              {clearing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />} Disable
+            </Button>
+          )}
         </>
       }
     >
@@ -193,13 +279,15 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
           <InfoRow icon={Globe} label="Host" value={device.proxy_host} />
           <InfoRow icon={Hash} label="Port" value={device.proxy_port} />
           <InfoRow icon={User} label="Account" value={device.proxy_account} />
-          <InfoRow icon={Lock} label="Password" value={device.proxy_password ? "••••••••" : null} />
+          {/* The real password is never sent to the browser; show a masked
+              marker when the proxy has an account (auth proxy). */}
+          <InfoRow icon={Lock} label="Password" value={device.proxy_account ? "••••••••" : null} />
         </>
       ) : (
         <p className="py-1.5 text-[11px] text-muted-foreground/70">No proxy configured</p>
       )}
 
-      {applied && <AppliedResult applied={applied} />}
+      {applied && <AppliedResult applied={applied} reachable={reachable} />}
     </Section>
   );
 }
@@ -207,6 +295,18 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
+
+/** Explains when a proxy change works, and what Verify / Disable do. */
+function ProxyHelpTooltip() {
+  return (
+    <InfoTip side="bottom">
+      <span className="font-medium">Editing the proxy requires the device to be running.</span>
+      <br />
+      Save applies it live (no restart). Verify runs a real connectivity test through the proxy.
+      Disable removes it (direct connection).
+    </InfoTip>
+  );
+}
 
 function Field({
   label,
@@ -227,10 +327,24 @@ function Field({
   );
 }
 
-function AppliedResult({ applied }: { applied: AppliedProxy }) {
+function AppliedResult({
+  applied,
+  reachable,
+}: {
+  applied: AppliedProxy;
+  reachable: ProxyReachability | null;
+}) {
   const label = applied.host
     ? `${applied.type ?? "proxy"} · ${applied.host}:${applied.port ?? "?"}`
     : "No proxy applied";
+  // Reachability is the REAL routing verdict (mihomo delay), distinct from
+  // whether a proxy is merely configured/enabled.
+  const routes = reachable?.ok === true;
+  const reachLabel = reachable
+    ? routes
+      ? `Routes · ${reachable.delayMs ?? "?"} ms`
+      : reachable.reason ?? "Does not route"
+    : "Reachability not tested";
   return (
     <div className="mt-2 rounded-md border bg-background/60 px-2.5 py-2">
       <div className="flex items-center gap-2">
@@ -238,6 +352,15 @@ function AppliedResult({ applied }: { applied: AppliedProxy }) {
         <span className="text-[11px] font-medium">Applied on device</span>
       </div>
       <p className="mt-1 truncate text-[10px] text-muted-foreground">{label}</p>
+      <div className="mt-1.5 flex items-center gap-2 border-t pt-1.5">
+        <span
+          className={cn(
+            "h-1.5 w-1.5 rounded-full",
+            reachable ? (routes ? "bg-success" : "bg-destructive") : "bg-muted-foreground",
+          )}
+        />
+        <span className="truncate text-[10px] text-muted-foreground">{reachLabel}</span>
+      </div>
     </div>
   );
 }

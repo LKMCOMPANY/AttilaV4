@@ -162,7 +162,7 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
   const handleDownloadScreenshot = useCallback(async () => {
     if (!device) return;
     try {
-      const url = `/api/box/${device.box_id}/container_api/v1/screenshots/${device.db_id}?t=${Date.now()}`;
+      const url = `/api/box/${device.box_id}/container_api/v1/screenshots/${device.db_id}?no_cache=true&t=${Date.now()}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error("Screenshot unavailable");
       const blob = await res.blob();
@@ -181,7 +181,7 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
     if (!device) return;
     setActionLoading("extract");
     try {
-      const url = `/api/box/${device.box_id}/container_api/v1/screenshots/${device.db_id}?t=${Date.now()}`;
+      const url = `/api/box/${device.box_id}/container_api/v1/screenshots/${device.db_id}?no_cache=true&t=${Date.now()}`;
       const Tesseract = await import("tesseract.js");
       const { data: { text } } = await Tesseract.default.recognize(url, "eng+fra");
       const cleaned = text.trim();

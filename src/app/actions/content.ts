@@ -2,7 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { canUserAccessDevice, requireSession } from "@/lib/auth/session";
-import { boxFetch } from "@/lib/box-api";
+import { boxFetch, shell } from "@/lib/box-api";
 import { z } from "zod";
 import type { ContentItem } from "@/types";
 
@@ -199,16 +199,13 @@ export async function pushContentToDevice(
       }
     );
 
-    // Trigger media scanner so the file appears in gallery/camera roll
-    await boxFetch(
+    // Trigger media scanner so the file appears in gallery/camera roll. Go
+    // through `shell()` (not raw boxFetch) so the request carries the required
+    // `id` field and container-not-ready (VMOS code 201) is handled uniformly.
+    await shell(
       box.tunnel_hostname,
-      `/android_api/v1/shell/${device.db_id}`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          cmd: `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://${destPath}${item.file_name}`,
-        }),
-      }
+      device.db_id,
+      `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://${destPath}${item.file_name}`,
     );
 
     await supabase

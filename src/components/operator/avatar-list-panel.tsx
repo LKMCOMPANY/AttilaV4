@@ -11,9 +11,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserPlus, Search, Radar, X } from "lucide-react";
+import { UserPlus, Search, Radar, X, Archive } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
+import { ArchivedAvatarsDialog } from "./archived-avatars-dialog";
 import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { OperatorPresence } from "@/hooks/use-realtime-account";
@@ -41,6 +42,7 @@ interface AvatarListPanelProps {
   onSearchChange: (query: string) => void;
   deviceCount: number;
   accountId: string;
+  canManage: boolean;
   automatorStatuses?: Record<string, AvatarAutomatorInfo>;
   presenceMap?: Record<string, OperatorPresence[]>;
 }
@@ -58,11 +60,13 @@ export function AvatarListPanel({
   onSearchChange,
   deviceCount,
   accountId,
+  canManage,
   automatorStatuses,
   presenceMap,
 }: AvatarListPanelProps) {
   const isSearching = searchQuery.trim().length > 0;
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const searchParams = useSearchParams();
   const accountParam = searchParams.get("account");
   const cartoHref = `/dashboard/cartography${accountParam ? `?account=${accountParam}` : ""}`;
@@ -103,6 +107,25 @@ export function AvatarListPanel({
               Cartography
             </TooltipContent>
           </Tooltip>
+          {canManage && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setArchivedOpen(true)}
+                    className="h-7 w-7 p-0"
+                  >
+                    <Archive className="h-3.5 w-3.5" />
+                  </Button>
+                }
+              />
+              <TooltipContent side="bottom" className="text-xs">
+                Archived avatars
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Button
             variant="ghost"
             size="sm"
@@ -244,6 +267,14 @@ export function AvatarListPanel({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
       />
+
+      {canManage && (
+        <ArchivedAvatarsDialog
+          accountId={accountId}
+          open={archivedOpen}
+          onOpenChange={setArchivedOpen}
+        />
+      )}
     </div>
   );
 }

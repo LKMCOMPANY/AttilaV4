@@ -43,6 +43,12 @@ export interface Box {
   uptime_seconds: number | null;
   container_count: number;
   max_concurrent_containers: number;
+  /**
+   * Slots reserved for operators out of `max_concurrent_containers`. The
+   * automator may only use `max_concurrent_containers - operator_reserve`, so a
+   * live operator always has capacity. Defaults to 1 (migration 20260625090000).
+   */
+  operator_reserve: number;
   last_heartbeat: string | null;
   metadata: Record<string, unknown>;
   created_at: string;

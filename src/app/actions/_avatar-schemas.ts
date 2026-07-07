@@ -59,6 +59,8 @@ export type CreateAvatarInput = z.infer<typeof createAvatarSchema>;
 // Partial update. Network toggles and credentials are handled by dedicated
 // actions (see `avatar-social`) so that toggling a network never touches
 // credentials and editing one credential field never overwrites its siblings.
+// `device_id` is intentionally NOT here: device attach/detach/swap goes through
+// the single validated `setAvatarDevice` action (account scope + 1:1 guard).
 export const updateAvatarSchema = z
   .object({
     first_name: z.string().min(1).max(50).optional(),

@@ -8,6 +8,7 @@ import {
   fetchContainerDetail,
   fetchTimezoneLocale,
   fetchProxyConfig,
+  aospFromDetail,
 } from "@/lib/box-api";
 import type { Device } from "@/types";
 
@@ -171,7 +172,8 @@ export async function syncDeviceDetail(
       isRunning = detail.status === "running";
       updates.state = isRunning ? "running" : "stopped";
       updates.image = detail.image;
-      if (detail.aosp_version) updates.aosp_version = detail.aosp_version;
+      const aosp = aospFromDetail(detail);
+      if (aosp) updates.aosp_version = aosp;
       updates.resolution = `${detail.width}x${detail.height}`;
       updates.memory_mb = detail.memory;
       updates.dpi = parseInt(detail.dpi, 10) || null;

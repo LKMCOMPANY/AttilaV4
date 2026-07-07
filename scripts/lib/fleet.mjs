@@ -181,6 +181,64 @@ export async function fetchDevicesWithBoxes() {
   );
 }
 
+/** All proxy-enabled devices with their box hostname + state (proxy audit). */
+export async function fetchProxiedDevices() {
+  return supabaseFetch(
+    "devices?select=id,db_id,user_name,state,proxy_type,proxy_host,proxy_port," +
+      "boxes(name,tunnel_hostname,status)&proxy_enabled=is.true&order=user_name.asc",
+  );
+}
+
+/** Every device on an ONLINE box, with what the full proxy audit needs. */
+export async function fetchDevicesForProxyAudit() {
+  return supabaseFetch(
+    "devices?select=id,db_id,user_name,state,account_id,proxy_enabled," +
+      "boxes!inner(name,tunnel_hostname,status,max_concurrent_containers)" +
+      "&boxes.status=eq.online&order=user_name.asc",
+  );
+}
+
+/** device_ids with a ready/executing campaign job (must not be disturbed). */
+export async function fetchBusyDeviceIds() {
+  const rows = await supabaseFetch(
+    "campaign_jobs?select=device_id&status=in.(ready,executing)",
+  );
+  return new Set((rows ?? []).map((r) => r.device_id).filter(Boolean));
+}
+
+/** Read the live proxy config of a RUNNING device (VMOS proxy_get). */
+export async function fetchProxyConfig(boxHost, dbId) {
+  const json = await boxFetch(boxHost, `/android_api/v1/proxy_get/${dbId}`);
+  if ((json?.code ?? -1) !== 200) return null;
+  return json?.data?.proxy_config ?? null;
+}
+
+/** Persist the observed proxy config (or clear it) for a device. */
+export async function recordDeviceProxy(deviceId, proxy) {
+  const body = proxy
+    ? {
+        proxy_enabled: !!proxy.enabled,
+        proxy_type: proxy.proxyType ?? null,
+        proxy_host: proxy.ip ?? null,
+        proxy_port: proxy.port ?? null,
+        proxy_account: proxy.account ?? null,
+        proxy_password: proxy.password ?? null,
+      }
+    : {
+        proxy_enabled: false,
+        proxy_type: null,
+        proxy_host: null,
+        proxy_port: null,
+        proxy_account: null,
+        proxy_password: null,
+      };
+  return supabaseFetch(`devices?id=eq.${deviceId}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function updateDeviceState(deviceId, state) {
   return supabaseFetch(`devices?id=eq.${deviceId}`, {
     method: "PATCH",
