@@ -50,3 +50,7 @@ next-env.d.ts
 
 # tesseract.js language models (downloaded at runtime, never commit)
 *.traineddata
+
+# agent skills (local agent tooling, installed via `npx skills add`)
+/.agents/
+/skills-lock.json
