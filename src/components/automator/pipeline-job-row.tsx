@@ -20,7 +20,8 @@ import {
   JobStatusLabel,
   JobVerificationBadge,
 } from "./pipeline-status";
-import { formatDistanceToNow, format } from "date-fns";
+import { format } from "date-fns";
+import { RelativeTime } from "./relative-time";
 import { parseJobError } from "@/lib/automation/errors";
 import type { CampaignJobWithAvatar, SocialPlatform } from "@/types";
 
@@ -72,15 +73,13 @@ export function PipelineJobRow({
         </p>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
-          <span>
-            {formatDistanceToNow(new Date(job.completed_at ?? job.scheduled_at), {
-              addSuffix: true,
-            })}
-          </span>
-          {job.duration_ms != null && (
-            <span className="tabular-nums">
-              · {(job.duration_ms / 1000).toFixed(0)}s
-            </span>
+          {job.completed_at ? (
+            <RelativeTime
+              iso={job.completed_at}
+              prefix={job.status === "done" ? "published " : job.status === "failed" ? "attempted " : ""}
+            />
+          ) : (
+            <RelativeTime iso={job.scheduled_at} prefix="scheduled " />
           )}
           {retried && (
             <span className="inline-flex items-center gap-1 text-warning">
@@ -309,7 +308,10 @@ function TimelineEntry({
   return (
     <div className="flex items-baseline gap-1.5 text-[11px]">
       <span className="text-muted-foreground">{label}</span>
-      <span className="tabular-nums">
+      <span
+        className="tabular-nums"
+        title={timestamp ? format(new Date(timestamp), "d MMM yyyy, HH:mm:ss") : undefined}
+      >
         {timestamp ? format(new Date(timestamp), "HH:mm:ss") : "—"}
       </span>
     </div>

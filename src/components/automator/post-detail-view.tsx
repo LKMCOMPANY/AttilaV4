@@ -20,7 +20,7 @@ import { JobVerdict, JobEvidence } from "./pipeline-job-row";
 import { JobStatusLabel, PostStatusBadge } from "./pipeline-status";
 import { renderMetricChips, ResponseOutcome } from "./pipeline-post-row";
 import { SentimentChip } from "./sentiment-chip";
-import { formatDistanceToNow } from "date-fns";
+import { RelativeTime } from "./relative-time";
 import type {
   CampaignPost,
   CampaignJobWithAvatar,
@@ -146,12 +146,11 @@ export function PostDetailView({
                 <span className="truncate text-[13px] font-semibold">
                   @{post.post_author ?? "unknown"}
                 </span>
-                <span className="shrink-0 text-[11px] text-muted-foreground">
-                  {formatDistanceToNow(
-                    new Date(post.source_posted_at ?? post.created_at),
-                    { addSuffix: true },
-                  )}
-                </span>
+                <RelativeTime
+                  iso={post.source_posted_at ?? post.created_at}
+                  prefix="posted "
+                  className="shrink-0 text-[11px] text-muted-foreground"
+                />
                 {post.post_url && (
                   <a
                     href={post.post_url}
@@ -236,6 +235,10 @@ export function PostDetailView({
 
 function ResponseCard({ job }: { job: CampaignJobWithAvatar }) {
   const pending = job.status === "ready" || job.status === "executing";
+  // The moment the avatar actually acted (comment/reply sent), from
+  // `completed_at`. This is the customer-facing "when" — distinct from the
+  // execution duration (telemetry), which stays out of this card.
+  const actedPrefix = job.status === "done" ? "published " : "attempted ";
 
   return (
     <div className="rounded-md border border-border/60 px-2.5 py-2.5">
@@ -243,15 +246,18 @@ function ResponseCard({ job }: { job: CampaignJobWithAvatar }) {
         <span className="truncate text-[13px] font-semibold">
           {job.avatar_name ?? "Unknown avatar"}
         </span>
-        {job.duration_ms != null && (
-          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-            {(job.duration_ms / 1000).toFixed(0)}s
-          </span>
-        )}
         <span className="ml-auto shrink-0">
           <JobStatusLabel status={job.status} />
         </span>
       </div>
+
+      {!pending && job.completed_at && (
+        <RelativeTime
+          iso={job.completed_at}
+          prefix={actedPrefix}
+          className="mt-0.5 block text-[11px] text-muted-foreground"
+        />
+      )}
 
       <p className="mt-1 text-xs leading-relaxed text-foreground">
         {job.comment_text}
