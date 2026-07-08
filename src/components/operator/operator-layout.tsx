@@ -10,11 +10,14 @@ import {
   refreshDeviceStates,
 } from "@/app/actions/avatars";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
+import { getAvatarHealthSignals } from "@/app/actions/account-health";
 import { AvatarListPanel } from "./avatar-list-panel";
 import { DevicePanel } from "./device-panel";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
-import { avatarNeedsAttention } from "@/lib/constants/account-health";
+import { avatarNeedsAttention, type AvatarHealthSignals } from "@/lib/constants/account-health";
 import type { AvatarWithRelations, DeviceState } from "@/types";
+
+const EMPTY_SIGNALS: AvatarHealthSignals = {};
 
 export type AvatarSortField =
   | "last_used"
@@ -62,6 +65,7 @@ export function OperatorLayout({
   const [localAvatars, setLocalAvatars] = useState(avatars);
   const [automatorStatuses, setAutomatorStatuses] = useState<Record<string, AvatarAutomatorInfo>>({});
   const [deviceStates, setDeviceStates] = useState<Record<string, string>>({});
+  const [healthSignals, setHealthSignals] = useState<Record<string, AvatarHealthSignals>>({});
 
   const presenceState = useMemo(
     () =>
@@ -83,6 +87,11 @@ export function OperatorLayout({
   // Fetch automator statuses on mount + on realtime events
   useEffect(() => {
     getAvatarAutomatorStatuses(accountId).then(setAutomatorStatuses);
+  }, [accountId, jobsVersion]);
+
+  // On-device + shadow-ban health signals — refreshed with the same job ticks.
+  useEffect(() => {
+    getAvatarHealthSignals(accountId).then(setHealthSignals);
   }, [accountId, jobsVersion]);
 
   // Fast path: read last-known device states from the DB on mount + on realtime
@@ -161,9 +170,10 @@ export function OperatorLayout({
   // "needs attention" filter toggle (hidden when the fleet is healthy).
   const attentionCount = useMemo(
     () =>
-      avatarsWithLiveState.filter((a) => avatarNeedsAttention(a.platform_health))
-        .length,
-    [avatarsWithLiveState],
+      avatarsWithLiveState.filter((a) =>
+        avatarNeedsAttention(a.platform_health, healthSignals[a.id]),
+      ).length,
+    [avatarsWithLiveState, healthSignals],
   );
 
   // Derived in render (React 19 idiom — no state-sync effect): a stale
@@ -179,7 +189,9 @@ export function OperatorLayout({
       );
     }
     if (effectiveHealthFilter) {
-      result = result.filter((a) => avatarNeedsAttention(a.platform_health));
+      result = result.filter((a) =>
+        avatarNeedsAttention(a.platform_health, healthSignals[a.id]),
+      );
     }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
@@ -191,7 +203,7 @@ export function OperatorLayout({
       });
     }
     return result;
-  }, [avatarsWithLiveState, filterArmyId, effectiveHealthFilter, searchQuery]);
+  }, [avatarsWithLiveState, filterArmyId, effectiveHealthFilter, healthSignals, searchQuery]);
 
   const sortedAvatars = useMemo(() => {
     switch (sortField) {
@@ -250,6 +262,7 @@ export function OperatorLayout({
           canManage={canManage}
           automatorStatuses={automatorStatuses}
           presenceMap={presenceMap}
+          healthSignals={healthSignals}
         />
       </Panel>
 
@@ -266,6 +279,7 @@ export function OperatorLayout({
           avatar={selectedAvatar}
           accountId={accountId}
           canManage={canManage}
+          healthSignals={selectedAvatar ? healthSignals[selectedAvatar.id] ?? EMPTY_SIGNALS : EMPTY_SIGNALS}
           onAvatarUpdated={handleAvatarUpdated}
           onAvatarArchived={handleAvatarArchived}
         />

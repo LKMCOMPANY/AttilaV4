@@ -284,11 +284,20 @@ interface TikTokWebProfile {
   };
 }
 
+// TikTok's "user does not exist" status code. Other non-zero codes (e.g. 10222)
+// are soft states — TikTok STILL returns the resolved user — so they must not
+// be read as "gone".
+const TIKTOK_NOT_FOUND_CODE = 10221;
+
 /**
- * TikTok account health via the web profile endpoint. TikTok has no public
- * "suspended" state here: a live handle returns `statusCode === 0` with a
- * populated `userInfo`, a gone/banned handle returns a non-zero status code
- * (e.g. 10221) — mapped to `notfound`.
+ * TikTok account health via the web profile endpoint. The authoritative signal
+ * is whether TikTok resolves a user for the handle:
+ *   - a resolved `userInfo.user.uniqueId` → the account exists (`active`),
+ *     regardless of the exact status code (0 for a normal account, 10222 for
+ *     soft states like private — both still hand back the user);
+ *   - status code 10221 with no user → the handle resolves to nothing
+ *     (`notfound`): deleted / renamed / banned, or the stored @handle is wrong;
+ *   - anything else is ambiguous → `unknown` (never asserted as gone).
  */
 export async function getTikTokAccountHealth(
   uniqueId: string,
@@ -303,15 +312,12 @@ export async function getTikTokAccountHealth(
   if (!data) return null;
 
   const user = data.userInfo?.user;
-  if (data.statusCode === 0 && user?.uniqueId) {
+  if (user?.uniqueId) {
     return { status: "active", followers: data.userInfo?.stats?.followerCount ?? null };
   }
-  // A definitive non-zero TikTok status code (e.g. 10221) = the handle is gone.
-  if (typeof data.statusCode === "number" && data.statusCode !== 0) {
+  if (data.statusCode === TIKTOK_NOT_FOUND_CODE) {
     return { status: "notfound", followers: null };
   }
-  // Anything else (statusCode 0 but no user, or an unexpected shape) is
-  // ambiguous — don't assert "notfound" on a handle that might be live.
   return { status: "unknown", followers: null };
 }
 

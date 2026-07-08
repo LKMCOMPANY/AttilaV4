@@ -22,6 +22,7 @@ import { DeviceTab } from "./tabs/device-tab";
 import { ContentTab } from "./tabs/content-tab";
 import { EmptyPanel } from "@/components/ui/empty";
 import { archiveAvatar } from "@/app/actions/avatars";
+import type { AvatarHealthSignals } from "@/lib/constants/account-health";
 import type { AvatarWithRelations } from "@/types";
 import { User, Archive, Loader2 } from "lucide-react";
 
@@ -29,12 +30,15 @@ export interface EditableTabProps {
   avatar: AvatarWithRelations;
   accountId: string;
   onUpdated: (avatar: AvatarWithRelations) => void;
+  /** On-device / shadow-ban signals for this avatar (operator health). */
+  healthSignals?: AvatarHealthSignals;
 }
 
 interface AvatarDetailPanelProps {
   avatar: AvatarWithRelations | null;
   accountId: string;
   canManage: boolean;
+  healthSignals?: AvatarHealthSignals;
   onAvatarUpdated: (avatar: AvatarWithRelations) => void;
   onAvatarArchived: (avatarId: string) => void;
 }
@@ -43,6 +47,7 @@ export function AvatarDetailPanel({
   avatar,
   accountId,
   canManage,
+  healthSignals,
   onAvatarUpdated,
   onAvatarArchived,
 }: AvatarDetailPanelProps) {
@@ -114,7 +119,12 @@ export function AvatarDetailPanel({
         <ScrollArea className="min-h-0 flex-1">
           <div className="p-3 @[350px]/detail:p-4">
             <TabsContent value="overview">
-              <OverviewTab avatar={avatar} accountId={accountId} onUpdated={onAvatarUpdated} />
+              <OverviewTab
+                avatar={avatar}
+                accountId={accountId}
+                onUpdated={onAvatarUpdated}
+                healthSignals={healthSignals}
+              />
             </TabsContent>
             <TabsContent value="identity">
               <IdentityTab avatar={avatar} accountId={accountId} onUpdated={onAvatarUpdated} />

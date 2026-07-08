@@ -78,6 +78,19 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
   const supabase = createAdminClient();
   const now = Date.now();
 
+  // Only probe accounts actually under automation. Health matters where a
+  // campaign runs; probing idle clients wastes paid TikHub calls and surfaces
+  // confusing labels on accounts nobody is operating.
+  const { data: activeCampaigns } = await supabase
+    .from("campaigns")
+    .select("account_id")
+    .eq("status", "active");
+
+  const automatedAccountIds = [
+    ...new Set((activeCampaigns ?? []).map((c) => c.account_id as string)),
+  ];
+  if (automatedAccountIds.length === 0) return result;
+
   const { data: avatars } = await supabase
     .from("avatars")
     .select(
@@ -85,6 +98,7 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
     )
     .eq("status", "active")
     .is("archived_at", null)
+    .in("account_id", automatedAccountIds)
     .or("twitter_enabled.eq.true,tiktok_enabled.eq.true");
 
   if (!avatars || avatars.length === 0) return result;

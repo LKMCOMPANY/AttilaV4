@@ -21,6 +21,10 @@ import {
 import { SocialIcon } from "@/components/icons/social-icons";
 import { AccountHealthBadge } from "@/components/shared/account-health-badge";
 import {
+  deriveAccountHealth,
+  type AvatarHealthSignals,
+} from "@/lib/constants/account-health";
+import {
   setAvatarPlatformEnabled,
   setAvatarPlatformCredential,
 } from "@/app/actions/avatar-social";
@@ -41,9 +45,10 @@ const FIELD_LABELS: Record<CredentialField, { label: string; masked?: boolean }>
 interface SocialSectionProps {
   avatar: AvatarWithRelations;
   onUpdated: (avatar: AvatarWithRelations) => void;
+  healthSignals?: AvatarHealthSignals;
 }
 
-export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
+export function SocialSection({ avatar, onUpdated, healthSignals }: SocialSectionProps) {
   const handleToggle = async (
     platform: SocialPlatform,
     enabledKey: `${SocialPlatform}_enabled`,
@@ -97,6 +102,15 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
         const creds = (avatar[platform.credKey] ?? {}) as SocialCredentials;
         const health =
           avatar.platform_health?.find((h) => h.platform === platform.id) ?? null;
+        const sig = healthSignals?.[platform.id];
+        // Only platforms we actually probe (a TikHub row) or that carry a live
+        // signal get a badge — keeps Reddit/Instagram from reading "Unchecked".
+        const probed = health !== null || sig !== undefined;
+        const healthKind = deriveAccountHealth({
+          tikhub: health?.status,
+          deviceIssue: sig?.deviceIssue,
+          shadowBan: sig?.shadowBan,
+        });
 
         return (
           <AccordionItem key={platform.id} value={platform.id}>
@@ -113,8 +127,8 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
                     <SocialIcon platform={platform.id} className="h-3 w-3" />
                     {platform.label}
                   </span>
-                  {enabled && (
-                    <AccountHealthBadge health={health} showActive />
+                  {enabled && probed && (
+                    <AccountHealthBadge kind={healthKind} health={health} showOk />
                   )}
                 </div>
               </AccordionTrigger>

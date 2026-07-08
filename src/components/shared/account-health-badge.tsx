@@ -1,131 +1,122 @@
-import { Ban, ShieldCheck, ShieldQuestion, UserX } from "lucide-react";
+import {
+  Ban,
+  HelpCircle,
+  LogOut,
+  PencilLine,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldQuestion,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 import { formatCount } from "@/lib/format";
-import { isAccountHealthAlarming } from "@/lib/constants/account-health";
-import type { AccountHealthStatus, AvatarPlatformHealth } from "@/types";
+import {
+  ACCOUNT_HEALTH_META,
+  isAlarmingKind,
+  type AccountHealthKind,
+  type AccountHealthTone,
+} from "@/lib/constants/account-health";
+import type { AvatarPlatformHealth } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Account health — off-device (TikHub) profile status shown to operators.
-// `suspended` / `notfound` are alarming (the account can't publish, which is
-// WHY an on-device "done" ends up unconfirmed). `active` is reassuring but
-// quiet; `unknown` renders nothing unless explicitly asked (avoids nagging
-// while the first probe is still pending / TikHub is disabled).
+// Account health — visual layer over the derived `AccountHealthKind`.
+// Two confidence tiers carry through the colours:
+//   critical (red) = we're sure (saw the login/block screen, or the platform
+//   says suspended); watch (amber) = probable (handle doesn't resolve, or posts
+//   aren't being confirmed = likely shadow-ban). `live`/`unchecked` stay quiet.
 // ---------------------------------------------------------------------------
 
-const CONFIG: Record<
-  AccountHealthStatus,
-  { icon: typeof ShieldCheck; label: string; color: string; bgColor: string; dot: string }
-> = {
-  active: {
-    icon: ShieldCheck,
-    label: "Live",
-    color: "text-success",
-    bgColor: "bg-success/10",
-    dot: "bg-success",
-  },
-  suspended: {
-    icon: Ban,
-    label: "Suspended",
-    color: "text-destructive",
-    bgColor: "bg-destructive/10",
-    dot: "bg-destructive",
-  },
-  notfound: {
-    icon: UserX,
-    label: "Not found",
-    color: "text-destructive",
-    bgColor: "bg-destructive/10",
-    dot: "bg-destructive",
-  },
-  unknown: {
-    icon: ShieldQuestion,
-    label: "Unchecked",
-    color: "text-muted-foreground",
-    bgColor: "bg-muted/40",
-    dot: "bg-muted-foreground/40",
-  },
+const ICON: Record<AccountHealthKind, typeof ShieldCheck> = {
+  logged_out: LogOut,
+  suspended: Ban,
+  blocked: ShieldAlert,
+  captcha: ShieldAlert,
+  unresolved: HelpCircle,
+  handle_mismatch: PencilLine,
+  shadow_ban: ShieldQuestion,
+  live: ShieldCheck,
+  unchecked: ShieldQuestion,
 };
 
-function hint(health: AvatarPlatformHealth): string {
-  const parts: string[] = [];
-  switch (health.status) {
-    case "active":
-      parts.push("Account is live on the platform.");
-      if (health.followers != null && health.followers > 0) {
-        parts.push(`${formatCount(health.followers)} followers.`);
-      }
-      break;
-    case "suspended":
-      parts.push("The platform has suspended this account — its posts won't appear.");
-      break;
-    case "notfound":
-      parts.push("This handle no longer resolves (deleted, renamed, or banned).");
-      break;
-    default:
-      parts.push("Account health not checked yet.");
+const TONE_CLASS: Record<AccountHealthTone, { text: string; bg: string; dot: string }> = {
+  critical: { text: "text-destructive", bg: "bg-destructive/10", dot: "bg-destructive" },
+  watch: { text: "text-warning", bg: "bg-warning/10", dot: "bg-warning" },
+  ok: { text: "text-success", bg: "bg-success/10", dot: "bg-success" },
+  muted: { text: "text-muted-foreground", bg: "bg-muted/40", dot: "bg-muted-foreground/40" },
+};
+
+/** Full tooltip: the kind's explanation + platform context (followers / age). */
+function tooltip(kind: AccountHealthKind, health: AvatarPlatformHealth | null): string {
+  const parts = [ACCOUNT_HEALTH_META[kind].hint];
+  if (kind === "live" && (health?.followers ?? 0) > 0) {
+    parts.push(`${formatCount(health!.followers!)} followers.`);
   }
-  if (health.checked_at) {
+  if (health?.checked_at) {
     parts.push(`Checked ${formatDistanceToNow(new Date(health.checked_at), { addSuffix: true })}.`);
   }
   return parts.join(" ");
 }
 
 /**
- * Pill with icon + label. By default only alarming statuses render; pass
- * `showActive` (e.g. in the operator credentials panel) to also show the
- * reassuring "Live" / "Unchecked" states.
+ * Pill with icon + label. By default only alarming kinds (critical / watch)
+ * render; pass `showOk` (e.g. the operator credentials panel) to also show the
+ * reassuring `Live` / `Unchecked` states.
  */
 export function AccountHealthBadge({
+  kind,
   health,
-  showActive = false,
+  showOk = false,
   className,
 }: {
-  health: AvatarPlatformHealth | null | undefined;
-  showActive?: boolean;
+  kind: AccountHealthKind;
+  health?: AvatarPlatformHealth | null;
+  showOk?: boolean;
   className?: string;
 }) {
-  if (!health) return null;
-  if (!showActive && !isAccountHealthAlarming(health.status)) return null;
+  if (!showOk && !isAlarmingKind(kind)) return null;
 
-  const config = CONFIG[health.status];
-  const Icon = config.icon;
+  const meta = ACCOUNT_HEALTH_META[kind];
+  const tone = TONE_CLASS[meta.tone];
+  const Icon = ICON[kind];
   return (
     <span
-      title={hint(health)}
+      title={tooltip(kind, health ?? null)}
       className={cn(
         "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
-        config.color,
-        config.bgColor,
+        tone.text,
+        tone.bg,
         className,
       )}
     >
       <Icon className="h-2.5 w-2.5" />
-      {config.label}
-      {showActive && health.status === "active" && (health.followers ?? 0) > 0 && (
-        <span className="tabular-nums opacity-70">· {formatCount(health.followers!)}</span>
+      {meta.label}
+      {showOk && kind === "live" && (health?.followers ?? 0) > 0 && (
+        <span className="tabular-nums opacity-70">· {formatCount(health!.followers!)}</span>
       )}
     </span>
   );
 }
 
 /**
- * Bare dot for dense lists — renders only for alarming statuses so a healthy
- * fleet stays visually quiet.
+ * Bare dot + short label for dense lists — renders only for alarming kinds so a
+ * healthy fleet stays visually quiet.
  */
 export function AccountHealthDot({
+  kind,
   health,
   className,
 }: {
-  health: AvatarPlatformHealth | null | undefined;
+  kind: AccountHealthKind;
+  health?: AvatarPlatformHealth | null;
   className?: string;
 }) {
-  if (!health || !isAccountHealthAlarming(health.status)) return null;
-  const config = CONFIG[health.status];
+  if (!isAlarmingKind(kind)) return null;
+  const meta = ACCOUNT_HEALTH_META[kind];
+  const tone = TONE_CLASS[meta.tone];
   return (
-    <span className="flex items-center gap-1" title={hint(health)}>
-      <span className={cn("h-1.5 w-1.5 rounded-full", config.dot, className)} />
-      <span className={cn("text-[9px] font-medium", config.color)}>{config.label}</span>
+    <span className="flex items-center gap-1" title={tooltip(kind, health ?? null)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", tone.dot, className)} />
+      <span className={cn("text-[9px] font-medium", tone.text)}>{meta.label}</span>
     </span>
   );
 }

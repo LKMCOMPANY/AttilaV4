@@ -18,6 +18,7 @@ import { ArchivedAvatarsDialog } from "./archived-avatars-dialog";
 import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { OperatorPresence } from "@/hooks/use-realtime-account";
+import type { AvatarHealthSignals } from "@/lib/constants/account-health";
 import type { AvatarWithRelations, Army } from "@/types";
 import type { AvatarSortField } from "./operator-layout";
 
@@ -48,6 +49,7 @@ interface AvatarListPanelProps {
   canManage: boolean;
   automatorStatuses?: Record<string, AvatarAutomatorInfo>;
   presenceMap?: Record<string, OperatorPresence[]>;
+  healthSignals?: Record<string, AvatarHealthSignals>;
 }
 
 export function AvatarListPanel({
@@ -69,6 +71,7 @@ export function AvatarListPanel({
   canManage,
   automatorStatuses,
   presenceMap,
+  healthSignals,
 }: AvatarListPanelProps) {
   const isSearching = searchQuery.trim().length > 0;
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -278,6 +281,7 @@ export function AvatarListPanel({
                   onSelect={() => onSelect(avatar.id)}
                   automatorInfo={automatorStatuses?.[avatar.id]}
                   operators={presenceMap?.[avatar.id]}
+                  healthSignals={healthSignals?.[avatar.id]}
                 />
               ))}
             </div>

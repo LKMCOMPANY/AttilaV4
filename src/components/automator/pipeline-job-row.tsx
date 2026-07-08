@@ -25,7 +25,10 @@ import {
 import { format } from "date-fns";
 import { RelativeTime } from "./relative-time";
 import { parseJobError } from "@/lib/automation/errors";
-import { isAccountHealthAlarming } from "@/lib/constants/account-health";
+import {
+  deriveAccountHealth,
+  ACCOUNT_HEALTH_META,
+} from "@/lib/constants/account-health";
 import type { CampaignJobWithAvatar, SocialPlatform } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -95,7 +98,10 @@ export function PipelineJobRow({
           )}
           <JobVerificationBadge verification={job.verification} status={job.status} />
           {job.verification === "unconfirmed" && (
-            <AccountHealthBadge health={job.account_health} />
+            <AccountHealthBadge
+              kind={deriveAccountHealth({ tikhub: job.account_health?.status, shadowBan: true })}
+              health={job.account_health}
+            />
           )}
         </div>
       </div>
@@ -197,45 +203,41 @@ export function JobVerdict({ job }: { job: CampaignJobWithAvatar }) {
     // unconfirmed = device said done but TikHub can't find it (silent drop),
     // unchecked = still indexing / TikHub unavailable.
     if (job.verification === "unconfirmed") {
-      const health = job.account_health;
-
-      // Strongest explanation: the account itself can't publish (suspended /
-      // deleted). The on-device composer still closes on a dead account, so
-      // this is exactly the case the device gate can't catch.
-      if (health && isAccountHealthAlarming(health.status)) {
-        const dead = health.status === "suspended";
-        return (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-2">
-            <UserX className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-destructive">
-                Not published — {dead ? "account suspended" : "account not found"}
-              </p>
-              <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">
-                {dead
-                  ? "The platform has suspended this account, so nothing it posts goes live. Re-provision or replace the account, then clear it to resume."
-                  : "This handle no longer resolves (deleted, renamed, or banned) — its posts can never appear. Replace the account."}
-              </p>
-            </div>
-          </div>
-        );
-      }
-
-      // Account is live (or not yet probed) but the post still isn't visible —
-      // a genuine shadow-ban / silent drop.
-      const accountLive = health?.status === "active";
+      // Fold the off-device signal (this post wasn't confirmed = shadowBan) with
+      // the account's profile status into one verdict: suspended (certain, red),
+      // unresolved handle, or a likely shadow-ban (both probable, amber).
+      const kind = deriveAccountHealth({
+        tikhub: job.account_health?.status,
+        shadowBan: true,
+      });
+      const meta = ACCOUNT_HEALTH_META[kind];
+      const critical = meta.tone === "critical";
+      const headline =
+        kind === "suspended"
+          ? "Not published — account suspended"
+          : kind === "unresolved"
+            ? "Unconfirmed — handle unresolved"
+            : "Published — likely shadow-ban";
       return (
-        <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2">
-          <ShieldQuestion className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+        <div
+          className={cn(
+            "flex items-start gap-2 rounded-md border px-2.5 py-2",
+            critical
+              ? "border-destructive/25 bg-destructive/10"
+              : "border-warning/30 bg-warning/10",
+          )}
+        >
+          {critical ? (
+            <UserX className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+          ) : (
+            <ShieldQuestion className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+          )}
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <p className="text-xs font-semibold text-warning">Published — unconfirmed</p>
-              {health && <AccountHealthBadge health={health} showActive />}
-            </div>
+            <p className={cn("text-xs font-semibold", critical ? "text-destructive" : "text-warning")}>
+              {headline}
+            </p>
             <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">
-              {accountLive
-                ? "The account is live, but the independent TikHub check can't find this post on the target — a likely shadow-ban or silent drop."
-                : "The device reported the comment as sent, but the independent TikHub check can't find it on the target — a likely shadow-ban or silent drop. Treat as not-yet-verified."}
+              {meta.hint}
             </p>
           </div>
         </div>

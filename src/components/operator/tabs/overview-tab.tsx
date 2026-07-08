@@ -11,13 +11,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { STATUS_CONFIG } from "@/lib/constants/avatar";
-import { AVATAR_STATUSES, type AvatarWithRelations, type AvatarStatus } from "@/types";
+import { AVATAR_STATUSES, type AvatarStatus } from "@/types";
 import { updateAvatar } from "@/app/actions/avatars";
 import { SocialSection } from "./social-section";
 import { AssignmentSection } from "./assignment-section";
 import type { EditableTabProps } from "../avatar-detail-panel";
 
-export function OverviewTab({ avatar, accountId, onUpdated }: EditableTabProps) {
+export function OverviewTab({ avatar, accountId, onUpdated, healthSignals }: EditableTabProps) {
   const handleStatusChange = async (value: string | null) => {
     if (!value) return;
     const prev = avatar.status;
@@ -33,7 +33,7 @@ export function OverviewTab({ avatar, accountId, onUpdated }: EditableTabProps) 
   return (
     <div className="space-y-5">
       <Section title="Accounts & Credentials" icon={Shield}>
-        <SocialSection avatar={avatar} onUpdated={onUpdated} />
+        <SocialSection avatar={avatar} onUpdated={onUpdated} healthSignals={healthSignals} />
       </Section>
 
       <AssignmentSection
