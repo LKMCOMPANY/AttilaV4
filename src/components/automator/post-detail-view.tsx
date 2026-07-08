@@ -19,6 +19,7 @@ import { SocialIcon } from "@/components/icons/social-icons";
 import { JobVerdict, JobEvidence } from "./pipeline-job-row";
 import { JobStatusLabel, PostStatusBadge } from "./pipeline-status";
 import { renderMetricChips, ResponseOutcome } from "./pipeline-post-row";
+import { PostAuthorAvatar } from "./post-author-avatar";
 import { SentimentChip } from "./sentiment-chip";
 import { RelativeTime } from "./relative-time";
 import type {
@@ -139,6 +140,11 @@ export function PostDetailView({
           <Section label="Source post">
             <div className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2">
               <div className="flex items-center gap-1.5">
+                <PostAuthorAvatar
+                  handle={post.post_author}
+                  imageUrl={post.author_avatar_url}
+                  className="shrink-0"
+                />
                 <SocialIcon
                   platform={post.platform as SocialPlatform}
                   className="h-3 w-3 shrink-0 text-muted-foreground"

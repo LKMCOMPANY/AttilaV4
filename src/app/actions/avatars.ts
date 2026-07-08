@@ -13,7 +13,14 @@ import {
   updateAvatarSchema,
   type CreateAvatarInput,
 } from "./_avatar-schemas";
-import type { Avatar, AvatarWithRelations, Army, Device, UserProfile } from "@/types";
+import type {
+  Avatar,
+  AvatarWithRelations,
+  AvatarPlatformHealth,
+  Army,
+  Device,
+  UserProfile,
+} from "@/types";
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -98,7 +105,8 @@ export async function getAvatars(
       `*,
       device:devices(*),
       avatar_armies(army:armies(*)),
-      avatar_operators(operator:profiles(*))`
+      avatar_operators(operator:profiles(*)),
+      platform_health:avatar_platform_health(platform, status, followers, checked_at)`
     )
     .eq("account_id", accountId)
     .is("archived_at", null)
@@ -119,12 +127,17 @@ export async function getAvatars(
       .map((ao) => ao.operator)
       .filter(Boolean) as UserProfile[];
 
+    const platform_health = (
+      (row.platform_health as AvatarPlatformHealth[] | null) ?? []
+    ) as AvatarPlatformHealth[];
+
     const { avatar_armies: _aa, avatar_operators: _ao, ...rest } = row;
     return {
       ...rest,
       device: redactDeviceSecrets((row.device as Device | null) || null),
       armies,
       operators,
+      platform_health,
     } as AvatarWithRelations;
   });
 

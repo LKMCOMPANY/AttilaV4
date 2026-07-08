@@ -344,6 +344,7 @@ const IDLE_MS = parseInt(process.env.PIPELINE_IDLE_MS || "5000", 10);
 const SWEEP_INTERVAL_MS = parseInt(process.env.GORGONE_SWEEP_INTERVAL_MS || "60000", 10);
 const REAP_INTERVAL_MS = parseInt(process.env.DEVICE_REAP_INTERVAL_MS || "120000", 10);
 const VERIFY_INTERVAL_MS = parseInt(process.env.PIPELINE_VERIFY_INTERVAL_MS || "60000", 10);
+const ACCOUNT_HEALTH_INTERVAL_MS = parseInt(process.env.ACCOUNT_HEALTH_INTERVAL_MS || "300000", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function workerLoop(name, port, path, opts = {}) {
@@ -420,4 +421,12 @@ function startPipelineWorkers(port) {
     fixedIntervalMs: VERIFY_INTERVAL_MS,
   });
   console.log(`> Verify worker: every ${VERIFY_INTERVAL_MS}ms`);
+
+  // Account health — probes a small batch of stale avatar accounts via TikHub
+  // (active / suspended / notfound) so the UI can flag dead/suspended accounts.
+  // Slow, throughput-independent, informational only (never blocks avatars).
+  workerLoop("Account-Health", port, "/api/avatars/health", {
+    fixedIntervalMs: ACCOUNT_HEALTH_INTERVAL_MS,
+  });
+  console.log(`> Account health worker: every ${ACCOUNT_HEALTH_INTERVAL_MS}ms`);
 }

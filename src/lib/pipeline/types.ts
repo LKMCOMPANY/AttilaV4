@@ -41,6 +41,10 @@ export interface PipelinePost extends FilterablePost {
   // CDN signature expires — consumers degrade to text-only.
   image_url?: string | null;
 
+  // Author profile image (Gorgone `author.avatar_url`), surfaced in the posts
+  // list. Null when not harvested; UI falls back to initials.
+  author_avatar_url?: string | null;
+
   is_reply?: boolean;
 
   // V4 bonuses (null when AI hasn't run yet — pipeline tolerates absence)

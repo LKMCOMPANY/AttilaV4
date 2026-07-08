@@ -8,7 +8,12 @@ import { cn, countryCodeToFlag } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 import { Loader2, Clock, Eye } from "lucide-react";
 import { PLATFORM_LIST, STATUS_CONFIG } from "@/lib/constants/avatar";
+import {
+  worstAccountHealth,
+  isAccountHealthAlarming,
+} from "@/lib/constants/account-health";
 import { SocialIcon } from "@/components/icons/social-icons";
+import { AccountHealthDot } from "@/components/shared/account-health-badge";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { OperatorPresence } from "@/hooks/use-realtime-account";
 import type { AvatarWithRelations } from "@/types";
@@ -34,7 +39,12 @@ export function AvatarListItem({
     (p) => avatar[p.enabledKey]
   );
   const deviceState = avatar.device?.state ?? null;
-  const hasIndicators = !!(automatorInfo || operators?.length || deviceState);
+  // Only an alarming account (suspended / notfound) is worth a list indicator;
+  // a healthy or unchecked account stays visually quiet (the dot renders null).
+  const worstHealth = worstAccountHealth(avatar.platform_health);
+  const alarmingHealth =
+    worstHealth && isAccountHealthAlarming(worstHealth.status) ? worstHealth : null;
+  const hasIndicators = !!(automatorInfo || operators?.length || deviceState || alarmingHealth);
 
   return (
     <button
@@ -134,6 +144,7 @@ export function AvatarListItem({
         {/* Right column — live indicators */}
         {hasIndicators && (
           <div className="flex shrink-0 flex-col items-end gap-1 self-center">
+            {alarmingHealth && <AccountHealthDot health={alarmingHealth} />}
             {deviceState && <DeviceStateDot state={deviceState} />}
             {operators && operators.length > 0 && (
               <OperatorBadge operators={operators} />

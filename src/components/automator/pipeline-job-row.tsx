@@ -7,12 +7,14 @@ import {
   RotateCcw,
   ShieldCheck,
   ShieldQuestion,
+  UserX,
   X,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SocialIcon } from "@/components/icons/social-icons";
+import { AccountHealthBadge } from "@/components/shared/account-health-badge";
 import { DeviceScreenshot } from "./device-screenshot";
 import {
   JobErrorBadge,
@@ -23,6 +25,7 @@ import {
 import { format } from "date-fns";
 import { RelativeTime } from "./relative-time";
 import { parseJobError } from "@/lib/automation/errors";
+import { isAccountHealthAlarming } from "@/lib/constants/account-health";
 import type { CampaignJobWithAvatar, SocialPlatform } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -91,6 +94,9 @@ export function PipelineJobRow({
             <JobErrorBadge errorMessage={job.error_message} />
           )}
           <JobVerificationBadge verification={job.verification} status={job.status} />
+          {job.verification === "unconfirmed" && (
+            <AccountHealthBadge health={job.account_health} />
+          )}
         </div>
       </div>
     </button>
@@ -191,15 +197,45 @@ export function JobVerdict({ job }: { job: CampaignJobWithAvatar }) {
     // unconfirmed = device said done but TikHub can't find it (silent drop),
     // unchecked = still indexing / TikHub unavailable.
     if (job.verification === "unconfirmed") {
+      const health = job.account_health;
+
+      // Strongest explanation: the account itself can't publish (suspended /
+      // deleted). The on-device composer still closes on a dead account, so
+      // this is exactly the case the device gate can't catch.
+      if (health && isAccountHealthAlarming(health.status)) {
+        const dead = health.status === "suspended";
+        return (
+          <div className="flex items-start gap-2 rounded-md border border-destructive/25 bg-destructive/10 px-2.5 py-2">
+            <UserX className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-destructive">
+                Not published — {dead ? "account suspended" : "account not found"}
+              </p>
+              <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">
+                {dead
+                  ? "The platform has suspended this account, so nothing it posts goes live. Re-provision or replace the account, then clear it to resume."
+                  : "This handle no longer resolves (deleted, renamed, or banned) — its posts can never appear. Replace the account."}
+              </p>
+            </div>
+          </div>
+        );
+      }
+
+      // Account is live (or not yet probed) but the post still isn't visible —
+      // a genuine shadow-ban / silent drop.
+      const accountLive = health?.status === "active";
       return (
         <div className="flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-2.5 py-2">
           <ShieldQuestion className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-warning">Published — unconfirmed</p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-xs font-semibold text-warning">Published — unconfirmed</p>
+              {health && <AccountHealthBadge health={health} showActive />}
+            </div>
             <p className="mt-0.5 text-[11px] leading-snug text-foreground/80">
-              The device reported the comment as sent, but the independent
-              TikHub check can&apos;t find it on the target — a likely shadow-ban
-              or silent drop. Treat as not-yet-verified.
+              {accountLive
+                ? "The account is live, but the independent TikHub check can't find this post on the target — a likely shadow-ban or silent drop."
+                : "The device reported the comment as sent, but the independent TikHub check can't find it on the target — a likely shadow-ban or silent drop. Treat as not-yet-verified."}
             </p>
           </div>
         </div>

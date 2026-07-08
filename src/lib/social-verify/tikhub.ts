@@ -1,8 +1,7 @@
 /**
- * TikHub client — a SECONDARY, off-device signal for social verification and
- * campaign analytics. Never the primary success gate (the on-device UI-tree
- * check is), because a third-party scraper can miss a genuinely-posted item
- * (shadow-ban, region, comments not exposed). Its two jobs:
+ * TikHub client — a SECONDARY, off-device signal. Never the primary success
+ * gate (the on-device UI-tree check is), because a third-party scraper can miss
+ * a genuinely-posted item (shadow-ban, region, comments not exposed). Its jobs:
  *
  *   1. Twitter shadow-ban cross-check: after we post a reply on-device, we can
  *      confirm it from the avatar's OWN reply timeline (`fetch_user_tweet_replies`).
@@ -12,12 +11,16 @@
  *   2. TikTok comment cross-check: read the target video's comment list
  *      (`fetch_video_comments`) and match our text (preferring the avatar's
  *      handle). Absence while the on-device post succeeded flags a silent drop.
- *   3. Analytics: post-hoc metrics (likes, replies, views) for the dashboard.
+ *   3. Account health: public profile lookup (`fetch_user_profile`) telling us
+ *      whether an account is active / suspended / notfound — the authoritative
+ *      reason an on-device "done" can end up unconfirmed.
  *
  * Everything here is best-effort and env-gated: with no `TIKHUB_API_KEY` the
- * helpers return `{ available: false }` and callers simply skip the cross-check.
- * The client never throws into the pipeline — failures degrade to "unknown".
+ * helpers return `{ available: false }` / `null` and callers simply skip. The
+ * client never throws into the pipeline — failures degrade to "unknown".
  */
+
+import type { AccountHealthStatus } from "@/types";
 
 const BASE_URL = "https://api.tikhub.io";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -76,36 +79,10 @@ async function tikhubGet<T>(
 // Twitter
 // ---------------------------------------------------------------------------
 
-export interface TweetMetrics {
-  likes: number;
-  replies: number;
-  retweets: number;
-  quotes: number;
-  bookmarks: number;
-  views: number;
-}
-
 interface RawTweet {
   tweet_id?: string;
   text?: string;
   in_reply_to_status_id_str?: string | null;
-  likes?: number;
-  replies?: number;
-  retweets?: number;
-  quotes?: number;
-  bookmarks?: number;
-  views?: number | string;
-}
-
-function toMetrics(t: RawTweet): TweetMetrics {
-  return {
-    likes: Number(t.likes ?? 0),
-    replies: Number(t.replies ?? 0),
-    retweets: Number(t.retweets ?? 0),
-    quotes: Number(t.quotes ?? 0),
-    bookmarks: Number(t.bookmarks ?? 0),
-    views: Number(t.views ?? 0),
-  };
 }
 
 export type ReplyVerification =
@@ -117,7 +94,6 @@ export type ReplyVerification =
       /** How the match was made, when confirmed. */
       via?: "in_reply_to" | "text";
       tweetId?: string;
-      metrics?: TweetMetrics;
     };
 
 /** First ~40 normalized chars — enough to disambiguate a reply, tolerant of
@@ -158,7 +134,6 @@ export async function verifyTweetReply(params: {
         confirmed: true,
         via: byTarget ? "in_reply_to" : "text",
         tweetId: tweet.tweet_id,
-        metrics: toMetrics(tweet),
       };
     }
   }
@@ -262,31 +237,93 @@ export async function verifyTikTokComment(params: {
   return reachedEnd ? { available: true, confirmed: false } : { available: false };
 }
 
-/** Post-hoc metrics for a tweet (campaign analytics). */
-export async function getTweetMetrics(tweetId: string): Promise<TweetMetrics | null> {
-  const data = await tikhubGet<RawTweet>("/api/v1/twitter/web/fetch_tweet_detail", {
-    tweet_id: tweetId,
-  });
-  return data ? toMetrics(data) : null;
+// ---------------------------------------------------------------------------
+// Account health — public profile lookup (twitter + tiktok)
+// ---------------------------------------------------------------------------
+
+/**
+ * Off-device account health. `null` means "couldn't check" (no key, transport
+ * error) — distinct from a definitive `notfound`, so callers can leave the
+ * stored status untouched rather than overwriting a good verdict with noise.
+ */
+export interface AccountHealth {
+  status: AccountHealthStatus;
+  followers: number | null;
 }
 
-export interface TwitterProfile {
-  status: string;
-  followers: number;
-  restId?: string;
-}
+/**
+ * Twitter/X account health. TikHub returns `data.status` as
+ * `active | suspended | notfound` (plus `sub_count` for followers) — this is
+ * the authoritative reason an on-device "done" reply never appears: a
+ * suspended/deleted account still lets the app dismiss the composer.
+ */
+export async function getTwitterAccountHealth(
+  screenName: string,
+): Promise<AccountHealth | null> {
+  const handle = screenName.replace(/^@/, "").trim();
+  if (!handle) return null;
 
-/** Avatar account health — `status` flips to a non-"active" value when the
- * account is suspended/locked, a useful campaign-side alert. */
-export async function getTwitterProfile(screenName: string): Promise<TwitterProfile | null> {
-  const data = await tikhubGet<{ status?: string; friends?: number; sub_count?: number; rest_id?: string }>(
+  const data = await tikhubGet<{ status?: string; sub_count?: number }>(
     "/api/v1/twitter/web/fetch_user_profile",
-    { screen_name: screenName.replace(/^@/, "") },
+    { screen_name: handle },
   );
   if (!data) return null;
+
+  const status = normalizeStatus(data.status);
   return {
-    status: data.status ?? "unknown",
-    followers: Number(data.sub_count ?? 0),
-    restId: data.rest_id,
+    status,
+    followers: status === "active" && data.sub_count != null ? Number(data.sub_count) : null,
   };
+}
+
+interface TikTokWebProfile {
+  statusCode?: number;
+  userInfo?: {
+    user?: { uniqueId?: string };
+    stats?: { followerCount?: number };
+  };
+}
+
+/**
+ * TikTok account health via the web profile endpoint. TikTok has no public
+ * "suspended" state here: a live handle returns `statusCode === 0` with a
+ * populated `userInfo`, a gone/banned handle returns a non-zero status code
+ * (e.g. 10221) — mapped to `notfound`.
+ */
+export async function getTikTokAccountHealth(
+  uniqueId: string,
+): Promise<AccountHealth | null> {
+  const handle = uniqueId.replace(/^@/, "").trim();
+  if (!handle) return null;
+
+  const data = await tikhubGet<TikTokWebProfile>(
+    "/api/v1/tiktok/web/fetch_user_profile",
+    { uniqueId: handle },
+  );
+  if (!data) return null;
+
+  const user = data.userInfo?.user;
+  if (data.statusCode === 0 && user?.uniqueId) {
+    return { status: "active", followers: data.userInfo?.stats?.followerCount ?? null };
+  }
+  // A definitive non-zero TikTok status code (e.g. 10221) = the handle is gone.
+  if (typeof data.statusCode === "number" && data.statusCode !== 0) {
+    return { status: "notfound", followers: null };
+  }
+  // Anything else (statusCode 0 but no user, or an unexpected shape) is
+  // ambiguous — don't assert "notfound" on a handle that might be live.
+  return { status: "unknown", followers: null };
+}
+
+function normalizeStatus(raw: string | undefined): AccountHealthStatus {
+  switch ((raw ?? "").toLowerCase()) {
+    case "active":
+      return "active";
+    case "suspended":
+      return "suspended";
+    case "notfound":
+      return "notfound";
+    default:
+      return "unknown";
+  }
 }

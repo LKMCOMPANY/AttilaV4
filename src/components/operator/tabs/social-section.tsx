@@ -19,6 +19,7 @@ import {
   type CredentialField,
 } from "@/lib/constants/avatar";
 import { SocialIcon } from "@/components/icons/social-icons";
+import { AccountHealthBadge } from "@/components/shared/account-health-badge";
 import {
   setAvatarPlatformEnabled,
   setAvatarPlatformCredential,
@@ -94,12 +95,14 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
       {PLATFORM_LIST.map((platform) => {
         const enabled = avatar[platform.enabledKey] as boolean;
         const creds = (avatar[platform.credKey] ?? {}) as SocialCredentials;
+        const health =
+          avatar.platform_health?.find((h) => h.platform === platform.id) ?? null;
 
         return (
           <AccordionItem key={platform.id} value={platform.id}>
-            <div className="flex items-center justify-between py-2">
+            <div className="flex items-center justify-between gap-2 py-2">
               <AccordionTrigger className="flex-1 py-0 hover:no-underline">
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                   <span
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-[11px] font-semibold",
@@ -110,6 +113,9 @@ export function SocialSection({ avatar, onUpdated }: SocialSectionProps) {
                     <SocialIcon platform={platform.id} className="h-3 w-3" />
                     {platform.label}
                   </span>
+                  {enabled && (
+                    <AccountHealthBadge health={health} showActive />
+                  )}
                 </div>
               </AccordionTrigger>
               <Switch

@@ -169,6 +169,34 @@ export interface AvatarWithRelations extends Avatar {
   device?: Device | null;
   armies?: Army[];
   operators?: UserProfile[];
+  /** Off-device (TikHub) account health, one row per probed platform. */
+  platform_health?: AvatarPlatformHealth[];
+}
+
+// ---------------------------------------------------------------------------
+// Account health — off-device (TikHub) profile status per (avatar, platform)
+// ---------------------------------------------------------------------------
+
+export const ACCOUNT_HEALTH_STATUSES = ["active", "suspended", "notfound", "unknown"] as const;
+export type AccountHealthStatus = (typeof ACCOUNT_HEALTH_STATUSES)[number];
+
+/**
+ * A single (avatar, platform) health verdict, mirrored from the
+ * `avatar_platform_health` table:
+ *   - `active`    — the account resolves and is live
+ *   - `suspended` — the platform suspended / locked the account
+ *   - `notfound`  — the handle no longer resolves (deleted / renamed / banned)
+ *   - `unknown`   — never probed, or TikHub couldn't answer
+ *
+ * `suspended` / `notfound` explain an on-device "done" that TikHub can't
+ * confirm: the account can't actually publish, so the reply/comment silently
+ * drops. Informational only — never gates avatar selection.
+ */
+export interface AvatarPlatformHealth {
+  platform: SocialPlatform;
+  status: AccountHealthStatus;
+  followers: number | null;
+  checked_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +460,8 @@ export interface CampaignPost {
   post_url: string | null;
   post_text: string;
   post_author: string | null;
+  /** Source post author profile image, harvested at ingestion (nullable). */
+  author_avatar_url: string | null;
   post_metrics: Record<string, unknown>;
   ai_decision: AnalystDecision | null;
   status: CampaignPostStatus;
@@ -490,6 +520,12 @@ export type JobVerification = "unchecked" | "confirmed" | "unconfirmed";
 
 export interface CampaignJobWithAvatar extends CampaignJob {
   avatar_name: string | null;
+  /**
+   * Off-device health of the avatar's account on THIS job's platform, when
+   * known. Lets the automator explain an `unconfirmed` verdict (suspended /
+   * notfound account vs a genuine shadow-ban on a live account).
+   */
+  account_health?: AvatarPlatformHealth | null;
 }
 
 export interface CampaignJobWithRelations extends CampaignJob {

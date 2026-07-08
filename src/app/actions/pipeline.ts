@@ -10,6 +10,7 @@ import type {
   CampaignPost,
   CampaignJob,
   CampaignJobWithAvatar,
+  AvatarPlatformHealth,
   Campaign,
   CampaignPlatform,
   JobVerification,
@@ -98,7 +99,9 @@ export async function getCampaignJobs(
 
   let query = supabase
     .from("campaign_jobs")
-    .select("*, avatars:avatar_id(first_name, last_name)")
+    .select(
+      "*, avatars:avatar_id(first_name, last_name, platform_health:avatar_platform_health(platform, status, followers, checked_at))",
+    )
     .eq("campaign_id", campaignId)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -120,10 +123,19 @@ export async function getCampaignJobs(
 
   return (data ?? []).map((row) => {
     const { avatars, ...job } = row as Record<string, unknown>;
-    const av = avatars as { first_name: string; last_name: string } | null;
+    const av = avatars as {
+      first_name: string;
+      last_name: string;
+      platform_health: AvatarPlatformHealth[] | null;
+    } | null;
+    // Surface only the health row for THIS job's platform — cross-platform
+    // health would be noise on a per-response badge.
+    const account_health =
+      av?.platform_health?.find((h) => h.platform === (job.platform as string)) ?? null;
     return {
       ...job,
       avatar_name: av ? `${av.first_name} ${av.last_name}` : null,
+      account_health,
     } as CampaignJobWithAvatar;
   });
 }

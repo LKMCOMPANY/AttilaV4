@@ -41,6 +41,9 @@ services:
         sync: false
       - key: CRON_SECRET
         sync: false
+      # TikHub — powers post verification + avatar account-health (secret).
+      - key: TIKHUB_API_KEY
+        sync: false
       - key: PIPELINE_PROCESS_CONCURRENCY
         value: "3"
       - key: PIPELINE_EXECUTE_CONCURRENCY
