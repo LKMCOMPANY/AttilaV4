@@ -23,7 +23,12 @@ import { PipelineJobRow, PipelineJobDetail } from "./pipeline-job-row";
 import { PipelinePostRow } from "./pipeline-post-row";
 import { PipelineToolbar } from "./pipeline-toolbar";
 import { PostDetailView } from "./post-detail-view";
-import { filterJobs, filterPosts, type PlatformFilter } from "./post-filters";
+import {
+  filterJobs,
+  filterPosts,
+  collectUnconfirmedPostIds,
+  type PlatformFilter,
+} from "./post-filters";
 import { usePipelineData } from "./use-pipeline-data";
 import type { Campaign, CampaignPost, CampaignJobWithAvatar } from "@/types";
 
@@ -56,6 +61,7 @@ export function PipelineActivity({
   const [selectedPostIndex, setSelectedPostIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [platformFilter, setPlatformFilter] = useState<PlatformFilter>("all");
+  const [unconfirmedOnly, setUnconfirmedOnly] = useState(false);
 
   const handlePurge = async () => {
     const count = await purgeQueue(campaign.id);
@@ -80,8 +86,8 @@ export function PipelineActivity({
   };
 
   const filters = useMemo(
-    () => ({ query: searchQuery, platform: platformFilter }),
-    [searchQuery, platformFilter],
+    () => ({ query: searchQuery, platform: platformFilter, unconfirmedOnly }),
+    [searchQuery, platformFilter, unconfirmedOnly],
   );
 
   const postsById = useMemo(() => {
@@ -90,9 +96,20 @@ export function PipelineActivity({
     return map;
   }, [posts]);
 
+  // Posts owning an unconfirmed response + the total unconfirmed job count —
+  // powers the "unconfirmed only" toggle (hidden when there are none).
+  const unconfirmedPostIds = useMemo(
+    () => collectUnconfirmedPostIds(jobs),
+    [jobs],
+  );
+  const unconfirmedCount = useMemo(
+    () => jobs.filter((j) => j.verification === "unconfirmed").length,
+    [jobs],
+  );
+
   const filteredPosts = useMemo(
-    () => filterPosts(posts, filters),
-    [posts, filters],
+    () => filterPosts(posts, filters, unconfirmedPostIds),
+    [posts, filters, unconfirmedPostIds],
   );
 
   const filteredJobs = useMemo(
@@ -166,6 +183,9 @@ export function PipelineActivity({
         platformFilter={platformFilter}
         onPlatformFilterChange={setPlatformFilter}
         availablePlatforms={campaign.platforms}
+        unconfirmedOnly={unconfirmedOnly}
+        onUnconfirmedOnlyChange={setUnconfirmedOnly}
+        unconfirmedCount={unconfirmedCount}
       />
 
       <Tabs defaultValue="posts" className="flex min-h-0 flex-1 flex-col">

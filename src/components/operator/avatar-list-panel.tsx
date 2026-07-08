@@ -11,7 +11,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserPlus, Search, Radar, X, Archive } from "lucide-react";
+import { UserPlus, Search, Radar, X, Archive, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
 import { ArchivedAvatarsDialog } from "./archived-avatars-dialog";
@@ -38,6 +38,9 @@ interface AvatarListPanelProps {
   armies: Pick<Army, "id" | "name">[];
   filterArmyId: string | null;
   onFilterArmyChange: (armyId: string | null) => void;
+  healthFilter: boolean;
+  onHealthFilterChange: (value: boolean) => void;
+  attentionCount: number;
   searchQuery: string;
   onSearchChange: (query: string) => void;
   deviceCount: number;
@@ -56,6 +59,9 @@ export function AvatarListPanel({
   armies,
   filterArmyId,
   onFilterArmyChange,
+  healthFilter,
+  onHealthFilterChange,
+  attentionCount,
   searchQuery,
   onSearchChange,
   deviceCount,
@@ -162,8 +168,26 @@ export function AvatarListPanel({
         ))}
       </div>
 
-      {/* Army filter + search — sticky-right search keeps the row scannable */}
+      {/* Army filter + health filter + search */}
       <div className="flex shrink-0 items-center gap-1 border-b px-1.5 py-1.5">
+        {attentionCount > 0 && (
+          <button
+            onClick={() => onHealthFilterChange(!healthFilter)}
+            aria-pressed={healthFilter}
+            title={`${attentionCount} account${attentionCount !== 1 ? "s" : ""} suspended or not found`}
+            className={cn(
+              "inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+              healthFilter
+                ? "bg-destructive/15 text-destructive shadow-sm"
+                : "text-destructive/80 hover:bg-destructive/10",
+            )}
+          >
+            <ShieldAlert className="h-3 w-3" />
+            <span className="hidden @[240px]/list:inline">Needs attention</span>
+            <span className="tabular-nums">{attentionCount}</span>
+          </button>
+        )}
+
         {armies.length > 0 && (
           <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto scrollbar-hide">
             <button

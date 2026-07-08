@@ -17,6 +17,25 @@ export type PlatformFilter = CampaignPlatform | "all";
 export interface PipelineFilters {
   query: string;
   platform: PlatformFilter;
+  /**
+   * When true, keep only the items that need a human look: responses the
+   * off-device (TikHub) check couldn't confirm (`unconfirmed` — shadow-ban,
+   * silent drop, or a dead account), and the posts that own them.
+   */
+  unconfirmedOnly: boolean;
+}
+
+/** Post ids that own at least one `unconfirmed` response — lets the Posts tab
+ * mirror the same "needs attention" filter the Queue / History tabs apply to
+ * jobs directly. */
+export function collectUnconfirmedPostIds(
+  jobs: CampaignJobWithAvatar[],
+): Set<string> {
+  const ids = new Set<string>();
+  for (const job of jobs) {
+    if (job.verification === "unconfirmed") ids.add(job.campaign_post_id);
+  }
+  return ids;
 }
 
 export interface AuthorSuggestion {
@@ -48,12 +67,14 @@ function postMatchesQuery(post: CampaignPost, q: string): boolean {
 
 export function filterPosts(
   posts: CampaignPost[],
-  { query, platform }: PipelineFilters,
+  { query, platform, unconfirmedOnly }: PipelineFilters,
+  unconfirmedPostIds?: Set<string>,
 ): CampaignPost[] {
   const q = normalize(query);
-  if (platform === "all" && !q) return posts;
+  if (platform === "all" && !q && !unconfirmedOnly) return posts;
   return posts.filter((post) => {
     if (platform !== "all" && post.platform !== platform) return false;
+    if (unconfirmedOnly && !unconfirmedPostIds?.has(post.id)) return false;
     return postMatchesQuery(post, q);
   });
 }
@@ -65,13 +86,14 @@ export function filterPosts(
  */
 export function filterJobs(
   jobs: CampaignJobWithAvatar[],
-  { query, platform }: PipelineFilters,
+  { query, platform, unconfirmedOnly }: PipelineFilters,
   postsById: Map<string, CampaignPost>,
 ): CampaignJobWithAvatar[] {
   const q = normalize(query);
-  if (platform === "all" && !q) return jobs;
+  if (platform === "all" && !q && !unconfirmedOnly) return jobs;
   return jobs.filter((job) => {
     if (platform !== "all" && job.platform !== platform) return false;
+    if (unconfirmedOnly && job.verification !== "unconfirmed") return false;
     if (!q) return true;
     if (job.comment_text?.toLowerCase().includes(q)) return true;
     if (job.avatar_name?.toLowerCase().includes(q)) return true;

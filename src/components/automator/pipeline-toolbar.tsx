@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { Search, ShieldQuestion, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { SocialIcon } from "@/components/icons/social-icons";
@@ -52,6 +52,9 @@ interface PipelineToolbarProps {
   platformFilter: PlatformFilter;
   onPlatformFilterChange: (value: PlatformFilter) => void;
   availablePlatforms: readonly CampaignPlatform[];
+  unconfirmedOnly: boolean;
+  onUnconfirmedOnlyChange: (value: boolean) => void;
+  unconfirmedCount: number;
 }
 
 export function PipelineToolbar({
@@ -61,6 +64,9 @@ export function PipelineToolbar({
   platformFilter,
   onPlatformFilterChange,
   availablePlatforms,
+  unconfirmedOnly,
+  onUnconfirmedOnlyChange,
+  unconfirmedCount,
 }: PipelineToolbarProps) {
   const platformOptions = useMemo(
     () => buildPlatformOptions(availablePlatforms),
@@ -100,6 +106,25 @@ export function PipelineToolbar({
             </button>
           ))}
         </div>
+      )}
+
+      {unconfirmedCount > 0 && (
+        <button
+          type="button"
+          onClick={() => onUnconfirmedOnlyChange(!unconfirmedOnly)}
+          aria-pressed={unconfirmedOnly}
+          title={`${unconfirmedCount} response${unconfirmedCount !== 1 ? "s" : ""} the independent TikHub check couldn't confirm (shadow-ban / silent drop / dead account)`}
+          className={cn(
+            "inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+            unconfirmedOnly
+              ? "bg-warning/15 text-warning shadow-sm"
+              : "text-warning/80 hover:bg-warning/10",
+          )}
+        >
+          <ShieldQuestion className="h-3 w-3" />
+          Unconfirmed
+          <span className="tabular-nums">{unconfirmedCount}</span>
+        </button>
       )}
 
       <SearchAutocomplete

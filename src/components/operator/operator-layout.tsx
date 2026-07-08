@@ -13,6 +13,7 @@ import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import { AvatarListPanel } from "./avatar-list-panel";
 import { DevicePanel } from "./device-panel";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
+import { avatarNeedsAttention } from "@/lib/constants/account-health";
 import type { AvatarWithRelations, DeviceState } from "@/types";
 
 export type AvatarSortField =
@@ -55,6 +56,7 @@ export function OperatorLayout({
   );
   const [sortField, setSortField] = useState<AvatarSortField>("last_used");
   const [filterArmyId, setFilterArmyId] = useState<string | null>(null);
+  const [healthFilter, setHealthFilter] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
   const [localAvatars, setLocalAvatars] = useState(avatars);
@@ -155,12 +157,29 @@ export function OperatorLayout({
     return [...map.entries()].map(([id, name]) => ({ id, name }));
   }, [avatarsWithLiveState]);
 
+  // Count of avatars with a suspended / not-found account — powers the
+  // "needs attention" filter toggle (hidden when the fleet is healthy).
+  const attentionCount = useMemo(
+    () =>
+      avatarsWithLiveState.filter((a) => avatarNeedsAttention(a.platform_health))
+        .length,
+    [avatarsWithLiveState],
+  );
+
+  // Derived in render (React 19 idiom — no state-sync effect): a stale
+  // filter can't strand the operator on an empty list once every flagged
+  // account is fixed, since the toggle also hides at attentionCount === 0.
+  const effectiveHealthFilter = healthFilter && attentionCount > 0;
+
   const filteredAvatars = useMemo(() => {
     let result = avatarsWithLiveState;
     if (filterArmyId) {
       result = result.filter((a) =>
         a.armies?.some((army) => army.id === filterArmyId)
       );
+    }
+    if (effectiveHealthFilter) {
+      result = result.filter((a) => avatarNeedsAttention(a.platform_health));
     }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
@@ -172,7 +191,7 @@ export function OperatorLayout({
       });
     }
     return result;
-  }, [avatarsWithLiveState, filterArmyId, searchQuery]);
+  }, [avatarsWithLiveState, filterArmyId, effectiveHealthFilter, searchQuery]);
 
   const sortedAvatars = useMemo(() => {
     switch (sortField) {
@@ -221,6 +240,9 @@ export function OperatorLayout({
           armies={armies}
           filterArmyId={filterArmyId}
           onFilterArmyChange={setFilterArmyId}
+          healthFilter={effectiveHealthFilter}
+          onHealthFilterChange={setHealthFilter}
+          attentionCount={attentionCount}
           searchQuery={searchQuery}
           onSearchChange={setSearchQuery}
           deviceCount={deviceCount}

@@ -31,3 +31,14 @@ export function worstAccountHealth(
     SEVERITY[row.status] > SEVERITY[worst.status] ? row : worst,
   );
 }
+
+/**
+ * True when at least one of the avatar's accounts is suspended / not found —
+ * i.e. it needs an operator to act. Drives the "needs attention" filter.
+ */
+export function avatarNeedsAttention(
+  health: AvatarPlatformHealth[] | undefined | null,
+): boolean {
+  const worst = worstAccountHealth(health);
+  return worst !== null && isAccountHealthAlarming(worst.status);
+}
