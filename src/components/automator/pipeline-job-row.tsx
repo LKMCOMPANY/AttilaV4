@@ -303,7 +303,8 @@ export function JobVerdict({ job }: { job: CampaignJobWithAvatar }) {
 // ---------------------------------------------------------------------------
 
 export function JobEvidence({ job }: { job: CampaignJobWithAvatar }) {
-  if (!job.source_screenshot && !job.proof_screenshot) return null;
+  const hasScreenshots = !!(job.source_screenshot || job.proof_screenshot);
+  if (!hasScreenshots && !job.published_url) return null;
 
   // The proof means different things on the two outcomes: on success the
   // backend upgrades it to the post LIVE (comment in list / reply in thread);
@@ -316,22 +317,38 @@ export function JobEvidence({ job }: { job: CampaignJobWithAvatar }) {
   return (
     <div>
       <span className="text-caption">Evidence</span>
-      <div className="mt-1 flex gap-2.5">
-        {job.source_screenshot && (
-          <DeviceScreenshot
-            url={job.source_screenshot}
-            alt="Target post as loaded on the device"
-            caption="Target loaded"
-          />
-        )}
-        {job.proof_screenshot && (
-          <DeviceScreenshot
-            url={job.proof_screenshot}
-            alt={proofCaption}
-            caption={proofCaption}
-          />
-        )}
-      </div>
+
+      {/* Direct link to the avatar's OWN published reply (Twitter, confirmed). */}
+      {job.published_url && (
+        <a
+          href={job.published_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+        >
+          View published reply
+          <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+        </a>
+      )}
+
+      {hasScreenshots && (
+        <div className="mt-1 flex gap-2.5">
+          {job.source_screenshot && (
+            <DeviceScreenshot
+              url={job.source_screenshot}
+              alt="Target post as loaded on the device"
+              caption="Target loaded"
+            />
+          )}
+          {job.proof_screenshot && (
+            <DeviceScreenshot
+              url={job.proof_screenshot}
+              alt={proofCaption}
+              caption={proofCaption}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

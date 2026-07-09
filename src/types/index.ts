@@ -497,6 +497,11 @@ export interface CampaignJob {
   error_message: string | null;
   source_screenshot: string | null;
   proof_screenshot: string | null;
+  /**
+   * Direct link to the avatar's OWN published reply (not the target post).
+   * Set by the verify pass on a confirmed Twitter reply; null for TikTok.
+   */
+  published_url: string | null;
   scheduled_at: string;
   queued_at: string;
   started_at: string | null;

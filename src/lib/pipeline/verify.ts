@@ -125,10 +125,21 @@ async function verifyOne(
   }
 
   const verification = check.confirmed ? "confirmed" : "unconfirmed";
-  await supabase
-    .from("campaign_jobs")
-    .update({ verification, verified_at: new Date().toISOString() })
-    .eq("id", job.id);
+  const update: {
+    verification: string;
+    verified_at: string;
+    published_url?: string;
+  } = { verification, verified_at: new Date().toISOString() };
+
+  // On a confirmed Twitter reply, TikHub gives us the reply's tweet id — persist
+  // a direct link to the avatar's OWN published reply. (X resolves a status by
+  // its id even if the handle in the path is off, so this is robust to a stale
+  // stored handle.) TikTok has no stable per-comment URL, so we skip it there.
+  if (check.confirmed && job.platform === "twitter" && handle && "tweetId" in check && check.tweetId) {
+    update.published_url = `https://x.com/${handle.replace(/^@/, "")}/status/${check.tweetId}`;
+  }
+
+  await supabase.from("campaign_jobs").update(update).eq("id", job.id);
 
   console.log(`[Verify][${job.id}] ${job.platform} ${verification}`, JSON.stringify({
     handle,
