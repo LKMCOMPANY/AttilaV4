@@ -34,6 +34,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
+import { useActiveViewport } from "@/hooks/use-active-viewport";
 import { NetworkMapSkeleton } from "./network-map-skeleton";
 import { NetworkNodeDetails } from "./network-node-details";
 import { NetworkFilters, NetworkLegend } from "./network-filters";
@@ -67,6 +69,11 @@ export const CampaignNetworkMap = memo(function CampaignNetworkMap({
 
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<NetworkGraph3DHandle>(null);
+
+  // Perf gates: pause the WebGL loop when the map is scrolled off / the tab is
+  // backgrounded, and honour the OS "reduce motion" preference.
+  const isActive = useActiveViewport(containerRef);
+  const reducedMotion = usePrefersReducedMotion();
 
   // Data lifecycle is owned by `useNetworkData`: initial load, realtime
   // refresh on `pipelineVersion` ticks, and a 2-minute fallback poll.
@@ -287,6 +294,8 @@ export const CampaignNetworkMap = memo(function CampaignNetworkMap({
           height={dimensions.height}
           theme={theme}
           isFocused={selectedNode !== null}
+          active={isActive}
+          reducedMotion={reducedMotion}
           onNodeClick={handleNodeClick}
         />
       </div>

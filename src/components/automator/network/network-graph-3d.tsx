@@ -6,14 +6,15 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
 } from "react";
 import dynamic from "next/dynamic";
+import { Loader2 } from "lucide-react";
 import type {
   ForceGraphMethods,
   LinkObject,
   NodeObject,
 } from "react-force-graph-3d";
-import { NetworkMapSkeleton } from "./network-map-skeleton";
 import type { NetworkThemeColors } from "./network-theme";
 import type {
   NetworkJobStatus,
@@ -28,15 +29,34 @@ import type {
  * and exposes a small imperative API (`focusNode`, `resetCamera`) for
  * the orchestrator to drive camera moves on selection / theme changes.
  *
- * Auto-rotation pauses while a node is focused. Stopping rotation
- * before computing camera deltas avoids a visible jitter on focus.
+ * Performance / UX contract:
+ *   - the WebGL render loop is PAUSED whenever `active` is false (off-screen
+ *     or backgrounded tab) — the biggest GPU/battery saving for a canvas that
+ *     would otherwise animate forever;
+ *   - auto-rotation is a gentle idle motion that STOPS the moment the operator
+ *     touches the camera (drag / zoom) and only resumes via "Center View";
+ *   - it also stops while a node is focused and is fully disabled under
+ *     `prefers-reduced-motion`;
+ *   - the camera auto-centers ONCE, after the first layout settles — later
+ *     realtime updates never hijack the operator's viewpoint.
  */
 
-// WebGL must run client-side only — Next.js dynamic import with SSR off.
+// WebGL must run client-side only — Next.js dynamic import with SSR off. The
+// chunk loads in milliseconds (and is cached after first view), so the fallback
+// is a minimal in-canvas spinner rather than the full map skeleton — which the
+// orchestrator already renders around this component during the data load.
 const ForceGraph3D = dynamic(
   () => import("react-force-graph-3d").then((mod) => mod.default),
-  { ssr: false, loading: () => <NetworkMapSkeleton /> },
+  { ssr: false, loading: () => <CanvasSpinner /> },
 );
+
+function CanvasSpinner() {
+  return (
+    <div className="flex h-full w-full items-center justify-center">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/50" />
+    </div>
+  );
+}
 
 const CAMERA_DISTANCE = 350;
 const ROTATION_SPEED = 0.0002;
@@ -77,27 +97,43 @@ interface NetworkGraph3DProps {
   height: number;
   theme: NetworkThemeColors;
   isFocused: boolean;
+  /** False when off-screen / tab hidden — pauses the WebGL render loop. */
+  active: boolean;
+  /** OS "reduce motion" — disables auto-rotation + link particles. */
+  reducedMotion: boolean;
   onNodeClick: (node: NetworkNode) => void;
 }
 
 export const NetworkGraph3D = forwardRef<NetworkGraph3DHandle, NetworkGraph3DProps>(
   function NetworkGraph3D(
-    { nodes, links, width, height, theme, isFocused, onNodeClick },
+    { nodes, links, width, height, theme, isFocused, active, reducedMotion, onNodeClick },
     handleRef,
   ) {
     const fgRef = useRef<ForceGraphMethods | undefined>(undefined);
     const animationRef = useRef<number | null>(null);
+    // The operator grabbed the camera (drag / zoom) — auto-rotation yields to
+    // them until they hit "Center View".
+    const userMovedRef = useRef(false);
+    // Bumped by resetCamera to re-arm auto-rotation after a manual recenter.
+    const [rotationEpoch, setRotationEpoch] = useState(0);
+    // Center only once, on the first settled layout (see `handleEngineStop`).
+    const hasCenteredRef = useRef(false);
+    // The layout has settled at least once — we only start gating the render
+    // loop on `active` after that, so an off-screen mount still lays out first.
+    const [ready, setReady] = useState(false);
 
     // ---- Imperative API exposed to the orchestrator -------------------
 
     const resetCamera = useCallback(() => {
       const g = fgRef.current;
       if (!g) return;
+      userMovedRef.current = false;
       g.cameraPosition(
         { x: 0, y: 0, z: CAMERA_DISTANCE },
         { x: 0, y: 0, z: 0 },
         800,
       );
+      setRotationEpoch((e) => e + 1);
     }, []);
 
     const focusNode = useCallback((node: NetworkNode) => {
@@ -126,29 +162,39 @@ export const NetworkGraph3D = forwardRef<NetworkGraph3DHandle, NetworkGraph3DPro
       focusNode,
     ]);
 
-    // ---- Recenter when fresh data arrives -----------------------------
-
-    // Recenter on a *change* of node count — both deps are listed below.
-    // We deliberately do NOT depend on the `nodes` array reference so a
-    // realtime tick that returns the same length doesn't fight the
-    // user's manual camera moves.
-    useEffect(() => {
-      if (nodes.length === 0) return;
-      const t = setTimeout(resetCamera, 500);
-      return () => clearTimeout(t);
+    // ---- Center once, after the first layout settles ------------------
+    // Fired by the engine's `onEngineStop`. Guarded so realtime updates
+    // (which re-run a short warm-started cooldown) never re-hijack the camera.
+    const handleEngineStop = useCallback(() => {
+      setReady(true);
+      if (hasCenteredRef.current || nodes.length === 0) return;
+      hasCenteredRef.current = true;
+      resetCamera();
     }, [nodes.length, resetCamera]);
 
-    // ---- Auto-rotation while no node is focused -----------------------
-
+    // ---- Pause the render loop when off-screen / tab hidden -----------
+    // Never pause before the first layout has settled (`ready`), so a map
+    // mounted off-screen still lays out + centers once before being gated.
     useEffect(() => {
-      if (isFocused) return;
+      const g = fgRef.current;
+      if (!g) return;
+      if (!ready || active) g.resumeAnimation();
+      else g.pauseAnimation();
+    }, [active, ready]);
+
+    // ---- Auto-rotation: idle-only, yields to the operator -------------
+    // Runs only when the map is active, no node is focused, motion is allowed,
+    // and the operator hasn't grabbed the camera. `rotationEpoch` re-arms it
+    // after a manual "Center View".
+    useEffect(() => {
+      if (!ready || !active || isFocused || reducedMotion || userMovedRef.current) return;
       const g = fgRef.current;
       if (!g) return;
       let angle = 0;
 
       const animate = () => {
         const inst = fgRef.current;
-        if (!inst || isFocused) {
+        if (!inst || isFocused || userMovedRef.current) {
           animationRef.current = null;
           return;
         }
@@ -184,7 +230,19 @@ export const NetworkGraph3D = forwardRef<NetworkGraph3DHandle, NetworkGraph3DPro
           animationRef.current = null;
         }
       };
-    }, [isFocused]);
+    }, [ready, active, isFocused, reducedMotion, rotationEpoch]);
+
+    // Stop auto-rotation the instant the operator drags / zooms the camera.
+    // Capture phase so we see the gesture before the lib's orbit controls,
+    // without preventing them.
+    const markUserMoved = useCallback(() => {
+      if (userMovedRef.current) return;
+      userMovedRef.current = true;
+      if (animationRef.current !== null) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+    }, []);
 
     // ---- Styling callbacks -------------------------------------------
     // Each callback bridges the lib's default accessor signature
@@ -218,10 +276,14 @@ export const NetworkGraph3D = forwardRef<NetworkGraph3DHandle, NetworkGraph3DPro
       return l.type === "mentions" ? 0.3 : l.status === "done" ? 1.5 : 0.8;
     }, []);
 
-    const linkParticles = useCallback((raw: LinkObject) => {
-      const l = asNetworkLink(raw);
-      return l.type === "reply_to" && l.status === "done" ? 2 : 0;
-    }, []);
+    const linkParticles = useCallback(
+      (raw: LinkObject) => {
+        if (reducedMotion) return 0;
+        const l = asNetworkLink(raw);
+        return l.type === "reply_to" && l.status === "done" ? 2 : 0;
+      },
+      [reducedMotion],
+    );
 
     const nodeLabel = useCallback((raw: NodeObject) => {
       const n = asNetworkNode(raw);
@@ -243,31 +305,41 @@ export const NetworkGraph3D = forwardRef<NetworkGraph3DHandle, NetworkGraph3DPro
     if (typeof window === "undefined" || width === 0 || height === 0) return null;
 
     return (
-      <ForceGraph3D
-        ref={fgRef}
-        width={width}
-        height={height}
-        graphData={{ nodes, links }}
-        nodeLabel={nodeLabel}
-        nodeColor={nodeColor}
-        nodeVal={nodeVal}
-        nodeOpacity={0.92}
-        nodeResolution={20}
-        linkColor={linkColor}
-        linkWidth={linkWidth}
-        linkOpacity={0.45}
-        linkDirectionalParticles={linkParticles}
-        linkDirectionalParticleSpeed={0.003}
-        linkDirectionalParticleWidth={1.5}
-        linkDirectionalParticleColor={linkColor}
-        linkCurvature={0.1}
-        backgroundColor="rgba(0,0,0,0)"
-        onNodeClick={handleClick}
-        enableNodeDrag={false}
-        enableNavigationControls
-        showNavInfo={false}
-        cooldownTicks={120}
-      />
+      <div
+        className="h-full w-full"
+        onPointerDownCapture={markUserMoved}
+        onWheelCapture={markUserMoved}
+      >
+        <ForceGraph3D
+          ref={fgRef}
+          width={width}
+          height={height}
+          graphData={{ nodes, links }}
+          nodeLabel={nodeLabel}
+          nodeColor={nodeColor}
+          nodeVal={nodeVal}
+          nodeOpacity={0.92}
+          // Sphere segment count — 12 stays visually smooth at these node
+          // sizes while roughly halving the triangle count vs 20 on graphs
+          // that can reach ~200 nodes.
+          nodeResolution={12}
+          linkColor={linkColor}
+          linkWidth={linkWidth}
+          linkOpacity={0.45}
+          linkDirectionalParticles={linkParticles}
+          linkDirectionalParticleSpeed={0.003}
+          linkDirectionalParticleWidth={1.5}
+          linkDirectionalParticleColor={linkColor}
+          linkCurvature={0.1}
+          backgroundColor="rgba(0,0,0,0)"
+          onNodeClick={handleClick}
+          onEngineStop={handleEngineStop}
+          enableNodeDrag={false}
+          enableNavigationControls
+          showNavInfo={false}
+          cooldownTicks={120}
+        />
+      </div>
     );
   },
 );

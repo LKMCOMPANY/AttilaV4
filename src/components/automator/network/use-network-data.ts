@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getNetworkData } from "@/app/actions/network";
-import type { NetworkData } from "@/types/network";
+import type { NetworkData, NetworkNode } from "@/types/network";
 
 const FALLBACK_POLL_INTERVAL = 120_000;
 
@@ -48,7 +48,14 @@ export function useNetworkData(
     if (result.error) {
       setError(result.error);
     } else if (result.data) {
-      setData(result.data);
+      // Warm-start the force layout: carry the previous nodes' simulated
+      // positions/velocities into the fresh dataset by id. Without this, every
+      // realtime tick / poll hands react-force-graph brand-new node objects and
+      // it re-runs the whole simulation from random positions — the graph
+      // "explodes" and re-settles on screen, which is both jarring and a CPU
+      // spike. Only genuinely new nodes fly in; everything else stays put.
+      const next = result.data;
+      setData((prev) => mergeGraphPositions(prev, next));
       setError(null);
     }
     setIsLoading(false);
@@ -83,4 +90,37 @@ export function useNetworkData(
   }, [refresh]);
 
   return { data, isLoading, isFetching, error, refresh };
+}
+
+// ---------------------------------------------------------------------------
+// Position-preserving merge — keeps the layout stable across refetches.
+// ---------------------------------------------------------------------------
+
+/** Runtime layout fields react-force-graph writes onto each node in place. */
+type SimPosition = Partial<
+  Record<"x" | "y" | "z" | "vx" | "vy" | "vz", number>
+>;
+
+function mergeGraphPositions(
+  prev: NetworkData | null,
+  next: NetworkData,
+): NetworkData {
+  if (!prev) return next;
+
+  const prevById = new Map(prev.nodes.map((node) => [node.id, node]));
+  const nodes = next.nodes.map((node) => {
+    const old = prevById.get(node.id) as (NetworkNode & SimPosition) | undefined;
+    if (!old || old.x === undefined) return node; // new node → let the sim place it
+    return {
+      ...node,
+      x: old.x,
+      y: old.y,
+      z: old.z,
+      vx: old.vx,
+      vy: old.vy,
+      vz: old.vz,
+    };
+  });
+
+  return { ...next, nodes };
 }
