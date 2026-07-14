@@ -35,6 +35,7 @@ import {
   findCommentEditText,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
+import { ensureRtlBaseDirection } from "@/lib/text/bidi";
 
 const X_PACKAGE = "com.twitter.android";
 const TWEET_DETAIL_FOCUS_HINT = "TweetDetailActivity";
@@ -396,6 +397,11 @@ async function typeIntoComposer(
   dbId: string,
   text: string,
 ): Promise<boolean> {
+  // Force an RTL base direction for Arabic/RTL content so a leading @mention or
+  // Latin term can't flip the whole reply to left-to-right (see lib/text/bidi).
+  // Only the KEYSTROKES carry the zero-width mark; verification below still uses
+  // the clean `text` because the dumped UI tree is stripped of bidi marks.
+  const rtlText = ensureRtlBaseDirection(text);
   for (let attempt = 0; attempt < COMPOSER_TYPE_ATTEMPTS; attempt++) {
     const field = findCommentEditText(parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? ""));
     if (!field?.bounds) {
@@ -411,7 +417,7 @@ async function typeIntoComposer(
     await tap(tunnelHostname, dbId, { x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) });
     await sleep(TIMING.afterImeSwitch);
 
-    await typeText(tunnelHostname, dbId, text);
+    await typeText(tunnelHostname, dbId, rtlText);
     await sleep(TIMING.afterType);
 
     if (editTextContains(parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? ""), text)) {

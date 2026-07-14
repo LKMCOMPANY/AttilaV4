@@ -110,7 +110,7 @@ export function PipelinePostRow({
           </div>
 
           {/* WHAT they said */}
-          <p className="truncate-multiline truncate-2 mt-1 text-xs leading-normal text-muted-foreground">
+          <p dir="auto" className="truncate-multiline truncate-2 mt-1 text-xs leading-normal text-muted-foreground">
             {post.post_text}
           </p>
 

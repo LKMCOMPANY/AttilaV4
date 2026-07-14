@@ -35,8 +35,10 @@ const BOUNDS_RE = /\[(\d+),(\d+)\]\[(\d+),(\d+)\]/;
 // Bidi and zero-width control characters. TikTok prefixes some strings with a
 // LEFT-TO-RIGHT MARK (U+200E) — e.g. the comments title "\u200e1109 comentarios"
 // — which silently broke prefix/regex matching until stripped. We remove the
-// whole invisible-formatting family so every matcher sees clean text.
-const INVISIBLE_RE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
+// whole invisible-formatting family so every matcher sees clean text. U+061C
+// (ARABIC LETTER MARK) is included because we prepend it to Arabic posts as an
+// RTL base-direction mark (see lib/text/bidi), and the field/list echoes it back.
+const INVISIBLE_RE = /[\u061C\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g;
 
 /**
  * Decode the XML entities uiautomator emits in text attributes and strip

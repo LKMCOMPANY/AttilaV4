@@ -170,7 +170,7 @@ export function PostDetailView({
                 )}
               </div>
 
-              <p className="mt-1.5 text-xs leading-relaxed text-foreground">
+              <p dir="auto" className="mt-1.5 text-xs leading-relaxed text-foreground">
                 {post.post_text}
               </p>
 
@@ -265,7 +265,7 @@ function ResponseCard({ job }: { job: CampaignJobWithAvatar }) {
         />
       )}
 
-      <p className="mt-1 text-xs leading-relaxed text-foreground">
+      <p dir="auto" className="mt-1 text-xs leading-relaxed text-foreground">
         {job.comment_text}
       </p>
 

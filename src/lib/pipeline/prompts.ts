@@ -1,5 +1,6 @@
 import type { Avatar, CampaignPlatform } from "@/types";
 import type { PipelinePost } from "./types";
+import { needsRtlBaseDirection } from "@/lib/text/bidi";
 
 // ---------------------------------------------------------------------------
 // Analyst — decides relevance + avatar count
@@ -184,6 +185,12 @@ function buildPersonalityBlock(avatar: Avatar): string {
 // Platform-specific rules
 // ---------------------------------------------------------------------------
 
+// Languages written in an RTL script. TikTok strips the invisible RTL
+// base-direction mark our publish path prepends (see lib/text/bidi), so the
+// ONLY way a TikTok comment in these languages renders right-to-left for every
+// viewer is to open with a word in that script — enforced at the prompt level.
+const RTL_LANGUAGE_CODES = new Set(["ar", "he", "fa", "ur", "ps", "ckb", "sd", "ug", "dv"]);
+
 function buildPlatformRules(platform: CampaignPlatform, languageCode: string): string {
   if (platform === "twitter") {
     return [
@@ -196,14 +203,20 @@ function buildPlatformRules(platform: CampaignPlatform, languageCode: string): s
     ].join("\n");
   }
 
-  return [
+  const rules = [
     "PLATFORM: TikTok",
     "- Comments can be longer (up to 500 chars) but shorter is better",
     "- Very casual, energetic, playful tone",
     "- Emojis are more natural on TikTok",
     "- No hashtags in comments",
     `- Write in ${getLanguageName(languageCode)}`,
-  ].join("\n");
+  ];
+  if (RTL_LANGUAGE_CODES.has(languageCode)) {
+    rules.push(
+      `- START the comment with a ${getLanguageName(languageCode)} word — never with an English/Latin word, brand name, @handle or emoji, otherwise TikTok displays the whole comment left-to-right`,
+    );
+  }
+  return rules.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -258,8 +271,12 @@ export function postProcessComment(text: string, platform: CampaignPlatform): st
   // Strip trailing hashtags (greedy: #word at end of string)
   result = result.replace(/(\s+#\w+)+\s*$/, "");
 
-  // Trim to platform limits
-  const maxLen = platform === "twitter" ? 280 : 500;
+  // Trim to platform limits. When the publish path will prepend an invisible
+  // RTL base-direction mark (lib/text/bidi), reserve one character for it so a
+  // cap-length comment can't overflow the platform limit at typing time
+  // (observed: X refuses to send a 280-char reply once the mark makes it 281).
+  const reserved = needsRtlBaseDirection(result) ? 1 : 0;
+  const maxLen = (platform === "twitter" ? 280 : 500) - reserved;
   if (result.length > maxLen) {
     result = truncateNaturally(result, maxLen);
   }

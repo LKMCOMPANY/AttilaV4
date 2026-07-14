@@ -74,7 +74,7 @@ export function PipelineJobRow({
           </span>
         </div>
 
-        <p className="truncate-multiline truncate-2 mt-1 text-xs leading-normal text-muted-foreground">
+        <p dir="auto" className="truncate-multiline truncate-2 mt-1 text-xs leading-normal text-muted-foreground">
           {job.comment_text}
         </p>
 
@@ -135,7 +135,7 @@ export function PipelineJobDetail({ job, onClose }: PipelineJobDetailProps) {
 
           <div>
             <span className="text-caption">Comment</span>
-            <p className="mt-0.5 text-xs leading-relaxed text-foreground">
+            <p dir="auto" className="mt-0.5 text-xs leading-relaxed text-foreground">
               {job.comment_text}
             </p>
           </div>

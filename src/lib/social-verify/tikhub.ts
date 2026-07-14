@@ -21,6 +21,7 @@
  */
 
 import type { AccountHealthStatus } from "@/types";
+import { stripBidiMarks } from "@/lib/text/bidi";
 
 const BASE_URL = "https://api.tikhub.io";
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -97,9 +98,11 @@ export type ReplyVerification =
     };
 
 /** First ~40 normalized chars — enough to disambiguate a reply, tolerant of
- * trailing truncation / entity rewriting by the platform. */
+ * trailing truncation / entity rewriting by the platform. Zero-width bidi marks
+ * are stripped so a comment we posted with a leading RTL base-direction mark
+ * (see lib/text/bidi) still matches its clean stored `comment_text`. */
 function textKey(s: string): string {
-  return s.replace(/\s+/g, " ").trim().slice(0, 40).toLowerCase();
+  return stripBidiMarks(s).replace(/\s+/g, " ").trim().slice(0, 40).toLowerCase();
 }
 
 /**

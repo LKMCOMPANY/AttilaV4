@@ -59,6 +59,7 @@ import {
 } from "./adb-helpers";
 import { screenshotContainsText } from "./ocr";
 import { encodeJobError, JobError } from "./errors";
+import { ensureRtlBaseDirection } from "@/lib/text/bidi";
 
 const TIKTOK_PACKAGE = "com.zhiliaoapp.musically";
 const PERMISSION_CONTROLLER = "com.android.permissioncontroller";
@@ -444,7 +445,11 @@ export async function postTikTokComment(
     await activateAdbKeyboard(tunnelHostname, dbId);       // shell-only, no uiautomator dump
     await tap(tunnelHostname, dbId, COORDS.commentField); // refocus after IME swap
     await sleep(TIMING.afterImeSwitch);
-    await typeText(tunnelHostname, dbId, text);
+    // Force an RTL base direction for Arabic/RTL content so a leading Latin word
+    // or @mention can't flip the comment to left-to-right (see lib/text/bidi).
+    // Only the keystrokes carry the zero-width mark; the baseline + post-submit
+    // verification keep using the clean `text` (the UI tree is bidi-stripped).
+    await typeText(tunnelHostname, dbId, ensureRtlBaseDirection(text));
     await sleep(TIMING.afterType);
 
     ttLog(dbId, "proof screenshot (composer + text, evidence only)");
