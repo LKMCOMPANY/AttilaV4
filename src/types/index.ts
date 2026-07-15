@@ -200,6 +200,45 @@ export interface AvatarPlatformHealth {
 }
 
 // ---------------------------------------------------------------------------
+// Account state — per-(avatar, platform) operational block
+// ---------------------------------------------------------------------------
+// The single gate for Automator avatar selection: an ACTIVE block (row with
+// `resolved_at IS NULL` in `avatar_platform_blocks`) means the avatar is not
+// callable on that platform until an operator clears it. Replaces the legacy
+// `blocked_{platform}` tag. See `src/lib/account-state/blocks.ts`.
+
+/** Why an avatar can't be called on a platform (mirrors the health kinds). */
+export const AVATAR_BLOCK_REASONS = [
+  "logged_out",
+  "blocked",
+  "captcha",
+  "suspended",
+  "notfound",
+  "shadow_ban",
+  "manual",
+] as const;
+export type AvatarBlockReason = (typeof AVATAR_BLOCK_REASONS)[number];
+
+/** Where the evidence for a block came from — drives the auto-recover policy. */
+export const AVATAR_BLOCK_SOURCES = [
+  "on_device",
+  "tikhub",
+  "verification",
+  "operator",
+] as const;
+export type AvatarBlockSource = (typeof AVATAR_BLOCK_SOURCES)[number];
+
+/** An active operational block, as surfaced to the operator UI. */
+export interface AvatarPlatformBlock {
+  id: string;
+  platform: SocialPlatform;
+  reason: AvatarBlockReason;
+  source: AvatarBlockSource;
+  detail: string | null;
+  first_detected_at: string;
+}
+
+// ---------------------------------------------------------------------------
 // Content Items
 // ---------------------------------------------------------------------------
 

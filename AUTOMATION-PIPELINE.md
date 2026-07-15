@@ -348,10 +348,17 @@ Un avatar est eligible si **toutes** ces conditions sont remplies :
    Le toggle seul ne suffit pas : un avatar activé sans handle n'a pas de compte
    et ne doit jamais recevoir de job.
 4. **Device assigne** (`device_id IS NOT NULL`)
-5. **Pas de tag `blocked_{platform}`** — posé automatiquement par le gateway sur
-   un échec account-level (`account_logged_out` / `account_blocked` /
-   `account_captcha`) via `tagAvatarBlocked`, levé manuellement par l'opérateur.
-   Le `status` de l'avatar n'est pas touché (blocage par plateforme, réversible).
+5. **Pas de blocage actif dans `avatar_platform_blocks`** (garde-fou, ligne avec
+   `resolved_at IS NULL` pour ce couple avatar/plateforme). C'est l'unique
+   verrou de sélection ; il remplace l'ancien tag `blocked_{platform}`.
+   Alimenté automatiquement par : l'executor sur échec account-level
+   (`account_logged_out` / `account_blocked` / `account_captcha`, source
+   `on_device`), et le worker santé (TikHub `suspended`, `notfound` sans post
+   confirmé, shadow-ban — sources `tikhub` / `verification`). Levé par le
+   bouton « Mark resolved » de l'Overview opérateur (le worker peut auto-fermer
+   ses propres blocages dérivés quand le signal repasse au vert). Le `status`
+   de l'avatar n'est pas touché (blocage par plateforme, réversible). Voir
+   `src/lib/account-state/blocks.ts`.
 6. **Pas de job en cours** : aucun `campaign_jobs` avec `status IN ('ready', 'executing')` pour cet avatar
 7. **Rate limit horaire** : nombre de jobs dans la derniere heure < `capacity_params.max_responses_per_hour`
 8. **Rate limit journalier** : nombre de jobs dans les dernieres 24h < `capacity_params.max_responses_per_day`
@@ -675,12 +682,20 @@ Catégories d'action immédiate :
 Avant d'executer, le gateway verifie que le job n'est pas expire :
 `queued_at > now() - campaign.queue_max_age`. Si expire → marque `expired`, libere le slot.
 
-### Echecs et avatar tagging
+### Echecs et garde-fou avatar
 
 Si un job echoue :
 - Le job est marque `failed` avec `error_message`
-- Si l'erreur indique un blocage de compte (verification, CAPTCHA) :
-  un tag `blocked_{platform}` est ajoute a l'avatar
+- Si l'erreur est account-level (`account_logged_out` / `account_blocked` /
+  `account_captcha`) : un blocage est ouvert dans `avatar_platform_blocks`
+  (raison = catégorie parsée, source `on_device`, `job_id` pour la traçabilité).
+  L'avatar n'est plus sélectionnable sur cette plateforme tant qu'un opérateur
+  n'a pas cliqué « Mark resolved » dans l'Overview.
+- Le worker santé (`/api/avatars/health`) ouvre/ferme de la même façon les
+  blocages dérivés : TikHub `suspended`, `notfound` sans post confirmé,
+  shadow-ban (posts `done` jamais confirmés sur 7 j). Un `notfound` AVEC posts
+  confirmés n'est PAS bloquant (juste « handle à corriger »). Anti-flap : un
+  blocage résolu n'est pas rouvert pendant 24 h.
 - L'avatar n'est **pas** desactive automatiquement (pas de changement de `status`)
 - Pas de retry automatique : la priorite est aux nouveaux posts
 

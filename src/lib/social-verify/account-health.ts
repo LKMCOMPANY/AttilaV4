@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reconcileAvatarBlocks } from "@/lib/account-state/blocks";
 import {
   isTikHubEnabled,
   getTwitterAccountHealth,
@@ -22,8 +23,13 @@ import type { AccountHealthStatus } from "@/types";
  *   - paced by staleness so a fixed batch per cycle eventually covers the fleet
  *     without hammering the paid API.
  *
- * It is purely informational — it NEVER tags/blocks an avatar or touches the
- * pipeline. A false "suspended" from a scraper must never stop a live account.
+ * The raw probe stays informational, but after each batch the pass reconciles
+ * `avatar_platform_blocks` for the probed avatars: a blocking verdict (TikHub
+ * suspended, notfound with no confirmed post, shadow-ban) opens a block that
+ * gates Automator selection, and a verdict back to green auto-closes the
+ * worker's own block. A single ambiguous probe still can't stop a live account:
+ * `unknown` never overwrites a good verdict, and a confirmed post always
+ * overrides a `notfound` (see `deriveAccountHealth`).
  */
 
 // Only platforms with a TikHub profile lookup today.
@@ -43,6 +49,9 @@ export interface HealthPassResult {
   suspended: number;
   notfound: number;
   skipped: number;
+  /** Guardrail blocks opened / auto-closed by the reconcile pass. */
+  blocksOpened: number;
+  blocksClosed: number;
 }
 
 interface Candidate {
@@ -72,7 +81,15 @@ interface AvatarRow {
 }
 
 export async function refreshAccountHealth(): Promise<HealthPassResult> {
-  const result: HealthPassResult = { checked: 0, active: 0, suspended: 0, notfound: 0, skipped: 0 };
+  const result: HealthPassResult = {
+    checked: 0,
+    active: 0,
+    suspended: 0,
+    notfound: 0,
+    skipped: 0,
+    blocksOpened: 0,
+    blocksClosed: 0,
+  };
   if (!isTikHubEnabled()) return result;
 
   const supabase = createAdminClient();
@@ -121,7 +138,8 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
   // Oldest / never-checked first — a stable rotation across cycles.
   candidates.sort((a, b) => (a.checkedAt ?? 0) - (b.checkedAt ?? 0));
 
-  for (const candidate of candidates.slice(0, BATCH)) {
+  const batch = candidates.slice(0, BATCH);
+  for (const candidate of batch) {
     const verdict = await probeAndStore(supabase, candidate);
     if (verdict === null) {
       result.skipped++;
@@ -131,6 +149,23 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
     if (verdict === "active") result.active++;
     else if (verdict === "suspended") result.suspended++;
     else if (verdict === "notfound") result.notfound++;
+  }
+
+  // Guardrail reconcile on the just-probed avatars: open blocks for blocking
+  // verdicts (suspended / notfound-without-confirmation / shadow-ban), close
+  // the worker's own blocks when the signal is green again. Paced by the same
+  // batch as the probe, so the whole fleet converges within the staleness
+  // window without extra load.
+  const batchAvatarIds = [...new Set(batch.map((c) => c.avatarId))];
+  const reconciled = await reconcileAvatarBlocks(supabase, batchAvatarIds);
+  result.blocksOpened = reconciled.opened;
+  result.blocksClosed = reconciled.closed;
+
+  if (reconciled.opened > 0 || reconciled.closed > 0) {
+    console.log(
+      `[AccountHealth] Reconciled guardrail blocks`,
+      JSON.stringify({ opened: reconciled.opened, closed: reconciled.closed }),
+    );
   }
 
   return result;

@@ -11,13 +11,20 @@ import {
 } from "@/app/actions/avatars";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import { getAvatarHealthSignals } from "@/app/actions/account-health";
+import { getActiveBlocks } from "@/app/actions/avatar-blocks";
 import { AvatarListPanel } from "./avatar-list-panel";
 import { DevicePanel } from "./device-panel";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
 import { avatarNeedsAttention, type AvatarHealthSignals } from "@/lib/constants/account-health";
-import type { AvatarWithRelations, DeviceState } from "@/types";
+import type {
+  AvatarPlatformBlock,
+  AvatarWithRelations,
+  DeviceState,
+  SocialPlatform,
+} from "@/types";
 
 const EMPTY_SIGNALS: AvatarHealthSignals = {};
+const EMPTY_BLOCKS: AvatarPlatformBlock[] = [];
 
 export type AvatarSortField =
   | "last_used"
@@ -66,6 +73,7 @@ export function OperatorLayout({
   const [automatorStatuses, setAutomatorStatuses] = useState<Record<string, AvatarAutomatorInfo>>({});
   const [deviceStates, setDeviceStates] = useState<Record<string, string>>({});
   const [healthSignals, setHealthSignals] = useState<Record<string, AvatarHealthSignals>>({});
+  const [blocksByAvatar, setBlocksByAvatar] = useState<Record<string, AvatarPlatformBlock[]>>({});
 
   const presenceState = useMemo(
     () =>
@@ -93,6 +101,36 @@ export function OperatorLayout({
   useEffect(() => {
     getAvatarHealthSignals(accountId).then(setHealthSignals);
   }, [accountId, jobsVersion]);
+
+  // Active guardrail blocks — the authoritative "not callable" state. The
+  // executor, the health worker and the resolve action all broadcast on the
+  // `jobs` channel, so blocks stay current without re-calling the avatar.
+  useEffect(() => {
+    getActiveBlocks(accountId).then(setBlocksByAvatar);
+  }, [accountId, jobsVersion]);
+
+  // Optimistic clear after "Mark resolved" — the realtime tick then converges
+  // the map with the server truth.
+  const handleBlockResolved = useCallback(
+    (avatarId: string, platform: SocialPlatform) => {
+      setBlocksByAvatar((prev) => {
+        const remaining = (prev[avatarId] ?? []).filter((b) => b.platform !== platform);
+        return { ...prev, [avatarId]: remaining };
+      });
+    },
+    [],
+  );
+
+  // Optimistic add after a manual block — same convergence path.
+  const handleBlockOpened = useCallback(
+    (avatarId: string, block: AvatarPlatformBlock) => {
+      setBlocksByAvatar((prev) => ({
+        ...prev,
+        [avatarId]: [block, ...(prev[avatarId] ?? [])],
+      }));
+    },
+    [],
+  );
 
   // Fast path: read last-known device states from the DB on mount + on realtime
   // events. Never blocks and is cheap.
@@ -166,14 +204,15 @@ export function OperatorLayout({
     return [...map.entries()].map(([id, name]) => ({ id, name }));
   }, [avatarsWithLiveState]);
 
-  // Count of avatars with a suspended / not-found account — powers the
-  // "needs attention" filter toggle (hidden when the fleet is healthy).
+  // Count of avatars with an active block or an alarming account signal —
+  // powers the "needs attention" filter toggle (hidden when the fleet is
+  // healthy).
   const attentionCount = useMemo(
     () =>
       avatarsWithLiveState.filter((a) =>
-        avatarNeedsAttention(a.platform_health, healthSignals[a.id]),
+        avatarNeedsAttention(a.platform_health, healthSignals[a.id], blocksByAvatar[a.id]),
       ).length,
-    [avatarsWithLiveState, healthSignals],
+    [avatarsWithLiveState, healthSignals, blocksByAvatar],
   );
 
   // Derived in render (React 19 idiom — no state-sync effect): a stale
@@ -190,7 +229,7 @@ export function OperatorLayout({
     }
     if (effectiveHealthFilter) {
       result = result.filter((a) =>
-        avatarNeedsAttention(a.platform_health, healthSignals[a.id]),
+        avatarNeedsAttention(a.platform_health, healthSignals[a.id], blocksByAvatar[a.id]),
       );
     }
     const q = searchQuery.trim().toLowerCase();
@@ -203,7 +242,7 @@ export function OperatorLayout({
       });
     }
     return result;
-  }, [avatarsWithLiveState, filterArmyId, effectiveHealthFilter, healthSignals, searchQuery]);
+  }, [avatarsWithLiveState, filterArmyId, effectiveHealthFilter, healthSignals, blocksByAvatar, searchQuery]);
 
   const sortedAvatars = useMemo(() => {
     switch (sortField) {
@@ -263,6 +302,7 @@ export function OperatorLayout({
           automatorStatuses={automatorStatuses}
           presenceMap={presenceMap}
           healthSignals={healthSignals}
+          blocksByAvatar={blocksByAvatar}
         />
       </Panel>
 
@@ -280,6 +320,9 @@ export function OperatorLayout({
           accountId={accountId}
           canManage={canManage}
           healthSignals={selectedAvatar ? healthSignals[selectedAvatar.id] ?? EMPTY_SIGNALS : EMPTY_SIGNALS}
+          blocks={selectedAvatar ? blocksByAvatar[selectedAvatar.id] ?? EMPTY_BLOCKS : EMPTY_BLOCKS}
+          onBlockResolved={handleBlockResolved}
+          onBlockOpened={handleBlockOpened}
           onAvatarUpdated={handleAvatarUpdated}
           onAvatarArchived={handleAvatarArchived}
         />

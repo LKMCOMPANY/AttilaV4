@@ -23,7 +23,7 @@ import { ContentTab } from "./tabs/content-tab";
 import { EmptyPanel } from "@/components/ui/empty";
 import { archiveAvatar } from "@/app/actions/avatars";
 import type { AvatarHealthSignals } from "@/lib/constants/account-health";
-import type { AvatarWithRelations } from "@/types";
+import type { AvatarPlatformBlock, AvatarWithRelations, SocialPlatform } from "@/types";
 import { User, Archive, Loader2 } from "lucide-react";
 
 export interface EditableTabProps {
@@ -32,6 +32,12 @@ export interface EditableTabProps {
   onUpdated: (avatar: AvatarWithRelations) => void;
   /** On-device / shadow-ban signals for this avatar (operator health). */
   healthSignals?: AvatarHealthSignals;
+  /** Active guardrail blocks for this avatar (Automator won't call it there). */
+  blocks?: AvatarPlatformBlock[];
+  /** Notified after an operator marks a block resolved (optimistic clear). */
+  onBlockResolved?: (avatarId: string, platform: SocialPlatform) => void;
+  /** Notified after an operator blocks a platform by hand (optimistic add). */
+  onBlockOpened?: (avatarId: string, block: AvatarPlatformBlock) => void;
 }
 
 interface AvatarDetailPanelProps {
@@ -39,6 +45,9 @@ interface AvatarDetailPanelProps {
   accountId: string;
   canManage: boolean;
   healthSignals?: AvatarHealthSignals;
+  blocks?: AvatarPlatformBlock[];
+  onBlockResolved?: (avatarId: string, platform: SocialPlatform) => void;
+  onBlockOpened?: (avatarId: string, block: AvatarPlatformBlock) => void;
   onAvatarUpdated: (avatar: AvatarWithRelations) => void;
   onAvatarArchived: (avatarId: string) => void;
 }
@@ -48,6 +57,9 @@ export function AvatarDetailPanel({
   accountId,
   canManage,
   healthSignals,
+  blocks,
+  onBlockResolved,
+  onBlockOpened,
   onAvatarUpdated,
   onAvatarArchived,
 }: AvatarDetailPanelProps) {
@@ -124,6 +136,9 @@ export function AvatarDetailPanel({
                 accountId={accountId}
                 onUpdated={onAvatarUpdated}
                 healthSignals={healthSignals}
+                blocks={blocks}
+                onBlockResolved={onBlockResolved}
+                onBlockOpened={onBlockOpened}
               />
             </TabsContent>
             <TabsContent value="identity">

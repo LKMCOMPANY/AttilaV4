@@ -17,7 +17,7 @@ import { SocialIcon } from "@/components/icons/social-icons";
 import { AccountHealthDot } from "@/components/shared/account-health-badge";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { OperatorPresence } from "@/hooks/use-realtime-account";
-import type { AvatarWithRelations } from "@/types";
+import type { AvatarPlatformBlock, AvatarWithRelations } from "@/types";
 
 interface AvatarListItemProps {
   avatar: AvatarWithRelations;
@@ -26,6 +26,7 @@ interface AvatarListItemProps {
   automatorInfo?: AvatarAutomatorInfo;
   operators?: OperatorPresence[];
   healthSignals?: AvatarHealthSignals;
+  blocks?: AvatarPlatformBlock[];
 }
 
 export function AvatarListItem({
@@ -35,6 +36,7 @@ export function AvatarListItem({
   automatorInfo,
   operators,
   healthSignals,
+  blocks,
 }: AvatarListItemProps) {
   const fullName = `${avatar.first_name} ${avatar.last_name}`;
   const flag = countryCodeToFlag(avatar.country_code);
@@ -43,8 +45,10 @@ export function AvatarListItem({
   );
   const deviceState = avatar.device?.state ?? null;
   // Only an account that needs a look (critical / watch) is worth a list
-  // indicator; a healthy or unchecked account stays visually quiet.
-  const worstVerdict = worstAvatarVerdict(avatar.platform_health, healthSignals);
+  // indicator; a healthy or unchecked account stays visually quiet. An active
+  // guardrail block outranks the time-windowed signals, so the dot stays
+  // accurate until the operator marks the problem resolved — no re-call needed.
+  const worstVerdict = worstAvatarVerdict(avatar.platform_health, healthSignals, blocks);
   const alarmingVerdict =
     worstVerdict && isAlarmingKind(worstVerdict.kind) ? worstVerdict : null;
   const hasIndicators = !!(automatorInfo || operators?.length || deviceState || alarmingVerdict);

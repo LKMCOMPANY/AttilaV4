@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getActiveBlockedAvatarIds } from "@/lib/account-state/blocks";
 import type { CampaignPlatform, PlatformCapacityParams, Avatar } from "@/types";
 import type { SelectedAvatar } from "./types";
 import { pipelineLog } from "./types";
@@ -72,17 +73,25 @@ export async function selectAvatars(params: {
     return [];
   }
 
-  // 3. Filter out excluded avatars and those with blocked tags
-  const blockedTag = `blocked_${platform}`;
-  const eligible = avatars.filter((a) => {
-    if (excludeAvatarIds.includes(a.id)) return false;
-    const tags: string[] = Array.isArray(a.tags) ? a.tags : [];
-    if (tags.includes(blockedTag)) return false;
-    return true;
-  });
+  // 3. Filter out excluded avatars and those with an ACTIVE platform block —
+  //    the guardrail. `avatar_platform_blocks` (resolved_at IS NULL) is the
+  //    single source of truth for "not callable here": on-device failures,
+  //    TikHub suspended/notfound and shadow-bans all land there, and only an
+  //    operator "Mark resolved" (or a worker auto-recover) clears it.
+  const blockedIds = await getActiveBlockedAvatarIds(
+    supabase,
+    platform,
+    avatars.map((a) => a.id),
+  );
+  const eligible = avatars.filter(
+    (a) => !excludeAvatarIds.includes(a.id) && !blockedIds.has(a.id),
+  );
 
   if (eligible.length === 0) {
-    pipelineLog("selector", null, "All avatars excluded or blocked");
+    pipelineLog("selector", null, "All avatars excluded or blocked", {
+      blocked: blockedIds.size,
+      excluded: excludeAvatarIds.length,
+    });
     return [];
   }
 
@@ -171,34 +180,5 @@ function shuffleArray<T>(arr: T[]): void {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-}
-
-/**
- * Tag an avatar as blocked on a platform after an account-level failure
- * (logged out, suspended, captcha). This is the write-side counterpart to the
- * `blocked_${platform}` exclusion in `selectAvatars` above: once tagged, the
- * avatar is skipped by future selection until an operator clears the tag. The
- * avatar's `status` is deliberately left untouched — blocking is per-platform
- * and reversible, not a hard deactivation. Idempotent and best-effort.
- */
-export async function tagAvatarBlocked(
-  supabase: ReturnType<typeof createAdminClient>,
-  avatarId: string,
-  platform: CampaignPlatform,
-): Promise<void> {
-  const tag = `blocked_${platform}`;
-  const { data } = await supabase.from("avatars").select("tags").eq("id", avatarId).single();
-  const tags: string[] = Array.isArray(data?.tags) ? (data.tags as string[]) : [];
-  if (tags.includes(tag)) return;
-
-  const { error } = await supabase
-    .from("avatars")
-    .update({ tags: [...tags, tag] })
-    .eq("id", avatarId);
-  if (error) {
-    pipelineLog("execute", null, "Failed to tag avatar blocked", { avatarId, tag, error: error.message });
-  } else {
-    pipelineLog("execute", null, "Avatar tagged blocked after account-level failure", { avatarId, tag });
   }
 }

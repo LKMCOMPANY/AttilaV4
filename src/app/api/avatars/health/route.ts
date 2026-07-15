@@ -6,8 +6,10 @@ import { refreshAccountHealth } from "@/lib/social-verify/account-health";
  *
  * Off-device account-health pass: probes a small batch of stale avatar
  * accounts via TikHub and records each as active / suspended / notfound in
- * `avatar_platform_health`. Purely informational — never tags or blocks an
- * avatar. Driven by a slow worker loop in server.mjs.
+ * `avatar_platform_health`, then reconciles the guardrail blocks
+ * (`avatar_platform_blocks`) for the probed avatars — blocking verdicts
+ * (suspended / notfound-without-confirmation / shadow-ban) gate Automator
+ * selection until resolved. Driven by a slow worker loop in server.mjs.
  *
  * Protected by CRON_SECRET — no user session required.
  */

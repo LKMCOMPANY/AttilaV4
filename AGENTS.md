@@ -62,6 +62,12 @@ regress on them:
    modes** (`account_logged_out`, `content_unavailable`, etc.). This is
    what the operator sees as a coloured badge in the automator panel —
    don't bury it in a generic `Error`.
+8. **Avatar callability is gated by `avatar_platform_blocks` ONLY** (an
+   active row = the selector skips the avatar on that platform). Account-level
+   failures open a block via `openBlock()` (`src/lib/account-state/blocks.ts`);
+   the health worker reconciles TikHub/shadow-ban blocks; operators clear them
+   with "Mark resolved" in the Overview panel. Never re-introduce tag-based
+   (`blocked_*`) or ad-hoc gating — one table, one gate.
 
 ## Hard rules — frontend
 

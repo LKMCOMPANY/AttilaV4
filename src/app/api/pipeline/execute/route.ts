@@ -8,22 +8,7 @@ import {
   ContainerNotReadyError,
 } from "@/lib/box-api";
 import { encodeJobError, isAutoRetryable, JobError, parseJobError } from "@/lib/automation/errors";
-import { tagAvatarBlocked } from "@/lib/pipeline/avatar-selector";
-
-/**
- * Only account-level failures warrant tagging the avatar `blocked_${platform}`.
- * These are the categories where the avatar's session/account itself is the
- * problem and no future job can succeed until an operator acts.
- */
-function shouldBlockAvatar(error: string | undefined): boolean {
-  const parsed = parseJobError(error);
-  if (!parsed) return false;
-  return (
-    parsed.category === "account_logged_out" ||
-    parsed.category === "account_blocked" ||
-    parsed.category === "account_captcha"
-  );
-}
+import { openBlock, blockReasonFromErrorCategory } from "@/lib/account-state/blocks";
 
 /**
  * Auto-retry budget for pre-compose failures (`app_not_ready`: app never
@@ -313,12 +298,23 @@ export async function POST(req: NextRequest) {
       .eq("id", job.id);
     await supabase.rpc("increment_campaign_counter", { p_campaign_id: job.campaign_id, p_counter: "total_responses_failed" });
 
-    // Account-level failures (logged out, suspended, captcha) mean this avatar
-    // can't work on this platform until an operator intervenes — tag it so the
-    // selector stops routing jobs to it. Transient/infra/content failures do
-    // not tag (they'd churn the whole army on a bad box or a deleted post).
-    if (shouldBlockAvatar(result.error) && job.avatar_id) {
-      await tagAvatarBlocked(supabase, job.avatar_id, job.platform);
+    // Account-level failures (logged out, blocked, captcha) mean this avatar
+    // can't work on this platform until an operator intervenes — open a block
+    // (avatar_platform_blocks) so the selector stops routing jobs to it. Only
+    // the operator's "Mark resolved" clears it. Transient/infra/content
+    // failures don't block (they'd churn the whole army on a bad box or a
+    // deleted post).
+    const blockReason = blockReasonFromErrorCategory(parsed?.category);
+    if (blockReason && job.avatar_id) {
+      await openBlock(supabase, {
+        avatarId: job.avatar_id,
+        platform: job.platform,
+        reason: blockReason,
+        source: "on_device",
+        detail: parsed?.message || result.error || null,
+        jobId: job.id,
+      });
+      console.log(`[Execute] Avatar ${job.avatar_id} blocked on ${job.platform} (${blockReason})`);
     }
   }
 

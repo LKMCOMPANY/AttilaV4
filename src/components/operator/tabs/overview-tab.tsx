@@ -1,6 +1,6 @@
 "use client";
 
-import { Shield, CircleDot } from "lucide-react";
+import { Shield, ShieldAlert, CircleDot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -15,9 +15,18 @@ import { AVATAR_STATUSES, type AvatarStatus } from "@/types";
 import { updateAvatar } from "@/app/actions/avatars";
 import { SocialSection } from "./social-section";
 import { AssignmentSection } from "./assignment-section";
+import { AccountStateSection } from "./account-state-section";
 import type { EditableTabProps } from "../avatar-detail-panel";
 
-export function OverviewTab({ avatar, accountId, onUpdated, healthSignals }: EditableTabProps) {
+export function OverviewTab({
+  avatar,
+  accountId,
+  onUpdated,
+  healthSignals,
+  blocks = [],
+  onBlockResolved,
+  onBlockOpened,
+}: EditableTabProps) {
   const handleStatusChange = async (value: string | null) => {
     if (!value) return;
     const prev = avatar.status;
@@ -32,6 +41,15 @@ export function OverviewTab({ avatar, accountId, onUpdated, healthSignals }: Edi
 
   return (
     <div className="space-y-5">
+      <Section title="Automation Guardrail" icon={ShieldAlert}>
+        <AccountStateSection
+          avatar={avatar}
+          blocks={blocks}
+          onResolved={(avatarId, platform) => onBlockResolved?.(avatarId, platform)}
+          onBlocked={(avatarId, block) => onBlockOpened?.(avatarId, block)}
+        />
+      </Section>
+
       <Section title="Accounts & Credentials" icon={Shield}>
         <SocialSection avatar={avatar} onUpdated={onUpdated} healthSignals={healthSignals} />
       </Section>

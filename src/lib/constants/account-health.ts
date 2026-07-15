@@ -1,4 +1,11 @@
-import type { AccountHealthStatus, AvatarPlatformHealth, SocialPlatform } from "@/types";
+import type {
+  AccountHealthStatus,
+  AvatarBlockReason,
+  AvatarBlockSource,
+  AvatarPlatformBlock,
+  AvatarPlatformHealth,
+  SocialPlatform,
+} from "@/types";
 
 // ---------------------------------------------------------------------------
 // Account health — the presentation model shown to operators.
@@ -150,6 +157,79 @@ export function isAlarmingKind(kind: AccountHealthKind): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Account state — the gating set + kind <-> block-reason bridges.
+//
+// A `kind` is what the operator SEES; a block `reason` is what we PERSIST in
+// `avatar_platform_blocks`. `isBlockingKind` is the single definition of
+// "this state makes the avatar non-callable" — the guardrail policy validated
+// with the product: every alarming kind EXCEPT `handle_mismatch` (a working
+// account whose stored @handle is just wrong). It happens to equal
+// `isAlarmingKind` today, but is kept separate so the visual and the gating
+// policies can diverge without a silent behaviour change.
+// ---------------------------------------------------------------------------
+
+/** True when a verdict should stop the Automator from calling the avatar. */
+export function isBlockingKind(kind: AccountHealthKind): boolean {
+  switch (kind) {
+    case "logged_out":
+    case "blocked":
+    case "captcha":
+    case "suspended":
+    case "unresolved":
+    case "shadow_ban":
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** Presentation kind for a persisted block reason (for badges / labels). */
+export function blockReasonToKind(reason: AvatarBlockReason): AccountHealthKind {
+  switch (reason) {
+    case "logged_out":
+      return "logged_out";
+    case "captcha":
+      return "captcha";
+    case "suspended":
+      return "suspended";
+    case "notfound":
+      return "unresolved";
+    case "shadow_ban":
+      return "shadow_ban";
+    case "blocked":
+    case "manual":
+      return "blocked";
+  }
+}
+
+/**
+ * The persisted block descriptor a derived verdict maps to, or `null` when the
+ * kind is not blocking. Used by the health worker's reconcile pass to turn a
+ * TikHub / shadow-ban verdict into an `avatar_platform_blocks` row — on-device
+ * failures are written directly by the executor, so they never reach here.
+ */
+export function blockDescriptorFromKind(
+  kind: AccountHealthKind,
+): { reason: AvatarBlockReason; source: AvatarBlockSource } | null {
+  switch (kind) {
+    case "suspended":
+      return { reason: "suspended", source: "tikhub" };
+    case "unresolved":
+      return { reason: "notfound", source: "tikhub" };
+    case "shadow_ban":
+      return { reason: "shadow_ban", source: "verification" };
+    case "logged_out":
+      return { reason: "logged_out", source: "on_device" };
+    case "blocked":
+      return { reason: "blocked", source: "on_device" };
+    case "captcha":
+      return { reason: "captcha", source: "on_device" };
+    default:
+      return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Per-avatar aggregation (operator list dot + "needs attention" filter)
 // ---------------------------------------------------------------------------
 
@@ -167,31 +247,47 @@ export interface PlatformHealthVerdict {
   health: AvatarPlatformHealth | null;
 }
 
-const HEALTH_PLATFORMS: SocialPlatform[] = ["twitter", "tiktok"];
+/** Platforms with account-health probing + guardrail gating today. */
+export const HEALTH_PLATFORMS: SocialPlatform[] = ["twitter", "tiktok"];
 
 /**
  * Compute the health verdict for each platform the avatar could be checked on,
  * merging its TikHub rows with the on-device / shadow-ban signals. Only returns
  * platforms that carry at least one real signal (keeps a fresh fleet quiet).
+ *
+ * When the avatar's active guardrail blocks are provided, a blocked platform's
+ * verdict comes from the BLOCK (the authoritative "not callable" state, which
+ * persists until resolved) instead of the time-windowed derived signals — this
+ * is what keeps the list dot honest without re-calling the avatar.
  */
 export function avatarPlatformVerdicts(
   platformHealth: AvatarPlatformHealth[] | undefined | null,
   signals: AvatarHealthSignals | undefined,
+  blocks?: AvatarPlatformBlock[] | null,
 ): PlatformHealthVerdict[] {
   const byPlatform = new Map<SocialPlatform, AvatarPlatformHealth>();
   for (const row of platformHealth ?? []) byPlatform.set(row.platform, row);
 
+  const blockByPlatform = new Map<SocialPlatform, AvatarPlatformBlock>();
+  for (const block of blocks ?? []) blockByPlatform.set(block.platform, block);
+
+  // Manual blocks can exist on platforms outside the probed set — include them.
+  const platforms = new Set<SocialPlatform>([...HEALTH_PLATFORMS, ...blockByPlatform.keys()]);
+
   const verdicts: PlatformHealthVerdict[] = [];
-  for (const platform of HEALTH_PLATFORMS) {
+  for (const platform of platforms) {
     const health = byPlatform.get(platform) ?? null;
     const sig = signals?.[platform];
-    if (!health && !sig) continue;
-    const kind = deriveAccountHealth({
-      tikhub: health?.status,
-      deviceIssue: sig?.deviceIssue,
-      shadowBan: sig?.shadowBan,
-      confirmed: sig?.confirmed,
-    });
+    const block = blockByPlatform.get(platform) ?? null;
+    if (!health && !sig && !block) continue;
+    const kind = block
+      ? blockReasonToKind(block.reason)
+      : deriveAccountHealth({
+          tikhub: health?.status,
+          deviceIssue: sig?.deviceIssue,
+          shadowBan: sig?.shadowBan,
+          confirmed: sig?.confirmed,
+        });
     verdicts.push({ platform, kind, health });
   }
   return verdicts;
@@ -201,8 +297,9 @@ export function avatarPlatformVerdicts(
 export function worstAvatarVerdict(
   platformHealth: AvatarPlatformHealth[] | undefined | null,
   signals: AvatarHealthSignals | undefined,
+  blocks?: AvatarPlatformBlock[] | null,
 ): PlatformHealthVerdict | null {
-  const verdicts = avatarPlatformVerdicts(platformHealth, signals);
+  const verdicts = avatarPlatformVerdicts(platformHealth, signals, blocks);
   if (verdicts.length === 0) return null;
   return verdicts.reduce((worst, v) =>
     ACCOUNT_HEALTH_META[v.kind].severity > ACCOUNT_HEALTH_META[worst.kind].severity
@@ -215,7 +312,8 @@ export function worstAvatarVerdict(
 export function avatarNeedsAttention(
   platformHealth: AvatarPlatformHealth[] | undefined | null,
   signals: AvatarHealthSignals | undefined,
+  blocks?: AvatarPlatformBlock[] | null,
 ): boolean {
-  const worst = worstAvatarVerdict(platformHealth, signals);
+  const worst = worstAvatarVerdict(platformHealth, signals, blocks);
   return worst !== null && isAlarmingKind(worst.kind);
 }
