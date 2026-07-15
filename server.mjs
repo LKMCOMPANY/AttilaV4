@@ -423,8 +423,10 @@ function startPipelineWorkers(port) {
   console.log(`> Verify worker: every ${VERIFY_INTERVAL_MS}ms`);
 
   // Account health — probes a small batch of stale avatar accounts via TikHub
-  // (active / suspended / notfound) so the UI can flag dead/suspended accounts.
-  // Slow, throughput-independent, informational only (never blocks avatars).
+  // (active / suspended / notfound), then reconciles the guardrail blocks
+  // (avatar_platform_blocks) for the probed avatars: blocking verdicts gate
+  // Automator selection until an operator resolves them. Slow and
+  // throughput-independent.
   workerLoop("Account-Health", port, "/api/avatars/health", {
     fixedIntervalMs: ACCOUNT_HEALTH_INTERVAL_MS,
   });
