@@ -1,8 +1,8 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { canUserAccessDevice, requireSession } from "@/lib/auth/session";
-import { boxFetch, shell } from "@/lib/box-api";
+import { requireSession, requireActionSession } from "@/lib/auth/session";
+import { pushContentToDeviceCore } from "@/lib/operator/content-push";
 import { z } from "zod";
 import type { ContentItem } from "@/types";
 
@@ -134,7 +134,8 @@ export async function deleteContentItem(
 }
 
 // ---------------------------------------------------------------------------
-// Push content to device — downloads from Supabase Storage, uploads to device
+// Push content to device — cookie-transport wrapper around
+// `src/lib/operator/content-push.ts` (also behind `/api/content/push`).
 // ---------------------------------------------------------------------------
 
 export async function pushContentToDevice(
@@ -142,82 +143,8 @@ export async function pushContentToDevice(
   deviceId: string
 ): Promise<{ error: string | null }> {
   try {
-    const session = await requireSession();
-    const supabase = await createClient();
-
-    const [{ data: item }, { data: device }] = await Promise.all([
-      supabase
-        .from("content_items")
-        .select("*")
-        .eq("id", contentId)
-        .single(),
-      supabase
-        .from("devices")
-        .select("id, db_id, box_id, account_id, boxes(tunnel_hostname)")
-        .eq("id", deviceId)
-        .single(),
-    ]);
-
-    if (!item) return { error: "Content not found" };
-    if (!device) return { error: "Device not found" };
-
-    const box = device.boxes as unknown as { tunnel_hostname: string } | null;
-    if (!box) return { error: "Box not found" };
-
-    const deviceAllowed = await canUserAccessDevice(session, {
-      box_id: device.box_id,
-      account_id: device.account_id as string | null,
-    });
-    if (!deviceAllowed) return { error: "Forbidden" };
-
-    if (
-      session.profile.role !== "admin" &&
-      item.account_id !== session.profile.account_id
-    ) {
-      return { error: "Forbidden" };
-    }
-
-    const { data: signedUrl } = await supabase.storage
-      .from("content")
-      .createSignedUrl(item.storage_path, 300);
-
-    if (!signedUrl?.signedUrl) return { error: "Could not generate download URL" };
-
-    const isVideo = item.mime_type.startsWith("video/");
-    const destPath = isVideo ? "/sdcard/DCIM/Camera/" : "/sdcard/Pictures/";
-
-    await boxFetch<{ code: number; data: unknown }>(
-      box.tunnel_hostname,
-      "/android_api/v1/upload_file_from_url_batch",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          db_ids: device.db_id,
-          url: signedUrl.signedUrl,
-          dest_path: destPath,
-        }),
-      }
-    );
-
-    // Trigger media scanner so the file appears in gallery/camera roll. Go
-    // through `shell()` (not raw boxFetch) so the request carries the required
-    // `id` field and container-not-ready (VMOS code 201) is handled uniformly.
-    await shell(
-      box.tunnel_hostname,
-      device.db_id,
-      `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file://${destPath}${item.file_name}`,
-    );
-
-    await supabase
-      .from("content_items")
-      .update({
-        status: "pushed",
-        pushed_to_device_id: deviceId,
-        pushed_at: new Date().toISOString(),
-      })
-      .eq("id", contentId);
-
-    return { error: null };
+    const ctx = await requireActionSession();
+    return await pushContentToDeviceCore(ctx, contentId, deviceId);
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };
   }

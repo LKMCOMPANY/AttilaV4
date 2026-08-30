@@ -1,19 +1,20 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { requireSession, type Session } from "@/lib/auth/session";
-import { broadcastAccountEvent } from "@/lib/supabase/realtime";
-import { openBlock, closeBlock } from "@/lib/account-state/blocks";
+import { requireSession, requireActionSession } from "@/lib/auth/session";
+import {
+  resolveAvatarBlockCore,
+  openAvatarBlockCore,
+} from "@/lib/operator/avatar-blocks";
 import type { AvatarPlatformBlock, SocialPlatform } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Guardrail blocks — operator-facing actions.
 //
 // Reads go through the user client (RLS scopes them to the caller's account).
-// Writes go through the admin client AFTER an explicit membership check — the
-// same posture as the pipeline (service role owns the table's writes), with
-// `resolved_by` recording who cleared the block.
+// Writes delegate to the cores in `src/lib/operator/avatar-blocks.ts` (also
+// behind the native REST routes), which check membership explicitly before
+// writing through the admin client — the same posture as the pipeline.
 // ---------------------------------------------------------------------------
 
 /**
@@ -57,75 +58,33 @@ export async function getActiveBlocks(
 
 /**
  * Operator "Mark resolved": clears the active block for (avatar, platform),
- * making the avatar selectable by the Automator again. Idempotent — resolving
- * an already-cleared block is a no-op, not an error. A derived (TikHub /
- * shadow-ban) block won't be reopened by the worker for a grace period, so the
- * operator's fix has time to take effect.
+ * making the avatar selectable by the Automator again.
  */
 export async function resolveAvatarPlatformBlock(
   avatarId: string,
   platform: SocialPlatform,
 ): Promise<{ error: string | null }> {
-  const session = await requireSession();
-
-  const accountId = await getAvatarAccountId(session, avatarId);
-  if (!accountId) return { error: "Avatar not found" };
-
-  const admin = createAdminClient();
-  await closeBlock(admin, { avatarId, platform, resolvedBy: session.profile.id });
-
-  broadcastAccountEvent(accountId, "jobs", { action: "block_resolved" });
-  return { error: null };
+  try {
+    const ctx = await requireActionSession();
+    return await resolveAvatarBlockCore(ctx, avatarId, platform);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
 }
 
 /**
  * Manual guardrail: an operator blocks the avatar on a platform by hand
- * (account under review, handover in progress…). Same effect as an automatic
- * block — the Automator skips the avatar until someone marks it resolved.
+ * (account under review, handover in progress…).
  */
 export async function blockAvatarPlatform(
   avatarId: string,
   platform: SocialPlatform,
   note?: string,
 ): Promise<{ error: string | null }> {
-  const session = await requireSession();
-
-  const accountId = await getAvatarAccountId(session, avatarId);
-  if (!accountId) return { error: "Avatar not found" };
-
-  const admin = createAdminClient();
-  await openBlock(admin, {
-    avatarId,
-    platform,
-    reason: "manual",
-    source: "operator",
-    detail: note?.trim() || "Blocked manually by an operator",
-  });
-
-  broadcastAccountEvent(accountId, "jobs", { action: "block_opened" });
-  return { error: null };
-}
-
-/**
- * Membership guard shared by the write actions: resolves the avatar's account
- * and checks the caller belongs to it (admins pass). Uses the user client so
- * RLS provides defense in depth on top of the explicit check.
- */
-async function getAvatarAccountId(
-  session: Session,
-  avatarId: string,
-): Promise<string | null> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("avatars")
-    .select("account_id")
-    .eq("id", avatarId)
-    .single();
-
-  if (!data) return null;
-  const accountId = data.account_id as string;
-  if (session.profile.role !== "admin" && accountId !== session.profile.account_id) {
-    return null;
+  try {
+    const ctx = await requireActionSession();
+    return await openAvatarBlockCore(ctx, avatarId, platform, note);
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
   }
-  return accountId;
 }

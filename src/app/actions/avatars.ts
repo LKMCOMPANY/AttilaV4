@@ -2,11 +2,11 @@
 
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { requireSession } from "@/lib/auth/session";
+import { requireSession, requireActionSession } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
-import { fetchContainerList } from "@/lib/box-api";
 import { accountDeviceScopeFilter } from "@/lib/devices/access";
+import { archiveAvatarCore, unarchiveAvatarCore } from "@/lib/operator/avatar-archive";
+import { refreshDeviceStatesCore } from "@/lib/operator/device-refresh";
 import { redactDeviceSecrets } from "@/lib/devices/redact";
 import {
   createAvatarSchema,
@@ -419,71 +419,31 @@ export async function setAvatarDevice(
 }
 
 // ---------------------------------------------------------------------------
-// Archive / restore an avatar (reversible soft-delete).
-// Archiving detaches the device (frees it), cancels queued jobs, and hides the
-// avatar from the active list. Executing jobs are left to finish.
+// Archive / restore an avatar (reversible soft-delete). Cookie-transport
+// wrappers around `src/lib/operator/avatar-archive.ts` — the native REST
+// routes call the same cores under a bearer token.
 // ---------------------------------------------------------------------------
 
-type AvatarManageCtx =
-  | { ok: false; error: string }
-  | { ok: true; accountId: string; supabase: Awaited<ReturnType<typeof createClient>> };
-
-async function requireAvatarManage(avatarId: string): Promise<AvatarManageCtx> {
-  const session = await requireSession();
-  const isAdmin = session.profile.role === "admin";
-  const isManager = session.profile.role === "manager";
-  if (!isAdmin && !isManager) return { ok: false, error: "Only admins and managers can manage avatars" };
-  if (!z.string().uuid().safeParse(avatarId).success) return { ok: false, error: "Invalid avatar ID" };
-
-  const supabase = await createClient();
-  const { data: avatar } = await supabase
-    .from("avatars")
-    .select("account_id")
-    .eq("id", avatarId)
-    .single();
-  if (!avatar) return { ok: false, error: "Avatar not found" };
-  if (!isAdmin && session.profile.account_id !== avatar.account_id) return { ok: false, error: "Forbidden" };
-
-  return { ok: true, accountId: avatar.account_id as string, supabase };
-}
-
 export async function archiveAvatar(avatarId: string): Promise<{ error: string | null }> {
-  const ctx = await requireAvatarManage(avatarId);
-  if (!ctx.ok) return { error: ctx.error };
-
-  // Cancel this avatar's queued jobs (ready); executing jobs finish on their own.
-  // campaign_jobs is service-role only, and the caller is already authorized.
-  await createAdminClient()
-    .from("campaign_jobs")
-    .update({ status: "cancelled", completed_at: new Date().toISOString() })
-    .eq("avatar_id", avatarId)
-    .eq("status", "ready");
-
-  const { error, count } = await ctx.supabase
-    .from("avatars")
-    .update({ device_id: null, archived_at: new Date().toISOString() }, { count: "exact" })
-    .eq("id", avatarId);
-  if (error) return { error: error.message };
-  if (count === 0) return { error: "Could not archive the avatar" };
-
-  revalidatePath("/dashboard/operator");
-  return { error: null };
+  try {
+    const ctx = await requireActionSession();
+    const result = await archiveAvatarCore(ctx, avatarId);
+    if (!result.error) revalidatePath("/dashboard/operator");
+    return result;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
 }
 
 export async function unarchiveAvatar(avatarId: string): Promise<{ error: string | null }> {
-  const ctx = await requireAvatarManage(avatarId);
-  if (!ctx.ok) return { error: ctx.error };
-
-  // Restore only; the device is NOT re-attached (it may be in use elsewhere).
-  const { error, count } = await ctx.supabase
-    .from("avatars")
-    .update({ archived_at: null }, { count: "exact" })
-    .eq("id", avatarId);
-  if (error) return { error: error.message };
-  if (count === 0) return { error: "Could not restore the avatar" };
-
-  revalidatePath("/dashboard/operator");
-  return { error: null };
+  try {
+    const ctx = await requireActionSession();
+    const result = await unarchiveAvatarCore(ctx, avatarId);
+    if (!result.error) revalidatePath("/dashboard/operator");
+    return result;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -680,65 +640,17 @@ export async function getDeviceStates(
 
 /**
  * Reconcile the account's device states against the live box state and return
- * the fresh `deviceId -> state` map. Unlike `getDeviceStates` (a pure DB read),
- * this calls each box's `list_names` through the tunnel, so it is intentionally
- * kept out of the page render path: the operator UI invokes it once after the
- * first paint to converge to box truth without blocking navigation. A box that
- * is unreachable simply leaves its devices on their last-known DB state.
+ * the fresh `deviceId -> state` map. Cookie-transport wrapper around
+ * `src/lib/operator/device-refresh.ts` (also behind `/api/devices/refresh`);
+ * see the core for the operational notes.
  */
 export async function refreshDeviceStates(
   accountId: string,
 ): Promise<Record<string, string>> {
-  const session = await requireSession();
-  const isAdmin = session.profile.role === "admin";
-  if (!isAdmin && accountId !== session.profile.account_id) return {};
-
-  const supabase = await createClient();
-
-  const filter = await accountDeviceScopeFilter(supabase, accountId);
-  const { data: devices } = await supabase
-    .from("devices")
-    .select("id, db_id, box_id, state, boxes(tunnel_hostname)")
-    .or(filter);
-  if (!devices || devices.length === 0) return {};
-
-  // One live container list per box (not per device).
-  const hostByBox = new Map<string, string>();
-  for (const d of devices) {
-    const box = d.boxes as unknown as { tunnel_hostname: string } | null;
-    if (d.box_id && box?.tunnel_hostname) hostByBox.set(d.box_id, box.tunnel_hostname);
+  try {
+    const ctx = await requireActionSession();
+    return await refreshDeviceStatesCore(ctx, accountId);
+  } catch {
+    return {};
   }
-
-  const liveStateByDbId = new Map<string, string>();
-  await Promise.all(
-    [...hostByBox.values()].map(async (host) => {
-      try {
-        const data = await fetchContainerList(host);
-        for (const c of data.list) liveStateByDbId.set(c.db_id, c.state);
-      } catch {
-        // Box unreachable -- keep DB state for its devices.
-      }
-    }),
-  );
-
-  const now = new Date().toISOString();
-  const result: Record<string, string> = {};
-  const updates: PromiseLike<unknown>[] = [];
-
-  for (const d of devices) {
-    const live = liveStateByDbId.get(d.db_id as string);
-    const state = live ?? (d.state as string);
-    result[d.id as string] = state;
-    if (live && live !== d.state) {
-      updates.push(
-        supabase
-          .from("devices")
-          .update({ state: live, last_seen: now })
-          .eq("id", d.id),
-      );
-    }
-  }
-
-  if (updates.length > 0) await Promise.all(updates);
-  return result;
 }

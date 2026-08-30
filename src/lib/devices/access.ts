@@ -1,14 +1,14 @@
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { canUserAccessDevice, requireSession } from "@/lib/auth/session";
+import { canUserAccessDevice, type RequestSession } from "@/lib/auth/session";
 import { broadcastAccountEvent } from "@/lib/supabase/realtime";
 
 /**
- * Everything a server action needs to talk to a device's box and fan out
- * realtime updates. Shared by every operator-facing device action
+ * Everything a device operation needs to talk to a device's box and fan out
+ * realtime updates. Shared by every operator-facing device core
  * (control, proxy, …) so the access check and the box lookup live in one
- * place instead of being copy-pasted per action file.
+ * place instead of being copy-pasted per module.
  */
 export interface DeviceAccess {
   deviceId: string;
@@ -23,15 +23,17 @@ export interface DeviceAccess {
  * the box tunnel hostname. Mirrors the union access model of the
  * `client_read_assigned_devices` RLS policy via `canUserAccessDevice`
  * (direct `account_id` OR `account_boxes` share). Throws on any failure so
- * callers can wrap it in a single try/catch.
+ * callers can wrap it in a single try/catch. Runs entirely on the caller's
+ * RLS-scoped client (`ctx.supabase`), whichever transport it came from.
  */
-export async function resolveDeviceAccess(deviceId: string): Promise<DeviceAccess> {
-  const session = await requireSession();
+export async function resolveDeviceAccess(
+  ctx: RequestSession,
+  deviceId: string,
+): Promise<DeviceAccess> {
   const parsed = z.string().uuid().safeParse(deviceId);
   if (!parsed.success) throw new Error("Invalid device ID");
 
-  const supabase = await createClient();
-  const { data: device, error } = await supabase
+  const { data: device, error } = await ctx.supabase
     .from("devices")
     .select("id, db_id, account_id, box_id, boxes(tunnel_hostname)")
     .eq("id", deviceId)
@@ -42,17 +44,21 @@ export async function resolveDeviceAccess(deviceId: string): Promise<DeviceAcces
   const box = device.boxes as unknown as { tunnel_hostname: string } | null;
   if (!box) throw new Error("Box not found for device");
 
-  const allowed = await canUserAccessDevice(session, {
-    box_id: device.box_id,
-    account_id: device.account_id as string | null,
-  });
+  const allowed = await canUserAccessDevice(
+    ctx.session,
+    {
+      box_id: device.box_id as string,
+      account_id: device.account_id as string | null,
+    },
+    ctx.supabase,
+  );
   if (!allowed) throw new Error("Forbidden: no access to this device");
 
   return {
-    deviceId: device.id,
-    dbId: device.db_id,
+    deviceId: device.id as string,
+    dbId: device.db_id as string,
     accountId: device.account_id as string | null,
-    boxId: device.box_id,
+    boxId: device.box_id as string,
     tunnelHostname: box.tunnel_hostname,
   };
 }
@@ -96,7 +102,7 @@ export async function fanOutDeviceStateChange(
  * that scope (used by every account-scoped device query).
  */
 export async function accountDeviceScopeFilter(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: SupabaseClient,
   accountId: string,
 ): Promise<string> {
   const { data } = await supabase
@@ -145,7 +151,7 @@ export interface ReapCandidate {
  * needs). Returns null when nothing qualifies → the UI shows the capacity popup.
  */
 export async function findReapableOwnDevice(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: SupabaseClient,
   boxId: string,
 ): Promise<ReapCandidate | null> {
   const cutoff = new Date(Date.now() - ACTIVE_STREAM_GRACE_MS).toISOString();
@@ -169,6 +175,6 @@ export async function findReapableOwnDevice(
 
   const victim = candidates.find((c) => !busyIds.has(c.id));
   return victim
-    ? { id: victim.id, dbId: victim.db_id, userName: victim.user_name }
+    ? { id: victim.id as string, dbId: victim.db_id as string, userName: victim.user_name as string | null }
     : null;
 }

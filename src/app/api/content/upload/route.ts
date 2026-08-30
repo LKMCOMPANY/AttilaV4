@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSession } from "@/lib/auth/session";
-import { createClient } from "@/lib/supabase/server";
+import { requireRequestSession } from "@/lib/auth/session";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
@@ -17,7 +16,8 @@ const ALLOWED_TYPES = new Set([
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await requireSession();
+    // Both transports: SSR cookie (browser) or Authorization: Bearer (native).
+    const { session, supabase } = await requireRequestSession(req);
 
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -57,7 +57,6 @@ export async function POST(req: NextRequest) {
       .replace(/_{2,}/g, "_");
     const storagePath = `${accountId}/${timestamp}_${safeName}`;
 
-    const supabase = await createClient();
     const { error: uploadError } = await supabase.storage
       .from("content")
       .upload(storagePath, file, {

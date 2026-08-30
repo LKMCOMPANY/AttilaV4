@@ -1,15 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { requireAdmin } from "@/lib/auth/session";
+import { requireAdmin, requireActionSession } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import {
-  fetchContainerDetail,
-  fetchTimezoneLocale,
-  fetchProxyConfig,
-  aospFromDetail,
-} from "@/lib/box-api";
+import { syncDeviceDetailCore } from "@/lib/admin/box-sync";
 import type { Device } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -137,83 +132,19 @@ export async function updateDeviceTags(
 }
 
 // ---------------------------------------------------------------------------
-// Sync single device detail from box API
+// Sync single device detail — cookie-transport wrapper around
+// `src/lib/admin/box-sync.ts` (also behind `/api/admin/devices/[id]/sync`).
 // ---------------------------------------------------------------------------
 
 export async function syncDeviceDetail(
   deviceId: string
 ): Promise<{ error: string | null }> {
-  await requireAdmin();
-  const parsed = z.string().uuid().safeParse(deviceId);
-  if (!parsed.success) return { error: "Invalid device ID" };
-
-  const supabase = await createClient();
-
-  const { data: device } = await supabase
-    .from("devices")
-    .select("*, boxes(tunnel_hostname)")
-    .eq("id", deviceId)
-    .single();
-
-  if (!device) return { error: "Device not found" };
-
-  const box = device.boxes as { tunnel_hostname: string } | null;
-  if (!box) return { error: "Box not found for device" };
-
-  const updates: Record<string, unknown> = {
-    last_seen: new Date().toISOString(),
-  };
-
-  // Hardware detail works for both running (code 200) and stopped (code 201)
-  let isRunning = false;
   try {
-    const detail = await fetchContainerDetail(box.tunnel_hostname, device.db_id);
-    if (detail) {
-      isRunning = detail.status === "running";
-      updates.state = isRunning ? "running" : "stopped";
-      updates.image = detail.image;
-      const aosp = aospFromDetail(detail);
-      if (aosp) updates.aosp_version = aosp;
-      updates.resolution = `${detail.width}x${detail.height}`;
-      updates.memory_mb = detail.memory;
-      updates.dpi = parseInt(detail.dpi, 10) || null;
-      updates.fps = parseInt(detail.fps, 10) || null;
-      if (detail.ip) updates.docker_ip = detail.ip;
-    }
-  } catch {
-    return { error: "Failed to reach device on box" };
+    const ctx = await requireActionSession();
+    const result = await syncDeviceDetailCore(ctx, deviceId);
+    if (!result.error) revalidatePath("/admin/infrastructure");
+    return result;
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
   }
-
-  // Timezone and proxy only available on running devices
-  if (isRunning) {
-    const [tz, proxy] = await Promise.all([
-      fetchTimezoneLocale(box.tunnel_hostname, device.db_id).catch(() => null),
-      fetchProxyConfig(box.tunnel_hostname, device.db_id).catch(() => null),
-    ]);
-
-    if (tz) {
-      updates.country = tz.country;
-      updates.locale = tz.locale;
-      updates.timezone = tz.timezone;
-    }
-
-    if (proxy) {
-      updates.proxy_enabled = proxy.enabled;
-      updates.proxy_host = proxy.ip;
-      updates.proxy_port = proxy.port;
-      updates.proxy_type = proxy.proxyType;
-      updates.proxy_account = proxy.account;
-      updates.proxy_password = proxy.password;
-    }
-  }
-
-  const { error } = await supabase
-    .from("devices")
-    .update(updates)
-    .eq("id", deviceId);
-
-  if (error) return { error: error.message };
-
-  revalidatePath("/admin/infrastructure");
-  return { error: null };
 }

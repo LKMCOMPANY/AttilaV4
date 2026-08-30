@@ -1,4 +1,6 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { authenticateBearer } from "@/lib/auth/bearer";
 import type { UserProfile, AccountStatus } from "@/types";
 
 export interface Session {
@@ -15,6 +17,17 @@ export interface Session {
 export interface DeviceAccessInput {
   box_id: string;
   account_id: string | null;
+}
+
+/**
+ * Caller identity + the RLS-scoped Supabase client it arrived with. The
+ * operator cores (`src/lib/operator/*`) take this instead of building their
+ * own client so the SAME logic serves both transports: SSR cookies (server
+ * actions / browser) and `Authorization: Bearer` (native macOS app).
+ */
+export interface RequestSession {
+  session: Session;
+  supabase: SupabaseClient;
 }
 
 export async function getSession(): Promise<Session | null> {
@@ -77,6 +90,30 @@ export async function requireAdmin(): Promise<Session> {
   return session;
 }
 
+/** RLS-scoped request context for server actions (SSR cookie transport). */
+export async function requireActionSession(): Promise<RequestSession> {
+  const session = await requireSession();
+  return { session, supabase: await createClient() };
+}
+
+/**
+ * Resolve the caller of an API route from either transport: native clients
+ * send `Authorization: Bearer <Supabase access token>`, the browser rides SSR
+ * cookies. Throws `Unauthorized` / `Forbidden: …` so `nativeRoute` can map
+ * the failure to 401/403.
+ */
+export async function requireRequestSession(request: Request): Promise<RequestSession> {
+  const header = request.headers.get("authorization");
+  if (header && /^Bearer\s+/i.test(header)) {
+    const result = await authenticateBearer(request);
+    if (!result.ok) {
+      throw new Error(result.status === 403 ? `Forbidden: ${result.error}` : "Unauthorized");
+    }
+    return { session: result.session, supabase: result.supabase };
+  }
+  return requireActionSession();
+}
+
 // ---------------------------------------------------------------------------
 // Box / device access helpers
 // ---------------------------------------------------------------------------
@@ -89,6 +126,10 @@ export async function requireAdmin(): Promise<Session> {
 // devices reachable via either path. Every server-side guard that gates
 // device interaction MUST mirror that same union — checking only column #2
 // silently 403s box-level shares (where `devices.account_id` is NULL).
+//
+// Both helpers accept the caller's RLS-scoped client (from `RequestSession`)
+// so bearer-authenticated requests reuse their JWT-pinned client; when omitted
+// they fall back to the SSR cookie client.
 // ---------------------------------------------------------------------------
 
 /**
@@ -99,11 +140,12 @@ export async function requireAdmin(): Promise<Session> {
 export async function canUserAccessBox(
   session: Session,
   boxId: string,
+  client?: SupabaseClient,
 ): Promise<boolean> {
   if (session.profile.role === "admin") return true;
   if (!session.profile.account_id) return false;
 
-  const supabase = await createClient();
+  const supabase = client ?? (await createClient());
   const accountId = session.profile.account_id;
 
   const [boxLink, deviceLink] = await Promise.all([
@@ -130,12 +172,13 @@ export async function canUserAccessBox(
 export async function canUserAccessDevice(
   session: Session,
   device: DeviceAccessInput,
+  client?: SupabaseClient,
 ): Promise<boolean> {
   if (session.profile.role === "admin") return true;
   if (!session.profile.account_id) return false;
   if (device.account_id === session.profile.account_id) return true;
 
-  const supabase = await createClient();
+  const supabase = client ?? (await createClient());
   const { count } = await supabase
     .from("account_boxes")
     .select("box_id", { count: "exact", head: true })
@@ -143,10 +186,4 @@ export async function canUserAccessDevice(
     .eq("account_id", session.profile.account_id);
 
   return (count ?? 0) > 0;
-}
-
-export async function requireBoxAccess(boxId: string): Promise<Session> {
-  const session = await requireSession();
-  if (await canUserAccessBox(session, boxId)) return session;
-  throw new Error("Forbidden: no access to this box");
 }

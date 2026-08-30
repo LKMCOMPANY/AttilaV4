@@ -1,18 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireBoxAccess } from "@/lib/auth/session";
-import { createClient } from "@/lib/supabase/server";
+import { requireRequestSession, canUserAccessBox } from "@/lib/auth/session";
 import { getCfHeaders } from "@/lib/box-api";
 
+/**
+ * Authenticated proxy to a box's tunnel. Accepts both transports (SSR cookie
+ * for the browser, `Authorization: Bearer` for the native app) and injects
+ * the Cloudflare Access service credentials server-side — they never reach
+ * any client.
+ */
 async function proxyRequest(
   req: NextRequest,
   { params }: { params: Promise<{ boxId: string; path: string[] }> }
 ) {
   try {
     const { boxId, path } = await params;
-    await requireBoxAccess(boxId);
+    const ctx = await requireRequestSession(req);
 
-    const supabase = await createClient();
-    const { data: box, error } = await supabase
+    const allowed = await canUserAccessBox(ctx.session, boxId, ctx.supabase);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Forbidden: no access to this box" },
+        { status: 403 }
+      );
+    }
+
+    const { data: box, error } = await ctx.supabase
       .from("boxes")
       .select("tunnel_hostname")
       .eq("id", boxId)
