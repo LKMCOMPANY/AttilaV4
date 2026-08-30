@@ -5,19 +5,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdmin } from "@/lib/auth/session";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { createUserSchema } from "@/lib/validation/admin-users";
 import type { UserProfile, UserRole } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Schemas
+// Schemas — createUserSchema is shared with the Bearer REST route
+// (`/api/admin/users`, native macOS client): one source of truth.
 // ---------------------------------------------------------------------------
-
-const createUserSchema = z.object({
-  email: z.string().email("Invalid email"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-  display_name: z.string().min(1, "Name is required").max(100),
-  role: z.enum(["manager", "operator"]),
-  account_id: z.string().uuid("Invalid account"),
-});
 
 const updateUserSchema = z.object({
   id: z.string().uuid(),
