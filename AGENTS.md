@@ -138,7 +138,13 @@ a few unused vars) are pre-existing and tracked, not a licence to add more.
   `[category] message` prefix in `campaign_jobs.error_message`) avoids a
   migration and ships faster — judge case by case.
 - Migrations go through Supabase `apply_migration` MCP tool when working
-  with an agent that has it; otherwise via `supabase migration new`.
+ with an agent that has it; otherwise via `supabase migration new`.
+ **Applying it is only half the job** — write the SQL to
+ `supabase/migrations/` too, named with the exact version the database
+ recorded, or the schema becomes unreproducible and the next agent cannot see
+ what it is supposed to be. Read `supabase/migrations/README.md` first: the
+ folder already carries a historical filename-vs-ledger divergence you must
+ not extend.
 
 ## Tooling shortcuts
 

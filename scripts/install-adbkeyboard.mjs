@@ -393,11 +393,21 @@ async function main() {
   }
 
   // Optional CLI filter: --only DBID1,DBID2
+  // Narrows the CURRENT queue — rebuilding it from `devices` here would undo
+  // the `removed` and `--missing-only` filters above and start containers that
+  // were deliberately excluded a moment earlier.
   const onlyArgIdx = process.argv.indexOf("--only");
   if (onlyArgIdx >= 0 && process.argv[onlyArgIdx + 1]) {
     const filter = new Set(process.argv[onlyArgIdx + 1].split(",").map((s) => s.trim()));
-    queue = devices.filter((d) => filter.has(d.db_id) || filter.has(d.user_name));
-    console.log(`Filtered to ${queue.length} devices`);
+    const before = queue.length;
+    queue = queue.filter((d) => filter.has(d.db_id) || filter.has(d.user_name));
+    console.log(`--only: ${queue.length} of ${before} device(s) matched`);
+    const missed = [...filter].filter(
+      (id) => !queue.some((d) => d.db_id === id || d.user_name === id),
+    );
+    if (missed.length) {
+      console.log(`  not in scope (removed, or already provisioned): ${missed.join(", ")}`);
+    }
   }
 
   // Optional CLI filter: --box box-3.attila.army,box-4.attila.army
