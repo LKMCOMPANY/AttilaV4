@@ -123,10 +123,10 @@ and records `healthy` / `unstable` (booted then crashed) / `dead`.
 > left running and skipped by the next `--recheck` as "already running" — stop
 > them individually first.
 
-### The `starting` deadlock (open, needs a decision)
+### The `starting` deadlock — real, but it does clear
 
-A container whose Android never signals boot completion stays in VMOS state
-`starting` **forever**, and every lifecycle endpoint gates on `running`:
+A container whose Android never signals boot completion sits in VMOS state
+`starting`, and while it does, every lifecycle endpoint gates on `running`:
 
 | attempt | result |
 |---|---|
@@ -143,13 +143,23 @@ The cost is not theoretical. Six such containers on box-1 held the host at
 **100% CPU with a load average of 19** while doing nothing — starving the
 healthy devices beside them.
 
-The only endpoints that might accept a `starting` instance are `reset` and
-`delete`, both of which destroy the device's data. **Every one of the six
-carries an avatar, and four have job history**, so that is a product decision,
-not a maintenance one. `model_backup` cannot be taken as a safety net either —
-it also requires `stopped`/`exited`.
+**But `starting` is a phase, not a terminal state.** Retried over a minute it
+never budged, and it looked permanent; several hours later the same containers
+had moved to `running` and `POST /container_api/v1/stop` took them down on the
+first try, box-1 going to a clean 96/96 stopped. So:
 
-Escalate to VMOS: there is no non-destructive way out of `starting`.
+- **Do not reach for `reset` or `delete`.** They are the only endpoints that
+  might accept a `starting` instance and both destroy the device's data —
+  every one of these six carried an avatar and four had job history.
+  `model_backup` is no safety net either; it also requires `stopped`/`exited`.
+- **Poll `stop` on a long horizon instead** — minutes are not enough, hours are.
+  A patient retry loop clears the state without losing anything.
+- Meanwhile the host pays for it, so a box carrying several of these is worth
+  watching: the containers are not idle, they are looping on a boot that never
+  completes.
+
+Worth raising with VMOS all the same: nothing in the API surfaces "this instance
+has been trying to boot for six hours", and no endpoint interrupts it on demand.
 
 Then fill the gaps, targeting only what needs it:
 
