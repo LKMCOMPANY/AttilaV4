@@ -2,6 +2,7 @@ import type { RequestSession } from "@/lib/auth/session";
 import {
   startContainerProcess,
   shell,
+  shellSafe,
   stopContainer as stopContainerVmos,
 } from "@/lib/box-api";
 import {
@@ -145,6 +146,93 @@ export async function stopContainerCore(
       .eq("id", id);
 
     await fanOutDeviceStateChange(boxId, accountId);
+    return { error: null };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Heartbeat — keep a streamed device's last_seen fresh
+// ---------------------------------------------------------------------------
+//
+// The device reaper (`/api/devices/reap`) stops any `running` device whose
+// last_seen is older than the idle window. The web operator's WS heartbeat
+// (server.mjs) refreshes it every 60s; a native client streams directly and
+// must post its own heartbeat on the same cadence, or the reaper would yank a
+// live session. Runs on the caller's RLS-scoped client
+// (`client_update_assigned_devices`), so it can only touch reachable devices.
+// ---------------------------------------------------------------------------
+
+export async function heartbeatCore(
+  ctx: RequestSession,
+  deviceId: string,
+): Promise<{ error: string | null }> {
+  try {
+    const { deviceId: id } = await resolveDeviceAccess(ctx, deviceId);
+    await ctx.supabase
+      .from("devices")
+      .update({ last_seen: new Date().toISOString() })
+      .eq("id", id);
+    return { error: null };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Enable audio capture — starts a dedicated scrcpy audio process on the device
+// ---------------------------------------------------------------------------
+//
+// Audio is opt-in: the primary scrcpy process streams video+control only, so a
+// second scrcpy instance must be started (audio-only, TCP :9998) before the
+// client opens the `/stream/{dbId}/audio` socket. Idempotent — if the port is
+// already listening we skip the start. Best-effort by design (`shellSafe` for
+// the probe): the UI tolerates missing audio.
+// ---------------------------------------------------------------------------
+
+// Mirrors the fallback logic in /data/local/scd.sh on the device:
+// prefers /data/local/scd, falls back to /vendor/bin/scd.
+const SCRCPY_AUDIO_CMD = [
+  "SCD=$([ -f /data/local/scd ] && echo /data/local/scd || echo /vendor/bin/scd);",
+  "CLASSPATH=$SCD nohup app_process / com.genymobile.scrcpy.Server 3.3.3",
+  "connection_mode=tcp",
+  "video=false",
+  "audio=true",
+  "audio_port=9998",
+  "control=false",
+  "daemon=true",
+  "send_dummy_byte=false",
+  "log_level=error",
+  "> /dev/null 2>&1 &",
+].join(" ");
+
+export async function enableAudioCore(
+  ctx: RequestSession,
+  deviceId: string,
+): Promise<{ error: string | null }> {
+  try {
+    const { dbId, tunnelHostname } = await resolveDeviceAccess(ctx, deviceId);
+
+    const checkRes = await shellSafe(
+      tunnelHostname,
+      dbId,
+      "netstat -tlnp 2>/dev/null | grep ':9998 ' | grep LISTEN || echo NO_AUDIO",
+    );
+
+    if (!checkRes || !checkRes.message.includes("NO_AUDIO")) {
+      return { error: null };
+    }
+
+    await shell(tunnelHostname, dbId, SCRCPY_AUDIO_CMD);
+
+    // Wait for the audio port to start accepting connections (up to ~2.5s).
+    await shell(
+      tunnelHostname,
+      dbId,
+      "for i in 1 2 3 4 5; do netstat -tlnp 2>/dev/null | grep ':9998 ' | grep -q LISTEN && break; sleep 0.5; done",
+    );
+
     return { error: null };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };
