@@ -3,20 +3,38 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { requireSession } from "@/lib/auth/session";
-import { fetchGorgoneZoneDirectory, verifyZoneAccess } from "@/lib/gorgone";
-import { generateCampaignGuidelines as generateCampaignGuidelinesCore } from "@/lib/campaigns/guideline-generator";
-import type { GuidelineGenerationResult } from "@/lib/ai/guideline-types";
+import { requireSession, requireActionSession } from "@/lib/auth/session";
 import {
-  SUPPORTED_GORGONE_NETWORKS,
-  type Campaign,
-  type CampaignFilters,
-  type CampaignPlatform,
-  type CapacityParams,
-  type GorgoneLink,
-  type SupportedGorgoneNetwork,
-} from "@/types";
+  createCampaignCore,
+  updateCampaignCore,
+  getAccountZonesCore,
+  type CreateCampaignInput,
+  type UpdateCampaignInput,
+  type AccountZone,
+} from "@/lib/automator/campaigns";
+import {
+  generateGuidelinesCore,
+  type GenerateGuidelinesInput,
+  type GenerateGuidelinesResponse,
+} from "@/lib/automator/guidelines";
+import type { Campaign } from "@/types";
+
+export type {
+  CreateCampaignInput,
+  UpdateCampaignInput,
+  AccountZone,
+} from "@/lib/automator/campaigns";
+export type {
+  GenerateGuidelinesInput,
+  GenerateGuidelinesResponse,
+} from "@/lib/automator/guidelines";
+
+// ---------------------------------------------------------------------------
+// Cookie-transport wrappers around the campaign cores
+// (`src/lib/automator/campaigns.ts`, `src/lib/automator/guidelines.ts`) —
+// the native REST routes call the same cores under a bearer token. Only the
+// transport concerns (session from cookies, `revalidatePath`) live here.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Read
@@ -71,101 +89,11 @@ export async function getCampaign(
 // Zones — fetch available Gorgone zones for an account
 // ---------------------------------------------------------------------------
 
-export interface AccountZone {
-  zone_id: string;
-  zone_name: string;
-  /** Networks Attila supports today AND that have at least one signal:
-   * either an active rule on Gorgone or an active subscription. */
-  platforms: ("twitter" | "tiktok")[];
-  gorgone_client_name: string;
-  /**
-   * True when the zone has an active Attila subscription declaring at
-   * least one of the supported platforms. When false, the campaign
-   * creation UI warns the operator that no posts will arrive even after
-   * the campaign is launched.
-   */
-  push_enabled: boolean;
-}
-
-const SUPPORTED: ReadonlySet<SupportedGorgoneNetwork> = new Set(
-  SUPPORTED_GORGONE_NETWORKS,
-);
-
 export async function getAccountZones(
   accountId: string
 ): Promise<AccountZone[]> {
-  const session = await requireSession();
-
-  if (
-    session.profile.role !== "admin" &&
-    accountId !== session.profile.account_id
-  ) {
-    throw new Error("Forbidden");
-  }
-
-  const supabase = await createClient();
-
-  const { data: links, error } = await supabase
-    .from("gorgone_links")
-    .select("id, account_id, gorgone_account_id, gorgone_client_id, gorgone_client_name, is_active")
-    .eq("account_id", accountId)
-    .eq("is_active", true);
-
-  if (error) throw new Error(error.message);
-
-  const typedLinks = (links ?? []) as Pick<
-    GorgoneLink,
-    "id" | "account_id" | "gorgone_account_id" | "gorgone_client_id" | "gorgone_client_name" | "is_active"
-  >[];
-
-  const zoneMap = new Map<string, AccountZone>();
-
-  for (const link of typedLinks) {
-    const gorgoneAccountId = link.gorgone_account_id ?? link.gorgone_client_id ?? null;
-    if (!gorgoneAccountId) continue;
-
-    let directory: Awaited<ReturnType<typeof fetchGorgoneZoneDirectory>> = [];
-    try {
-      directory = await fetchGorgoneZoneDirectory(gorgoneAccountId);
-    } catch (err) {
-      // Gorgone unreachable: the screen shows nothing rather than stale
-      // data. We log and continue so the page still renders.
-      console.warn("[campaigns] zone directory fetch failed:", err);
-      continue;
-    }
-
-    for (const dir of directory) {
-      if (!dir.zone_is_active) continue;
-
-      // Surface a zone if at least one supported platform has either an
-      // active rule (Gorgone is collecting) OR an active subscription
-      // (Attila is configured to receive).
-      const supportedActive = [
-        ...dir.active_rule_networks,
-        ...dir.subscribed_networks,
-      ].filter((n): n is SupportedGorgoneNetwork =>
-        SUPPORTED.has(n as SupportedGorgoneNetwork),
-      );
-      if (supportedActive.length === 0) continue;
-
-      const platforms = [...new Set(supportedActive)];
-      const pushEnabled =
-        dir.subscription_is_active === true &&
-        dir.subscribed_networks.some((n) =>
-          SUPPORTED.has(n as SupportedGorgoneNetwork),
-        );
-
-      zoneMap.set(dir.zone_id, {
-        zone_id: dir.zone_id,
-        zone_name: dir.zone_name,
-        platforms,
-        gorgone_client_name: link.gorgone_client_name,
-        push_enabled: pushEnabled,
-      });
-    }
-  }
-
-  return [...zoneMap.values()];
+  const ctx = await requireActionSession();
+  return getAccountZonesCore(ctx, accountId);
 }
 
 // ---------------------------------------------------------------------------
@@ -206,215 +134,32 @@ export async function getAccountArmies(
 // Update
 // ---------------------------------------------------------------------------
 
-export type UpdateCampaignInput = Partial<
-  Pick<
-    Campaign,
-    | "name"
-    | "mode"
-    | "platforms"
-    | "gorgone_zone_id"
-    | "gorgone_zone_name"
-    | "army_ids"
-    | "filters"
-    | "capacity_params"
-    | "operational_context"
-    | "strategy"
-    | "key_messages"
-    | "status"
-  >
->;
-
 export async function updateCampaign(
   campaignId: string,
   input: UpdateCampaignInput
 ): Promise<{ data: Campaign | null; error: string | null }> {
-  const session = await requireSession();
-  const supabase = await createClient();
-
-  const { data: existing, error: fetchErr } = await supabase
-    .from("campaigns")
-    .select("account_id, status, army_ids")
-    .eq("id", campaignId)
-    .single();
-
-  if (fetchErr || !existing) return { data: null, error: "Campaign not found" };
-
-  if (
-    session.profile.role !== "admin" &&
-    existing.account_id !== session.profile.account_id
-  ) {
-    return { data: null, error: "Forbidden" };
-  }
-
-  if (input.name !== undefined && !input.name.trim()) {
-    return { data: null, error: "Campaign name is required" };
-  }
-
-  if (input.platforms !== undefined && input.platforms.length === 0) {
-    return { data: null, error: "At least one platform is required" };
-  }
-
-  // Guardrail: an active campaign with no army silently parks every
-  // relevant post in `awaiting_avatars` (no job, no error). Block the
-  // activation so the operator can't end up with a campaign that looks
-  // live but can never respond. We evaluate the *resulting* state so the
-  // check holds whether status, army_ids, or both are being patched.
-  const nextStatus = input.status ?? (existing.status as Campaign["status"]);
-  const nextArmyIds = input.army_ids ?? (existing.army_ids as string[]);
-  if (nextStatus === "active" && nextArmyIds.length === 0) {
-    return {
-      data: null,
-      error: "Assign at least one army before activating the campaign.",
-    };
-  }
-
-  // Tenant guard — a re-pointed zone must belong to this account's
-  // Gorgone links (zone_id is free client input).
-  if (
-    input.gorgone_zone_id !== undefined &&
-    !(await verifyZoneAccess(supabase, existing.account_id, input.gorgone_zone_id))
-  ) {
-    return { data: null, error: "Zone not accessible for this account" };
-  }
-
-  const { data, error } = await supabase
-    .from("campaigns")
-    .update(input)
-    .eq("id", campaignId)
-    .select()
-    .single();
-
-  if (error) return { data: null, error: error.message };
-
-  revalidatePath("/dashboard/automator");
-  return { data: data as Campaign, error: null };
+  const ctx = await requireActionSession();
+  const result = await updateCampaignCore(ctx, campaignId, input);
+  if (result.data) revalidatePath("/dashboard/automator");
+  return result;
 }
 
 // ---------------------------------------------------------------------------
 // Create
 // ---------------------------------------------------------------------------
 
-export interface CreateCampaignInput {
-  account_id: string;
-  name: string;
-  mode: "sniper";
-  platforms: CampaignPlatform[];
-  gorgone_zone_id: string;
-  gorgone_zone_name: string | null;
-  army_ids: string[];
-  filters: CampaignFilters;
-  capacity_params?: CapacityParams;
-  operational_context: string | null;
-  strategy: string | null;
-  key_messages: string | null;
-}
-
 export async function createCampaign(
   input: CreateCampaignInput
 ): Promise<{ data: Campaign | null; error: string | null }> {
-  const session = await requireSession();
-
-  if (
-    session.profile.role !== "admin" &&
-    input.account_id !== session.profile.account_id
-  ) {
-    return { data: null, error: "Forbidden" };
-  }
-
-  if (!input.name.trim()) {
-    return { data: null, error: "Campaign name is required" };
-  }
-
-  if (input.platforms.length === 0) {
-    return { data: null, error: "At least one platform is required" };
-  }
-
-  const supabase = await createClient();
-
-  // Tenant guard — zone_id is free client input.
-  if (!(await verifyZoneAccess(supabase, input.account_id, input.gorgone_zone_id))) {
-    return { data: null, error: "Zone not accessible for this account" };
-  }
-
-  const { data, error } = await supabase
-    .from("campaigns")
-    .insert({
-      account_id: input.account_id,
-      name: input.name.trim(),
-      mode: input.mode,
-      platforms: input.platforms,
-      gorgone_zone_id: input.gorgone_zone_id,
-      gorgone_zone_name: input.gorgone_zone_name,
-      army_ids: input.army_ids,
-      filters: input.filters,
-      ...(input.capacity_params && { capacity_params: input.capacity_params }),
-      operational_context: input.operational_context || null,
-      strategy: input.strategy || null,
-      key_messages: input.key_messages || null,
-      created_by: session.profile.id,
-    })
-    .select()
-    .single();
-
-  if (error) return { data: null, error: error.message };
-
-  revalidatePath("/dashboard/automator");
-  return { data: data as Campaign, error: null };
+  const ctx = await requireActionSession();
+  const result = await createCampaignCore(ctx, input);
+  if (result.data) revalidatePath("/dashboard/automator");
+  return result;
 }
 
 // ---------------------------------------------------------------------------
 // AI guideline generation
 // ---------------------------------------------------------------------------
-
-/**
- * Public shape returned by `generateCampaignGuidelines` to the UI:
- *   - `suggestion`  the three strings ready to be applied
- *   - `metadata`    provenance for an audit trail (locale, postsSampled,
- *                   durationMs, prompt + doctrine version)
- *
- * Mirrors `GuidelineGenerationResult` from the lib but is re-exported
- * via the action surface so client components don't pull from `lib/...`
- * (RSC boundary discipline).
- */
-export type GenerateGuidelinesResponse = GuidelineGenerationResult;
-
-/**
- * Discriminated input — supports both the wizard (no campaignId yet,
- * the operator hasn't saved the draft) and the Automator detail panel
- * (campaign exists in DB).
- *
- *   `saved` mode: server reads the campaign row, runs the gen.
- *   `draft` mode: caller passes the not-yet-persisted fields inline.
- *
- * The two modes share a single resolver below — the only difference is
- * where the (account_id, name, platforms, gorgone_zone_id) tuple comes
- * from. Both go through the same auth + Gorgone-link resolution path
- * so there is zero security or behaviour drift.
- */
-const generateGuidelinesSchema = z.discriminatedUnion("mode", [
-  z.object({
-    mode: z.literal("saved"),
-    campaignId: z.string().uuid(),
-  }),
-  z.object({
-    mode: z.literal("draft"),
-    accountId: z.string().uuid(),
-    name: z.string().min(1).max(200).trim(),
-    platforms: z.array(z.enum(SUPPORTED_GORGONE_NETWORKS)).min(1),
-    gorgoneZoneId: z.string().uuid(),
-  }),
-]);
-
-export type GenerateGuidelinesInput = z.input<typeof generateGuidelinesSchema>;
-
-interface ResolvedTarget {
-  accountId: string;
-  name: string;
-  platforms: SupportedGorgoneNetwork[];
-  gorgoneZoneId: string;
-  /** UUID of the campaign row when `mode='saved'`, null otherwise. */
-  campaignId: string | null;
-}
 
 /**
  * Generates the three guideline blocks via Aleria, anchored on the
@@ -426,117 +171,8 @@ interface ResolvedTarget {
 export async function generateCampaignGuidelines(
   input: GenerateGuidelinesInput,
 ): Promise<{ data: GenerateGuidelinesResponse | null; error: string | null }> {
-  const session = await requireSession();
-  const parsed = generateGuidelinesSchema.safeParse(input);
-  if (!parsed.success) {
-    return { data: null, error: parsed.error.issues[0].message };
-  }
-
-  const supabase = await createClient();
-  const target = await resolveGenerationTarget(supabase, parsed.data);
-  if (!target.value) return { data: null, error: target.error };
-  const t = target.value;
-
-  // Authorisation — same shape as every other campaign action.
-  if (
-    session.profile.role !== "admin" &&
-    t.accountId !== session.profile.account_id
-  ) {
-    return { data: null, error: "Forbidden" };
-  }
-
-  // Resolve the Gorgone V4 account uuid via the link table.
-  const adminSupabase = createAdminClient();
-  const { data: link } = await adminSupabase
-    .from("gorgone_links")
-    .select("gorgone_account_id")
-    .eq("account_id", t.accountId)
-    .eq("is_active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const gorgoneAccountId = link?.gorgone_account_id as string | undefined;
-  if (!gorgoneAccountId) {
-    return {
-      data: null,
-      error: "No active Gorgone link for this account",
-    };
-  }
-
-  try {
-    const result = await generateCampaignGuidelinesCore({
-      campaign: {
-        id: t.campaignId ?? "draft",
-        name: t.name,
-        platforms: t.platforms,
-        gorgone_zone_id: t.gorgoneZoneId,
-      },
-      gorgoneAccountId,
-    });
-    return { data: result, error: null };
-  } catch (err) {
-    return { data: null, error: friendlyGenerationError(err) };
-  }
-}
-
-/**
- * Translates the various failure modes of the LLM call into one of
- * three user-facing messages — the operator does not need (and should
- * not see) Zod stack traces or token counts. Full error stays in the
- * server console (`guideline-generator.ts` already logs it).
- */
-function friendlyGenerationError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : "Unknown error";
-  if (/timed out|timeout|abort/i.test(raw)) {
-    return "AI generation timed out. Try again in a moment.";
-  }
-  if (/schema mismatch|JSON parse failed/i.test(raw)) {
-    return "AI returned an unexpected format. Please try again.";
-  }
-  if (/empty content/i.test(raw)) {
-    return "AI returned no content. Please try again.";
-  }
-  return "AI generation failed. Please try again.";
-}
-
-async function resolveGenerationTarget(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  input: z.infer<typeof generateGuidelinesSchema>,
-): Promise<{ value: ResolvedTarget; error: null } | { value: null; error: string }> {
-  if (input.mode === "saved") {
-    const { data: campaign, error } = await supabase
-      .from("campaigns")
-      .select("id, account_id, name, platforms, gorgone_zone_id")
-      .eq("id", input.campaignId)
-      .single();
-
-    if (error || !campaign) {
-      return { value: null, error: "Campaign not found" };
-    }
-    return {
-      value: {
-        accountId: campaign.account_id as string,
-        name: campaign.name as string,
-        platforms: campaign.platforms as SupportedGorgoneNetwork[],
-        gorgoneZoneId: campaign.gorgone_zone_id as string,
-        campaignId: campaign.id as string,
-      },
-      error: null,
-    };
-  }
-
-  // draft mode — inline fields
-  return {
-    value: {
-      accountId: input.accountId,
-      name: input.name,
-      platforms: input.platforms,
-      gorgoneZoneId: input.gorgoneZoneId,
-      campaignId: null,
-    },
-    error: null,
-  };
+  const ctx = await requireActionSession();
+  return generateGuidelinesCore(ctx, input);
 }
 
 const setAutoUpdateSchema = z.object({
@@ -552,34 +188,15 @@ const setAutoUpdateSchema = z.object({
 export async function setCampaignGuidelinesAutoUpdate(
   input: z.infer<typeof setAutoUpdateSchema>,
 ): Promise<{ error: string | null }> {
-  const session = await requireSession();
   const parsed = setAutoUpdateSchema.safeParse(input);
   if (!parsed.success) {
     return { error: parsed.error.issues[0].message };
   }
 
-  const supabase = await createClient();
-  const { data: existing } = await supabase
-    .from("campaigns")
-    .select("account_id")
-    .eq("id", parsed.data.campaignId)
-    .single();
-
-  if (!existing) return { error: "Campaign not found" };
-  if (
-    session.profile.role !== "admin" &&
-    existing.account_id !== session.profile.account_id
-  ) {
-    return { error: "Forbidden" };
-  }
-
-  const { error } = await supabase
-    .from("campaigns")
-    .update({ guidelines_auto_update: parsed.data.enabled })
-    .eq("id", parsed.data.campaignId);
-
-  if (error) return { error: error.message };
-
-  revalidatePath("/dashboard/automator");
-  return { error: null };
+  const ctx = await requireActionSession();
+  const { error } = await updateCampaignCore(ctx, parsed.data.campaignId, {
+    guidelines_auto_update: parsed.data.enabled,
+  });
+  if (!error) revalidatePath("/dashboard/automator");
+  return { error };
 }
