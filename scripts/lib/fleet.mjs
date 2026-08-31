@@ -177,6 +177,7 @@ async function supabaseFetch(pathAndQuery, init = {}) {
 export async function fetchDevicesWithBoxes() {
   return supabaseFetch(
     "devices?select=id,db_id,user_name,state,box_id,adbkeyboard_installed,adbkeyboard_enabled,adbkeyboard_checked_at," +
+      "tiktok_installed,twitter_installed,boot_health," +
       "boxes(id,name,tunnel_hostname,max_concurrent_containers)&order=user_name.asc",
   );
 }
@@ -258,4 +259,67 @@ export async function recordAdbKeyboardState(deviceId, { installed, enabled }) {
       adbkeyboard_checked_at: new Date().toISOString(),
     }),
   });
+}
+
+/**
+ * Persist what the OFFLINE package audit saw. `adbkeyboard_enabled` is
+ * deliberately untouched: VMOS clears the enabled-IME list on every container
+ * restart and `activateAdbKeyboard()` re-enables it per job, so "enabled at
+ * rest" carries no meaning — only the APK being present does.
+ */
+export async function recordPackageAudit(
+  deviceId,
+  { adbkeyboardInstalled, tiktokInstalled, twitterInstalled },
+) {
+  return supabaseFetch(`devices?id=eq.${deviceId}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      adbkeyboard_installed: adbkeyboardInstalled,
+      tiktok_installed: tiktokInstalled,
+      twitter_installed: twitterInstalled,
+      packages_checked_at: new Date().toISOString(),
+    }),
+  });
+}
+
+/**
+ * Persist a boot verdict. `state='running'` from VMOS is not proof a device can
+ * serve a job — this is, and the automator can filter on it.
+ */
+export async function recordDeviceBootHealth(deviceId, { health, bootMs = null }) {
+  return supabaseFetch(`devices?id=eq.${deviceId}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      boot_health: health,
+      boot_ms: bootMs,
+      boot_checked_at: new Date().toISOString(),
+    }),
+  });
+}
+
+/** Sleep helper — every sweep script polls something. */
+export function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Run `worker` over `items` with at most `limit` in flight, preserving order.
+ * Used by every bulk script to honour the VMOS ceiling of 10 running containers
+ * per box. A `limit` of 0 or less runs serially rather than dropping the work.
+ */
+export async function mapWithConcurrency(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const runners = Math.min(Math.max(1, limit), items.length);
+  await Promise.all(
+    Array.from({ length: runners }, async () => {
+      while (next < items.length) {
+        const i = next++;
+        results[i] = await worker(items[i], i);
+      }
+    }),
+  );
+  return results;
 }

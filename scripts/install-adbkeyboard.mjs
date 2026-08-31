@@ -23,6 +23,11 @@
  *
  * Run from `Attila V4` directory:
  *   node scripts/install-adbkeyboard.mjs
+ *   node scripts/install-adbkeyboard.mjs --missing-only --box box-3.attila.army
+ *
+ * Prefer `--missing-only`: it uses the offline package audit
+ * (`audit-device-packages.mjs`) so only the devices that actually lack the APK
+ * are booted, instead of starting the whole fleet to ask each one.
  *
  * Env vars are loaded from `.env.local`.
  */
@@ -36,6 +41,7 @@ import {
   fetchDevicesWithBoxes,
   updateDeviceState,
   recordAdbKeyboardState,
+  mapWithConcurrency,
   ADBKEYBOARD_APK_URL,
   ADBKEYBOARD_IME,
 } from "./lib/fleet.mjs";
@@ -310,20 +316,6 @@ async function listRunningDbIds(boxHost) {
   }
 }
 
-/** Bounded worker pool: at most `size` concurrent `fn` calls, order preserved. */
-async function runPool(items, size, fn) {
-  const out = new Array(items.length);
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < items.length) {
-      const idx = cursor++;
-      out[idx] = await fn(items[idx]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, size) }, worker));
-  return out;
-}
-
 async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
   // Real per-box capacity (RAM-bound). Falls back to MAX_CONCURRENCY only if a
   // box has no configured max. `--concurrency` (if passed) caps it further.
@@ -350,7 +342,7 @@ async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
 
   // 1. In-place pass over already-running containers (fast, no boot, no slot).
   if (alreadyRunning.length > 0) {
-    results.push(...(await runPool(alreadyRunning, Math.min(effective, 5), processDevice)));
+    results.push(...(await mapWithConcurrency(alreadyRunning, Math.min(effective, 5), processDevice)));
   }
 
   // 2. Boot-and-provision stopped devices within the start budget.
@@ -361,7 +353,7 @@ async function processBoxSafely(boxHost, boxDevices, requestedConcurrency) {
       results.push({ device: d, ok: false, deferred: true, error: "box at capacity (no free slot)" });
     }
   } else if (needStart.length > 0) {
-    results.push(...(await runPool(needStart, slots, processDevice)));
+    results.push(...(await mapWithConcurrency(needStart, slots, processDevice)));
   }
 
   const okCount = results.filter((r) => r.ok).length;
@@ -382,9 +374,26 @@ async function main() {
   const devices = await fetchDevicesWithBoxes();
   console.log(`Loaded ${devices.length} devices from Supabase`);
 
+  // Ghost rows have no container on the box: booting them burns the full
+  // start timeout for nothing. `reconcile-devices.mjs` flags them.
+  let queue = devices.filter((d) => d.state !== "removed");
+  if (queue.length !== devices.length) {
+    console.log(`Skipped ${devices.length - queue.length} device(s) flagged removed`);
+  }
+
+  // `--missing-only`: trust the offline package audit instead of booting every
+  // device just to ask. `audit-device-packages.mjs` reads the APK straight off
+  // each stopped container's data.img, so this turns a whole-fleet sweep into
+  // exactly the devices that need one — 111 instead of 451 on 2026-08-31.
+  // NULL means never audited, so it stays in the queue.
+  if (process.argv.includes("--missing-only")) {
+    const before = queue.length;
+    queue = queue.filter((d) => d.adbkeyboard_installed !== true);
+    console.log(`--missing-only: ${queue.length} of ${before} device(s) lack the APK`);
+  }
+
   // Optional CLI filter: --only DBID1,DBID2
   const onlyArgIdx = process.argv.indexOf("--only");
-  let queue = devices;
   if (onlyArgIdx >= 0 && process.argv[onlyArgIdx + 1]) {
     const filter = new Set(process.argv[onlyArgIdx + 1].split(",").map((s) => s.trim()));
     queue = devices.filter((d) => filter.has(d.db_id) || filter.has(d.user_name));

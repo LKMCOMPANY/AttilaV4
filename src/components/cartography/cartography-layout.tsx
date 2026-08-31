@@ -43,9 +43,14 @@ interface CartographyLayoutProps {
 export const CartographyLayout = memo(function CartographyLayout({
   data,
 }: CartographyLayoutProps) {
-  const [dimension, setDimension] = useState<ClusterDimension>(
-    data.availableDimensions[0] ?? "identity"
-  );
+  // Store what the user PICKED, derive what is actually usable. The available
+  // dimensions change with the data, and a pick that is no longer offered must
+  // fall back — as a derivation, not as an effect correcting its own state.
+  const [pickedDimension, setPickedDimension] = useState<ClusterDimension | null>(null);
+  const dimension: ClusterDimension =
+    pickedDimension && data.availableDimensions.includes(pickedDimension)
+      ? pickedDimension
+      : (data.availableDimensions[0] ?? "identity");
   const [hoveredNode, setHoveredNode] = useState<ConstellationNode | null>(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
   const [selectedNode, setSelectedNode] = useState<ConstellationNode | null>(null);
@@ -53,20 +58,14 @@ export const CartographyLayout = memo(function CartographyLayout({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [focusedCluster, setFocusedCluster] = useState<string | null>(null);
 
-  // Reset focused cluster when dimension changes
-  useEffect(() => {
+  // Drop the focus when the dimension changes. Adjusted during render (React's
+  // documented pattern) rather than in an effect: React re-runs the render
+  // before painting, so the stale focus is never shown.
+  const [focusedFor, setFocusedFor] = useState<ClusterDimension>(dimension);
+  if (focusedFor !== dimension) {
+    setFocusedFor(dimension);
     setFocusedCluster(null);
-  }, [dimension]);
-
-  // If current dimension becomes unavailable, fallback
-  useEffect(() => {
-    if (
-      data.availableDimensions.length > 0 &&
-      !data.availableDimensions.includes(dimension)
-    ) {
-      setDimension(data.availableDimensions[0]);
-    }
-  }, [data.availableDimensions, dimension]);
+  }
 
   const handleNodeHover = useCallback(
     (node: ConstellationNode | null, x: number, y: number) => {
@@ -152,7 +151,7 @@ export const CartographyLayout = memo(function CartographyLayout({
           <ClusterToolbar
             active={dimension}
             availableDimensions={data.availableDimensions}
-            onChange={setDimension}
+            onChange={setPickedDimension}
           />
 
           <span className="h-5 w-px bg-border" />

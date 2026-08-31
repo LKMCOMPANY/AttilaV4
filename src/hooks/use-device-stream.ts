@@ -10,7 +10,7 @@ import {
 } from "@/lib/streaming/scrcpy-stream";
 import { ANDROID_KEYCODES, META_CTRL, META_SHIFT, META_ALT } from "@/lib/streaming/scrcpy-codec";
 import { AudioPlayer, type AudioPlayerStatus } from "@/lib/streaming/audio-player";
-import { waitForStreamReady } from "@/lib/streaming/stream-readiness";
+import { waitForStreamReady, STREAM_READY_MESSAGES } from "@/lib/streaming/stream-readiness";
 
 interface UseDeviceStreamOptions {
   boxId: string | null;
@@ -21,6 +21,8 @@ interface UseDeviceStreamOptions {
 export interface UseDeviceStreamReturn {
   status: StreamStatus;
   error: string | null;
+  /** Long-form explanation for the compact `error` label, when there is one. */
+  errorDetail: string | null;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   handlers: {
     onMouseDown: (e: React.MouseEvent<HTMLCanvasElement>) => void;
@@ -56,6 +58,7 @@ export function useDeviceStream({
   const pointerDown = useRef(false);
   const [status, setStatus] = useState<StreamStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [errorDetail, setErrorDetail] = useState<string | null>(null);
   const [audioStatus, setAudioStatus] = useState<AudioPlayerStatus>("idle");
   const [audioEnabled, setAudioEnabled] = useState(false);
 
@@ -69,6 +72,7 @@ export function useDeviceStream({
     setTrackedKey(streamKey);
     setStatus(streamKey ? "starting" : "idle");
     setError(null);
+    setErrorDetail(null);
   }
 
   // -------------------------------------------------------------------------
@@ -90,6 +94,16 @@ export function useDeviceStream({
     void waitForStreamReady(boxId, dbId, { signal: controller.signal }).then(
       (outcome) => {
         if (cancelled || outcome === "aborted") return;
+
+        // A diagnosed fault will not clear by connecting anyway — tell the
+        // operator what to do instead of opening a socket that can only 502.
+        const diagnosis = STREAM_READY_MESSAGES[outcome];
+        if (diagnosis) {
+          setStatus("error");
+          setError(diagnosis.label);
+          setErrorDetail(diagnosis.detail);
+          return;
+        }
 
         stream = new ScrcpyStream({
           videoUrl: buildWsUrl(boxId, dbId, "video"),
@@ -349,6 +363,7 @@ export function useDeviceStream({
   return {
     status,
     error,
+    errorDetail,
     canvasRef,
     handlers: {
       onMouseDown,

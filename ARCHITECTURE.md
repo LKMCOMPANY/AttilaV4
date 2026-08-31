@@ -617,6 +617,63 @@ Frame header :
 | `src/hooks/use-audio-toggle.ts` | Hook partagé : enable scrcpy audio + toggle stream |
 | `src/app/actions/device-control.ts` | `enableDeviceAudio()` — démarre le process sur le device |
 
+### Sonde de disponibilité — `/stream-ready/{db_id}`
+
+Depuis magicbox-proxy **1.2.0**, la sonde ne se contente plus d'ouvrir une
+connexion TCP sur le port scrcpy. Elle complète un **vrai handshake WebSocket**
+et interroge séparément l'agent Android v2 dans l'invité, puis renvoie un motif
+typé en plus du booléen historique :
+
+| `reason` | Signification | Remède |
+|---|---|---|
+| `ready` | Les deux répondent | — |
+| `projection_dead` | Android répond, scrcpy non | recharger le service de projection |
+| `android_down` | Aucun ne répond, conteneur listé | redémarrer le conteneur |
+| `not_listed` | Pas de conteneur, ou pas encore de port | arrêté, ou en cours de boot |
+| `resolve_failed` | L'API VMOS elle-même est injoignable | vérifier la box |
+
+**Pourquoi** : le port hôte reste lié par la redirection VMOS même après la mort
+du scrcpy interne. Un simple `connect()` réussissait donc contre une pile morte,
+la sonde répondait « prêt », et le client se prenait un 502 — ce sont les devices
+« zombies » dont le seul remède connu était de redémarrer tout le conteneur.
+
+Le champ `ready` est conservé tel quel : les clients antérieurs continuent de
+fonctionner, et un `reason` inconnu est traité comme « en cours de boot ».
+
+---
+
+## Santé des devices — ce que `state: running` ne dit pas
+
+VMOS rapportant `state: running` prouve qu'un processus conteneur existe, pas
+qu'Android a démarré ni que le device peut servir un job. Trois colonnes de
+`devices` portent désormais la vérité, alimentées par des scripts d'audit :
+
+| Colonne | Source | Ce qu'elle répond |
+|---|---|---|
+| `boot_health` (`healthy`/`unstable`/`dead`) + `boot_ms` | `scripts/audit-device-health.mjs` | Android atteint-il `sys.boot_completed` ? Reste-t-il vivant ensuite ? |
+| `adbkeyboard_installed`, `tiktok_installed`, `twitter_installed`, `packages_checked_at` | `scripts/audit-device-packages.mjs` | Le logiciel nécessaire est-il là ? |
+
+L'audit applicatif est **hors ligne** : il lit chaque `data.img` de conteneur
+arrêté avec `debugfs` par SSH, ce qui inventorie 451 devices sans en démarrer un
+seul. L'audit en ligne précédent ne voyait que les devices allumés et laissait
+donc des colonnes NULL — lues en aval comme « rien d'installé », ce qui était
+faux et a masqué la vraie situation.
+
+**Un device n'est exploitable qu'avec ADBKeyboard ET au moins une application
+sociale.** Au 31 août 2026 : 150 sur 452. C'est ce chiffre, et non le nombre de
+conteneurs, qui borne la capacité de production. `check-drift.mjs` le remonte
+par box et en total. Le runbook complet est dans
+[`infra/boxes/MAINTENANCE.md`](infra/boxes/MAINTENANCE.md).
+
+> **Ces colonnes sont observées, pas encore appliquées.** Le pipeline continue de
+> sélectionner ses devices exactement comme avant : le sélecteur n'a pas été
+> modifié et `boot_health` ne filtre rien. C'est délibéré — toucher à la logique
+> de sélection est un chantier distinct de l'assainissement de l'infrastructure,
+> et le mélanger ici aurait rendu toute régression indémêlable. Le gain
+> immédiat est le diagnostic : on sait enfin quels devices sont exploitables et
+> pourquoi les autres ne le sont pas. Le branchement sur le sélecteur est la
+> suite naturelle, à faire avec les tests qui vont avec.
+
 ---
 
 ## Modèle de données — Boxes et Devices

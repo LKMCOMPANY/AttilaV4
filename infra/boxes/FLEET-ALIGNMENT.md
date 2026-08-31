@@ -46,15 +46,27 @@ is unambiguously the only source. Read-only detection is already in
 
 Golden targets are pinned in [`fleet-reference.json`](fleet-reference.json):
 
-- `vendor.android_image` = `vcloud_android13_edge_20260626203150`
-- `vendor.cbs_version`   = `1.1.6.29.1`
-- `vendor.kernel_version`= `2.0.57_k1`
-- `cloudflared_version`  = `2026.6.1`  ← newly pinned (matches reference box 5)
+- `android_image.golden` = `vcloud_android13_edge_20260626203150` (model-independent)
+- `vendor_by_model.L1`    = cbs `1.1.6.12.1`, kernel `2.0.30_marsbox`
+- `vendor_by_model.E1.01` = cbs `1.1.6.29.1`, kernel `2.0.57_k1`
+- `cloudflared_version`  = `2026.6.1`
 - `magicbox-proxy`       = read live from `infra/magicbox-proxy/package.json` (v1.1.0)
 
-Live drift today (see checker): only **box-5** matches the golden vendor image +
-CBS/kernel + cloudflared. Boxes 1/2/4 are behind on all vendor + cloudflared
-layers (box-2/4 run a CBS so old it does not even expose `cbs_version`).
+> **Corrected 2026-08-31.** This file previously pinned a single global vendor
+> target taken from box-5, and the checker reported "1/5 on golden kernel". That
+> was wrong: box-5 is an **E1.01** host while box-1..4 are **L1**, and the two
+> families do not share a kernel. Read against per-model baselines, the fleet is
+> **4/5 on kernel** — only box-1 is genuinely behind, on `1.0.86_marsbox` against
+> the L1 target `2.0.30_marsbox`. The L1 CBS target is a composite: box-1 leads on
+> CBS (`1.1.6.12.1`) while box-2/3/4 lead on kernel, so no single L1 box is on
+> target yet.
+
+Live drift today (see checker): **box-5** matches its model's vendor baseline and
+the golden image. On the L1 side, box-2/3/4 are behind on CBS (`1.1.4.30.1`, the
+140 MB binary line, against box-1's 201 MB `1.1.6.x`) and box-1 is behind on
+kernel. The old claim that box-2/4 "run a CBS so old it does not even expose
+`cbs_version`" was a probe bug, not a box limitation: `/v1/get_hardware_cfg`
+reports the version on every box.
 
 - **proxy code** (`magicbox-proxy`): uniform `1.1.0` fleet-wide — already iso,
   shipped by `deploy.sh`.

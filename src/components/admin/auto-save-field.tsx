@@ -70,6 +70,17 @@ export function AutoSaveField({
     }
   };
 
+  // Composed once, up front. Reading it back off `sharedProps` in the JSX would
+  // make the compiler treat that object — which also carries handlers closing
+  // over refs — as read during render (`react-hooks/refs`). `pr-8` reserves room
+  // for the status glyph and applies to both variants.
+  const fieldClassName = cn(
+    "border-transparent bg-transparent transition-colors",
+    "hover:border-border focus:border-border focus:bg-card",
+    className,
+    "pr-8"
+  );
+
   const sharedProps = {
     value: localValue,
     onChange: (
@@ -80,19 +91,15 @@ export function AutoSaveField({
     placeholder,
     disabled,
     maxLength,
-    className: cn(
-      "border-transparent bg-transparent transition-colors",
-      "hover:border-border focus:border-border focus:bg-card",
-      className
-    ),
+    className: fieldClassName,
   };
 
   return (
     <div className="relative">
       {variant === "textarea" ? (
-        <Textarea {...sharedProps} rows={2} className={cn(sharedProps.className, "pr-8")} />
+        <Textarea {...sharedProps} rows={2} />
       ) : (
-        <Input {...sharedProps} className={cn(sharedProps.className, "pr-8")} />
+        <Input {...sharedProps} />
       )}
       <div
         className={cn(

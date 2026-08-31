@@ -46,9 +46,16 @@ async function main() {
       console.log(`  ${host}: SKIP (list_names failed: ${err instanceof Error ? err.message : err})`);
       continue;
     }
+    // Already-flagged rows are not news. Reporting them again every run reads
+    // as fresh drift and trains operators to ignore the output.
     const ghosts = devs.filter((d) => !live.has(d.db_id));
-    console.log(`  ${host}: ${devs.length} db rows · ${live.size} live containers · ${ghosts.length} ghost(s)`);
-    for (const g of ghosts) {
+    const fresh = ghosts.filter((d) => d.state !== "removed");
+    const known = ghosts.length - fresh.length;
+    console.log(
+      `  ${host}: ${devs.length} db rows · ${live.size} live containers · ` +
+        `${fresh.length} new ghost(s)${known ? ` (+${known} already flagged)` : ""}`,
+    );
+    for (const g of fresh) {
       console.log(`    - ghost: ${g.user_name || g.db_id} (${g.db_id})`);
       if (!DRY_RUN) await updateDeviceState(g.id, "removed");
       removed++;
@@ -56,8 +63,12 @@ async function main() {
   }
 
   console.log(`\n=== summary ===`);
-  console.log(`ghosts marked removed: ${removed}${DRY_RUN ? " (dry-run, not applied)" : ""}`);
-  console.log(restored ? `restored: ${restored}` : "");
+  console.log(
+    removed
+      ? `ghosts marked removed: ${removed}${DRY_RUN ? " (dry-run, not applied)" : ""}`
+      : "no new ghosts — the DB matches every box's container list",
+  );
+  if (restored) console.log(`restored: ${restored}`);
 }
 
 main().catch((e) => {

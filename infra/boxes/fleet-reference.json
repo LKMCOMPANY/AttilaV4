@@ -1,25 +1,54 @@
 {
-  "$comment": "Golden target versions for the VMOS Edge fleet. This is the REFERENCE every box must converge to. The vendor layer (cbs_go, kernel, android image) is not shippable from this repo (proprietary binaries) — it is propagated box-to-box from the reference box via scripts/deploy-vendor.sh. The proxy version is NOT recorded here: it is read from infra/magicbox-proxy/package.json (the code IS the source of truth). check-drift.mjs compares every live box against these values.",
-  "reference_box": 5,
-  "captured_at": "2026-07-07",
-  "captured_from": "box-5.attila.army /v1/systeminfo + list_names image + cloudflared tunnel connection",
-  "vendor": {
-    "cbs_version": "1.1.6.29.1",
-    "kernel_version": "2.0.57_k1",
-    "android_image": "vcloud_android13_edge_20260626203150"
+  "$comment": "Golden targets for the VMOS Edge fleet. check-drift.mjs compares every live box against these values. The proxy version is NOT recorded here: it is read from infra/magicbox-proxy/package.json (the code IS the source of truth).",
+  "captured_at": "2026-08-31",
+  "captured_from": "GET /v1/get_hardware_cfg on every live box. Prefer it over /v1/systeminfo: it reports `model`, `version` (CBS) and `kernel_version` on ALL boxes, whereas /v1/systeminfo leaves cbs/kernel blank on the 1.1.4.x CBS line (box-2/3/4).",
+
+  "android_image": {
+    "$comment": "Model-independent — the Android image runs on any host model. New devices MUST be created on it so they are born fleet-aligned: pass it to MagicBox-Industrial as --image-repository <golden> (it defaults to VMOS's ancient built-in image otherwise). This file is the single source of truth for the value; do not re-hardcode it in the provisioning repo.",
+    "golden": "vcloud_android13_edge_20260626203150",
+    "present_on_boxes": [5],
+    "distribution": "No export endpoint exists in the Container API (only POST /v1/import_image, an upload). Moving it to another box means `docker save` on box-5 and `docker load` on the target, over SSH — roughly 3.4 GB per box. Do not attempt it without a justification stronger than uniformity."
   },
-  "minimums": {
-    "$comment": "Floor required for the Android Control API v2 (input/click, accessibility/dump, node find-and-act). New devices/boxes must meet these. Source: help.vmosedge.com/en/sdk/agent-api.",
-    "cbs_version": "1.1.1.10",
-    "android_image_date": "20260201"
+
+  "vendor_by_model": {
+    "$comment": "The fleet spans TWO hardware models that do NOT share a kernel: box-1..4 are `L1`, box-5 is `E1.01`. Converging an L1 onto the E1.01 kernel through POST /v1/update_kernel would flash firmware from the wrong family. Each model therefore carries its own baseline, set to the highest version actually observed on that model — which is why the L1 target is a composite: box-1 leads on CBS (1.1.6.12.1) while box-2/3/4 lead on kernel (2.0.30_marsbox). No single L1 box is yet on target.",
+    "L1": {
+      "cbs_version": "1.1.6.12.1",
+      "kernel_version": "2.0.30_marsbox",
+      "observed_on_boxes": [1, 2, 3, 4]
+    },
+    "E1.01": {
+      "cbs_version": "1.1.6.29.1",
+      "kernel_version": "2.0.57_k1",
+      "observed_on_boxes": [5]
+    }
   },
-  "provisioning": {
-    "$comment": "New devices MUST be created on this image so they are born fleet-aligned. Pass it to MagicBox-Industrial provisioning as --image-repository <golden_image> (it defaults to VMOS's ancient built-in image otherwise). This file is the single source of truth for the value.",
-    "golden_image": "vcloud_android13_edge_20260626203150"
+
+  "vendor_upgrade_path": {
+    "$comment": "The vendor layer IS upgradable through the official API — an earlier revision of this file wrongly claimed it was not shippable and pointed at a scripts/deploy-vendor.sh that never existed.",
+    "cbs": "POST /v1/update_cbs (multipart, file named cbs_go_edge_<version>, optional .cbs suffix)",
+    "kernel": "POST /v1/update_kernel (multipart, .img — the host reboots afterwards)",
+    "constraint": "Match the hardware model. Read `model` from /v1/get_hardware_cfg before pushing anything."
   },
+
+  "host_disk": {
+    "$comment": "Disk headroom is a production gate, not a nicety. box-1 reached 98% on /container_nswc_lv in June 2026: guest ext4 writes began failing with EIO (superblock: ext4_check_bdev_write_error, 13 Jun 2026), 44 of its 96 containers took the filesystem error flag, and its job success rate sat at 31% against 70% on a healthy box. Container data.img files are sparse and grow-only — the loop devices are not mounted with discard — so allocation never shrinks on its own.",
+    "warn_percent": 75,
+    "critical_percent": 85,
+    "reclaim": "Offline maintenance pass: e2fsck -fy, purge /tombstones + /anr + /local/tmp/scd.log, then mount -o loop,discard and fstrim. Recovered 129 GB across 95 containers on box-1 (98% → 69%) with identity and app data untouched."
+  },
+
   "cloudflared_version": "2026.6.1",
+
   "reference_capacity": {
-    "$comment": "Fleet policy (2026-07-07): max_concurrent_containers = 10 on every box — the VMOS host ceiling (AGENTS.md) proven on box-5 at 16GB RAM. box-1 has 32GB, box-2/4 have 16GB like box-5, so 10 is safe fleet-wide. operator_reserve stays 1 (automator uses max-1). check-drift flags divergence from this value.",
+    "$comment": "Fleet policy (2026-07-07): max_concurrent_containers = 10 on every box — the VMOS host ceiling (AGENTS.md). Proven on box-5 at 16 GB RAM; box-2/3/4 have the same 16 GB and box-1 has 32 GB, so 10 is safe fleet-wide. operator_reserve stays 1 (the automator uses max-1). check-drift flags divergence from this value.",
     "max_concurrent_containers": 10
+  },
+
+  "control_api_minimums": {
+    "$comment": "Floor required by the Android Control API v2 (input/click, accessibility/dump, node find-and-act). Source: help.vmosedge.com/en/sdk/agent-api. The whole fleet already exceeds these. Note that the v2 AGENT version tracks the Android image, not the host CBS: images 20260417 carry agent 1.1.1, images 20260511 and 20260626 carry 1.1.3 (131 vs 137 endpoints, strictly additive).",
+    "cbs_version": "1.1.1.10",
+    "android_image_date": "20260201",
+    "workflow_and_version_info_image_date": "20260113"
   }
 }

@@ -8,6 +8,8 @@ import type { StreamMode } from "@/lib/streaming/types";
 interface StreamStatusBarProps {
   status: StreamStatus;
   error: string | null;
+  /** Long-form explanation surfaced as a tooltip on the compact label. */
+  errorDetail?: string | null;
   mode: StreamMode;
   onModeChange: (mode: StreamMode) => void;
   webCodecsSupported: boolean;
@@ -40,6 +42,7 @@ const STATUS_CONFIG: Record<
 export function StreamStatusBar({
   status,
   error,
+  errorDetail,
   mode,
   onModeChange,
   webCodecsSupported,
@@ -55,7 +58,10 @@ export function StreamStatusBar({
         <span
           className={cn("h-1.5 w-1.5 shrink-0 rounded-full", config.dotClass)}
         />
-        <span className="text-[10px] text-muted-foreground">
+        <span
+          className="truncate text-[10px] text-muted-foreground"
+          title={errorDetail ?? undefined}
+        >
           {error ?? config.label}
         </span>
       </div>

@@ -58,3 +58,6 @@ next-env.d.ts
 # agent skills (local agent tooling, installed via `npx skills add`)
 /.agents/
 /skills-lock.json
+
+# MCP server config — carries the Cloudflare Access service token, never commit
+/.cursor/mcp.json

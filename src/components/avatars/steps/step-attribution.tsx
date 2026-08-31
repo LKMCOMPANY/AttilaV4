@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, X, Users, Shield } from "lucide-react";
-import { getAccountUsers, getAccountArmies } from "@/app/actions/avatars";
-import type { UserProfile, Army } from "@/types";
+import { useAccountRoster } from "@/hooks/use-account-roster";
 import type { StepProps } from "../types";
 
 interface StepAttributionProps extends StepProps {
@@ -17,25 +16,8 @@ interface StepAttributionProps extends StepProps {
 }
 
 export function StepAttribution({ data, onChange, accountId }: StepAttributionProps) {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [armies, setArmies] = useState<Army[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { users, armies, loading } = useAccountRoster(accountId);
   const [newArmyInput, setNewArmyInput] = useState("");
-
-  useEffect(() => {
-    if (!accountId) return;
-    setLoading(true);
-    Promise.all([getAccountUsers(accountId), getAccountArmies(accountId)])
-      .then(([u, a]) => {
-        setUsers(u);
-        setArmies(a);
-      })
-      .catch(() => {
-        setUsers([]);
-        setArmies([]);
-      })
-      .finally(() => setLoading(false));
-  }, [accountId]);
 
   const toggleOperator = (id: string) => {
     const current = data.operator_ids;

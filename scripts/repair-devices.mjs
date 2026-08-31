@@ -26,6 +26,7 @@ import {
   stopContainer,
   recreateContainer,
   proxyTest,
+  mapWithConcurrency,
 } from "./lib/fleet.mjs";
 
 const ROM_TIMEOUT_MS = 150_000;
@@ -103,19 +104,6 @@ async function repair(device) {
   return result;
 }
 
-async function runPool(items, size, fn) {
-  const out = new Array(items.length);
-  let cursor = 0;
-  const worker = async () => {
-    while (cursor < items.length) {
-      const i = cursor++;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, size) }, worker));
-  return out;
-}
-
 async function main() {
   const onlyIdx = process.argv.indexOf("--only");
   if (onlyIdx < 0 || !process.argv[onlyIdx + 1]) {
@@ -127,7 +115,7 @@ async function main() {
   const targets = all.filter((d) => ids.has(d.db_id) || ids.has(d.user_name));
   console.log(`Repairing ${targets.length} device(s) at concurrency ${CONCURRENCY}\n`);
 
-  const results = await runPool(targets, CONCURRENCY, repair);
+  const results = await mapWithConcurrency(targets, CONCURRENCY, repair);
 
   console.log("\n=== summary ===");
   for (const c of ["recovered_boot", "recovered_recreate", "network_dead", "wont_boot", "error"]) {

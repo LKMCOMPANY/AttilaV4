@@ -86,7 +86,7 @@ export function StepCountry({ data, onChange }: StepProps) {
             <div className="p-1">
               {filteredCountries.length === 0 ? (
                 <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  No countries match "{search}"
+                  No countries match &ldquo;{search}&rdquo;
                 </p>
               ) : (
                 filteredCountries.map((c) => (

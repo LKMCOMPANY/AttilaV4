@@ -74,6 +74,7 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
   const {
     status,
     error,
+    errorDetail,
     canvasRef,
     handlers,
     sendKeycode,
@@ -257,6 +258,7 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
             <StreamStatusBar
               status={status}
               error={error}
+              errorDetail={errorDetail}
               mode={mode}
               onModeChange={setMode}
               webCodecsSupported={webCodecs}

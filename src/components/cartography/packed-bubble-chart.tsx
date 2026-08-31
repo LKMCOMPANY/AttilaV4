@@ -62,6 +62,8 @@ interface Transform {
 
 const MIN_ZOOM = 0.3;
 const MAX_ZOOM = 4;
+/** The un-zoomed, un-panned view. Shared so every reset is referentially equal. */
+const IDENTITY_TRANSFORM: Transform = { x: 0, y: 0, k: 1 };
 
 // ---------------------------------------------------------------------------
 // Component
@@ -79,7 +81,7 @@ export const PackedBubbleChart = memo(function PackedBubbleChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, k: 1 });
+  const [transform, setTransform] = useState<Transform>(IDENTITY_TRANSFORM);
   const [isPanning, setIsPanning] = useState(false);
   const panStartRef = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
 
@@ -104,11 +106,6 @@ export const PackedBubbleChart = memo(function PackedBubbleChart({
     return () => ro.disconnect();
   }, []);
 
-  // Reset transform on dimension change
-  useEffect(() => {
-    setTransform({ x: 0, y: 0, k: 1 });
-  }, [dimension]);
-
   const { bubbles, clusters } = useBubblePack({
     nodes,
     dimension,
@@ -131,28 +128,40 @@ export const PackedBubbleChart = memo(function PackedBubbleChart({
     return counts;
   }, [bubbles]);
 
-  // Focus on a specific cluster
-  useEffect(() => {
-    if (!focusedCluster || size.width === 0) {
-      if (!focusedCluster) setTransform({ x: 0, y: 0, k: 1 });
-      return;
-    }
-
+  // The view a focused cluster asks for — a pure function of the layout, so it
+  // is computed, never stored. `null` while nothing is focused, or before the
+  // bubbles have been laid out (the container is measured asynchronously).
+  const focusTransform = useMemo<Transform | null>(() => {
+    if (!focusedCluster || size.width === 0) return null;
     const clusterBubble = bubbles.find(
       (b) => b.type === "cluster" && b.clusterKey === focusedCluster
     );
-    if (!clusterBubble) return;
+    if (!clusterBubble) return null;
 
     const targetK = Math.min(
       MAX_ZOOM,
       Math.max(1.5, Math.min(size.width, size.height) / (clusterBubble.r * 2.4))
     );
-    setTransform({
+    return {
       x: size.width / 2 - clusterBubble.x * targetK,
       y: size.height / 2 - clusterBubble.y * targetK,
       k: targetK,
-    });
+    };
   }, [focusedCluster, bubbles, size.width, size.height]);
+
+  // Snap the view when the target changes: identity on a dimension switch or a
+  // dropped focus, the computed zoom once a focused cluster has been laid out.
+  // Adjusted during render (React's documented pattern) rather than in an
+  // effect, so the previous view is never painted for a frame first. The key
+  // carries whether the zoom is computable yet, so focusing a cluster before
+  // the layout settles still snaps once it does — while leaving the user's own
+  // pan and zoom untouched in between.
+  const viewKey = `${dimension}\u0000${focusedCluster ?? ""}\u0000${focusTransform ? "zoom" : ""}`;
+  const [lastViewKey, setLastViewKey] = useState(viewKey);
+  if (lastViewKey !== viewKey) {
+    setLastViewKey(viewKey);
+    setTransform(focusTransform ?? IDENTITY_TRANSFORM);
+  }
 
   // ---------------------------------------------------------------------------
   // Mouse handlers
@@ -213,7 +222,7 @@ export const PackedBubbleChart = memo(function PackedBubbleChart({
   );
 
   const handleDoubleClick = useCallback(() => {
-    setTransform({ x: 0, y: 0, k: 1 });
+    setTransform(IDENTITY_TRANSFORM);
   }, []);
 
   // ---------------------------------------------------------------------------

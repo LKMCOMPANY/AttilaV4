@@ -15,7 +15,7 @@ export function StepIdentity({ data, onChange }: StepProps) {
       <div className="space-y-1.5">
         <h3 className="text-heading-3">Identity</h3>
         <p className="text-body-sm text-muted-foreground">
-          Define the avatar's name and contact information.
+          Define the avatar&apos;s name and contact information.
         </p>
       </div>
 

@@ -20,12 +20,13 @@ gateway alias — so the proxy's auto-detect is not safe to rely on).
 | Path | Role |
 |---|---|
 | `manifest.tsv` | Source of truth: box number → tunnel id, api_host |
-| `fleet-reference.json` | Golden vendor versions (cbs_go / kernel / android image) every box must match |
+| `fleet-reference.json` | Golden Android image, per-hardware-model vendor baselines (cbs_go / kernel), disk thresholds |
 | `templates/cloudflared.config.yml.tmpl` | Rendered per box → `/etc/cloudflared/config.yml` |
 | `files/cloudflared.service` | iso → `/etc/systemd/system/cloudflared.service` |
 | `files/magicbox-proxy.service` | iso → `/etc/systemd/system/magicbox-proxy.service` |
 | `scripts/deploy.sh` | Converge a box to this state (idempotent) |
 | `scripts/check-drift.mjs` | Read-only: report every box's version drift vs the golden reference |
+| `MAINTENANCE.md` | Runbook: disk reclamation, device inventory, scrcpy tuning, stream diagnosis, vendor upgrades, proxy hygiene |
 
 ## Version drift
 
@@ -34,9 +35,16 @@ Two layers of "same version" are enforced here:
 - **Our code** (proxy + cloudflared + units) — shipped identically by `deploy.sh`.
   The proxy stamps its version (`infra/magicbox-proxy/package.json`) on
   `GET /healthz`, so a stale deploy is detectable.
-- **Vendor** (`cbs_go`, kernel, android image) — cannot ship from this repo
-  (proprietary binaries). The target is pinned in `fleet-reference.json` and
-  propagated box-to-box from the reference box.
+- **Vendor** (`cbs_go`, kernel, android image) — proprietary binaries we do not
+  hold in git, but they ARE upgradable through the official Container API:
+  `POST /v1/update_cbs` and `POST /v1/update_kernel` (multipart upload; the host
+  reboots after a kernel push). Targets are pinned in `fleet-reference.json`.
+
+**Vendor baselines are per hardware model.** The fleet mixes `L1` hosts
+(box-1..4) and `E1.01` hosts (box-5), and they do not share a kernel — pushing
+one family's firmware to the other is how you brick a box. Always read `model`
+from `GET /v1/get_hardware_cfg` first. That endpoint is also the only reliable
+source of the CBS version: `/v1/systeminfo` returns it blank on the 1.1.4.x line.
 
 Check the whole fleet at any time (read-only, touches nothing):
 

@@ -75,10 +75,25 @@ regress on them:
 2. **Server components by default.** Reach for `"use client"` only when you
    need state, effects, or browser-only APIs.
 3. **No setState inside an effect** unless you guard with a value equality
-   check — the React 19 lint catches this.
+   check — the React 19 lint catches this. Prefer deriving during render; when
+   state genuinely must be adjusted because a prop changed, use React's
+   render-phase adjustment (compare against a "last seen" state, set both) —
+   never an effect. `src/hooks/use-account-roster.ts` shows the derived-loading
+   shape, `use-realtime-campaign.ts` the render-phase reset.
 4. **Realtime updates** go through `broadcastCampaignEvent` /
    `broadcastAccountEvent` from `src/lib/supabase/realtime`. The frontend
    subscribes via `useCampaignChannel` / `useAccountChannel`.
+
+### Quality gates (web)
+
+```bash
+npm run check    # typecheck + lint — must exit 0
+npm run build    # the real integration check
+```
+
+Enforced by `.github/workflows/ci.yml` on every push and PR. `npm run lint`
+must report **zero errors**; the remaining warnings (`<img>` vs `next/image`,
+a few unused vars) are pre-existing and tracked, not a licence to add more.
 
 ## Modifying the database
 
@@ -108,3 +123,41 @@ node scripts/audit-adbkeyboard.mjs
 
 VMOS host limit: **10 containers running simultaneously max** per box.
 Always respect with `--concurrency` on bulk scripts.
+
+## VMOS vendor documentation (authoritative)
+
+Do not work from memory on the VMOS API — the vendor ships machine-readable
+references that are newer than the HTML docs:
+
+- `https://help.vmosedge.com/ai-reference-container.txt` (Container API)
+- `https://help.vmosedge.com/ai-reference-control.txt` (Android Control API v2)
+
+Official agent skills are installed locally (gitignored, like `.agents/`):
+
+```bash
+npx skills add https://github.com/vmos-dev/vmos-edge-skills --skill vmos-edge-container-api
+npx skills add https://github.com/vmos-dev/vmos-edge-skills --skill vmos-edge-control-api
+```
+
+Each box also serves the Container API as an **MCP server** at
+`https://box-N.attila.army/mcp/sse` (CF-Access headers required).
+`.cursor/mcp.json` points at box-5 — the tool *surface* is identical on every
+box, only the target differs, so one entry is enough for discovery.
+
+**The MCP is a development-time tool only.** Product code keeps calling the box
+REST API through `src/lib/box-api.ts`; never route runtime traffic through MCP.
+Its real value is that it is a self-describing catalogue of what a box actually
+serves — that is how we found `/interface_logs/{recent,stats,detail}` (per-box
+API call log with success rates), `/v1/discover` and `/v1/swap_size/{gb}`, none
+of which appear in the published documentation.
+
+Two vendor facts worth remembering:
+
+- **Read `model` from `GET /v1/get_hardware_cfg` before any vendor upgrade.**
+  The fleet mixes `L1` (box-1..4) and `E1.01` (box-5) hosts; they do not share a
+  kernel. That endpoint is also the only reliable source of the CBS version —
+  `/v1/systeminfo` returns it blank on the 1.1.4.x line.
+- **The v2 agent version tracks the Android image, not the host CBS.** Image
+  `20260417` carries agent 1.1.1 (131 endpoints), `20260511`/`20260626` carry
+  1.1.3 (137, strictly additive). `base/version_info`, `package/list` and
+  `accessibility/dump` exist on both.

@@ -50,7 +50,17 @@ export function useRealtimeAccount({
   const [jobsVersion, setJobsVersion] = useState(0);
   const [devicesVersion, setDevicesVersion] = useState(0);
   const [presenceMap, setPresenceMap] = useState<Record<string, OperatorPresence[]>>({});
-  const [status, setStatus] = useState<RealtimeConnectionStatus>("disconnected");
+  const [status, setStatus] = useState<RealtimeConnectionStatus>("connecting");
+
+  // Each account gets its own channel, so switching accounts puts us back in
+  // "connecting" until the new subscription reports in. Adjusted during render
+  // (React's documented pattern) rather than from the effect that opens the
+  // channel, so a consumer never sees the previous account's status.
+  const [statusFor, setStatusFor] = useState(accountId);
+  if (statusFor !== accountId) {
+    setStatusFor(accountId);
+    setStatus("connecting");
+  }
 
   const jobsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const devicesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -64,8 +74,6 @@ export function useRealtimeAccount({
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase.channel(`account:${accountId}`);
-
-    setStatus("connecting");
 
     channel
       .on("broadcast", { event: "jobs" }, () => {

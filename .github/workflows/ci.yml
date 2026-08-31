@@ -1,0 +1,52 @@
+# Attila V4 web — quality gates on every push and pull request.
+#
+# Mirrors the macOS repo's doctrine with the equivalent npm scripts:
+#   1. npm run typecheck  (tsc --noEmit — strict mode, zero errors)
+#   2. npm run lint       (eslint — zero errors; warnings are allowed)
+#   3. npm run build      (next build — the real integration check)
+#
+# Why this exists: the lint gate already worked and already failed, but nothing
+# ran it, so 14 errors accumulated unnoticed — 9 of them violations of the
+# "no setState inside an effect" hard rule in AGENTS.md. A rule nothing enforces
+# is a suggestion.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Typecheck · Lint · Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        # Placeholders only: the build must not reach a real project, and Next
+        # needs these present at collect-page-data time. Runtime secrets live in
+        # Render, never in CI.
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+        run: npm run build

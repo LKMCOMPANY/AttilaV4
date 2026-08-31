@@ -37,21 +37,33 @@ export function useRealtimeCampaign(
 ): UseRealtimeCampaignResult {
   const [pipelineVersion, setPipelineVersion] = useState(0);
   const [countersVersion, setCountersVersion] = useState(0);
-  const [status, setStatus] = useState<RealtimeConnectionStatus>("disconnected");
+  const [channelStatus, setChannelStatus] = useState<RealtimeConnectionStatus>("disconnected");
+
+  // With no campaign there is no channel, so the reported status is a
+  // derivation rather than something an effect has to write.
+  const status: RealtimeConnectionStatus = campaignId ? channelStatus : "disconnected";
+
+  // Counters and connection state belong to one campaign: switching campaigns
+  // restarts them. Adjusted during render (React's documented pattern) so a
+  // consumer never sees the previous campaign's version or status paired with
+  // the new id, and so the effect that opens the channel only ever writes state
+  // from its subscription callback.
+  const [channelFor, setChannelFor] = useState(campaignId);
+  if (channelFor !== campaignId) {
+    setChannelFor(campaignId);
+    setPipelineVersion(0);
+    setCountersVersion(0);
+    setChannelStatus(campaignId ? "connecting" : "disconnected");
+  }
 
   const pipelineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countersTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (!campaignId) {
-      setStatus("disconnected");
-      return;
-    }
+    if (!campaignId) return;
 
     const supabase = createClient();
     const channelName = `campaign:${campaignId}`;
-
-    setStatus("connecting");
 
     const channel = supabase
       .channel(channelName)
@@ -69,12 +81,12 @@ export function useRealtimeCampaign(
       })
       .subscribe((subscriptionStatus) => {
         if (subscriptionStatus === "SUBSCRIBED") {
-          setStatus("connected");
+          setChannelStatus("connected");
         } else if (
           subscriptionStatus === "CLOSED" ||
           subscriptionStatus === "CHANNEL_ERROR"
         ) {
-          setStatus("disconnected");
+          setChannelStatus("disconnected");
         }
       });
 
@@ -82,14 +94,8 @@ export function useRealtimeCampaign(
       supabase.removeChannel(channel);
       if (pipelineTimerRef.current) clearTimeout(pipelineTimerRef.current);
       if (countersTimerRef.current) clearTimeout(countersTimerRef.current);
-      setStatus("disconnected");
+      setChannelStatus("disconnected");
     };
-  }, [campaignId]);
-
-  // Reset versions when campaign changes
-  useEffect(() => {
-    setPipelineVersion(0);
-    setCountersVersion(0);
   }, [campaignId]);
 
   return { pipelineVersion, countersVersion, status };

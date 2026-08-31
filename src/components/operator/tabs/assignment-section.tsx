@@ -1,20 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, X, Users, UserCog } from "lucide-react";
+import { Plus, Users, UserCog } from "lucide-react";
 import { toast } from "sonner";
 import {
-  getAccountUsers,
   getAccountArmies,
   setAvatarArmies,
   setAvatarOperators,
 } from "@/app/actions/avatars";
-import type { AvatarWithRelations, UserProfile, Army } from "@/types";
+import { useAccountRoster } from "@/hooks/use-account-roster";
+import type { AvatarWithRelations } from "@/types";
 
 interface AssignmentSectionProps {
   avatar: AvatarWithRelations;
@@ -27,18 +26,8 @@ export function AssignmentSection({
   accountId,
   onUpdated,
 }: AssignmentSectionProps) {
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [armies, setArmies] = useState<Army[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { users, armies, loading, setArmies } = useAccountRoster(accountId);
   const [newArmyInput, setNewArmyInput] = useState("");
-
-  useEffect(() => {
-    setLoading(true);
-    Promise.all([getAccountUsers(accountId), getAccountArmies(accountId)])
-      .then(([u, a]) => { setUsers(u); setArmies(a); })
-      .catch(() => { setUsers([]); setArmies([]); })
-      .finally(() => setLoading(false));
-  }, [accountId]);
 
   const selectedArmyIds = (avatar.armies ?? []).map((a) => a.id);
   const selectedOperatorIds = (avatar.operators ?? []).map((o) => o.id);
