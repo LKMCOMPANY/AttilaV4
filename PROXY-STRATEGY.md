@@ -60,6 +60,35 @@ swap providers themselves without us in the loop.
   provisioning `create`/prop step (`MagicBox-Industrial`), not from the operator
   UI. Audit which mode existing devices use and standardize new devices to `vpn`.
 
+## Auditing what is actually happening
+
+```bash
+node scripts/audit-proxies.mjs --running-only --geo
+```
+
+`/proxy-test/{db_id}` is the real routing verdict — a mihomo delay measurement
+through the upstream. The `healthy` flag on `proxy_get` only reflects what was
+configured, so it will happily call a dead upstream healthy. mihomo runs inside
+the container, so a stopped device reports `engine_unreachable`; that is
+expected, not a dead proxy.
+
+`--geo` additionally checks that the exit IP lands where the avatar claims to
+live. A French persona egressing from a German IP is a detection risk no
+latency probe can see.
+
+> **Do not use `/android_api/v1/ip_geo/{db_id}` for this.** Despite the name it
+> geolocates the *configured proxy hostname*, not the session's egress:
+> `disp.oxylabs.io` resolves to the Oxylabs dispatcher in Falkenstein, so every
+> Oxylabs device reads as German regardless of the port's actual exit. Only a
+> request made from **inside the guest** traverses the proxy. Measured on a FR
+> device: `ip_geo` said Falkenstein/Germany, while asking the device itself
+> returned 82.26.244.28, Paris, Orange — matching its `Europe/Paris` timezone
+> and `fr` SIM.
+
+Two upstream providers are live today, contrary to what this document used to
+imply: **Oxylabs** (`disp.oxylabs.io`, sticky port per device) on the European
+devices, and **NodeMaven** (`gate.nodemaven.com:1080`) on the US ones.
+
 ## What is implemented vs recommended
 
 - Implemented: paste parsing, live `proxy_set`/`proxy_stop`, real `/proxy-test`

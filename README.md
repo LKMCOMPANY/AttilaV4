@@ -67,14 +67,50 @@ Follows the [official Supabase SSR guide](https://supabase.com/docs/guides/auth/
 | `NEXT_PUBLIC_SUPABASE_URL`            | Supabase project URL       |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`| Supabase publishable key   |
 
-## Operational scripts
+## Quality gates
 
 ```bash
-# Install ADBKeyboard on every device (idempotent, --concurrency 1 for serial)
-node scripts/install-adbkeyboard.mjs --concurrency 1
+npm run check    # tsc --noEmit + eslint — must exit 0
+npm run build    # the real integration check
+```
 
-# Audit ADBKeyboard state (read-only, only checks running containers)
-node scripts/audit-adbkeyboard.mjs
+Enforced by `.github/workflows/ci.yml` on every push and pull request.
+`npm run lint` must report **zero errors**; the remaining warnings are
+pre-existing and tracked, not a licence to add more.
+
+## Operational scripts
+
+**Start here — read the truth before changing anything.** None of these ever
+exceed the VMOS ceiling of 10 running containers per box, and none touch a
+device with a campaign job due.
+
+```bash
+# Fleet drift: versions, hardware model, disk headroom, DB↔live, provisioning
+node infra/boxes/scripts/check-drift.mjs
+
+# What is installed, read OFFLINE from each stopped container's data.img.
+# 451 devices inventoried without booting one. Fills adbkeyboard/tiktok/twitter.
+node scripts/audit-device-packages.mjs
+
+# Does it actually boot? `state: running` does not mean Android came up.
+node scripts/audit-device-health.mjs --box box-1.attila.army
+node scripts/audit-device-health.mjs --box box-1.attila.army --recheck --concurrency 1
+
+# Ghost rows: DB devices whose container no longer exists on the box
+node scripts/reconcile-devices.mjs --dry-run
+
+# Proxy routing + exit-IP geo coherence
+node scripts/audit-proxies.mjs --running-only --geo
+```
+
+```bash
+# Install ADBKeyboard — prefer --missing-only, it uses the offline audit so
+# only the devices that actually lack the APK are booted
+node scripts/install-adbkeyboard.mjs --missing-only --box box-3.attila.army
+
+# Tune the on-device scrcpy (short GOP, capped bitrate/fps, quieter log)
+node scripts/tune-scrcpy.mjs --box box-5.attila.army
+node scripts/tune-scrcpy.mjs --box box-5.attila.army --revert
 
 # Manual single-device automation tests
 npx tsx scripts/x-reply.ts      --box <host> --device <db_id> --tweet-url <url> --text "<reply>"
@@ -85,7 +121,9 @@ VMOS host limit: **10 containers running simultaneously max**. Respect this
 with `--concurrency` on the install script.
 
 See `ADB-REFERENCE.md` (section 2 bis) for the full ADBKeyboard provisioning
-spec including the mandatory `pm enable` step.
+spec including the mandatory `pm enable` step, and
+[`infra/boxes/MAINTENANCE.md`](infra/boxes/MAINTENANCE.md) for the box runbook
+— disk reclamation, the `starting` deadlock, vendor upgrades, stream diagnosis.
 
 ## For agents
 

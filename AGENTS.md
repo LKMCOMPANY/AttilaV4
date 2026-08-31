@@ -28,6 +28,41 @@ Read these in order before touching anything in this repo.
 | `ADB-REFERENCE.md` | Any shell, IME, focus, screenshot, or container helper |
 | `GORGONE-INGESTION.md` | The webhook + sweep that feeds posts into the pipeline |
 | `LLM-ALERIA.md` | The Aleria LLM provider used for analyst + writer |
+| `infra/boxes/MAINTENANCE.md` | **Anything about a box itself** — disk, boot health, device provisioning, scrcpy tuning, stream diagnosis, vendor upgrades, proxy hygiene |
+| `PROXY-STRATEGY.md` | Proxy assignment, testing, and the exit-IP geo check |
+| `VMOS-API-V2-EVALUATION.md` | The Android Control API v2 — measured agent versions, MCP, what to adopt and what not to |
+
+## What a device actually is
+
+The single most expensive assumption in this codebase is that a device VMOS
+reports as `running` can do work. It cannot, necessarily. Three independent
+things have to be true, and each has its own column and its own audit script:
+
+| Question | Column | Script |
+|---|---|---|
+| Does the container still exist? | `devices.state <> 'removed'` | `scripts/reconcile-devices.mjs` |
+| Does Android actually boot? | `boot_health`, `boot_ms` | `scripts/audit-device-health.mjs` |
+| Is the software there? | `adbkeyboard_installed`, `tiktok_installed`, `twitter_installed` | `scripts/audit-device-packages.mjs` |
+
+**A device is job-capable only with ADBKeyboard AND at least one social app.**
+On 31 August 2026 that was 150 of 452 — that number, not the container count,
+is what bounds production. `check-drift.mjs` reports it per box.
+
+These columns are **observed, not enforced**: the pipeline's device selector is
+unchanged and nothing filters on `boot_health` yet. Wiring it in is a deliberate
+follow-up, with the tests that belong to it.
+
+Two measurement traps, both paid for the hard way:
+
+- **Concurrency contaminates a boot verdict.** Boots contend for the host: the
+  median healthy boot was 24 s serially against 93 s at concurrency 9, so
+  healthy devices overran the 120 s ceiling and read as dead. A first sweep
+  called 56 of 96 devices dead; a serial re-probe cleared 50 of them. Never
+  report a device dead on a concurrent pass alone.
+- **ADBKeyboard missing from `enabled_input_methods` after a boot is normal.**
+  VMOS clears the enabled-IME list on every container restart, and
+  `activateAdbKeyboard()` re-does `pm enable` + `ime enable` + `ime set` on
+  every job. Only the APK being *installed* matters at rest.
 
 ## Hard rules — automation code
 

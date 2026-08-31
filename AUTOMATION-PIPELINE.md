@@ -58,22 +58,47 @@ Validated end-to-end via CLI scripts on 18 April 2026:
 
 ## Prerequis devices
 
-Avant qu'un device puisse executer des jobs du pipeline, il doit avoir
-**ADBKeyboard installe et active**. Sans ca, l'execution echoue avec
-`Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled`.
+Trois conditions independantes, et un device qui n'en remplit qu'une partie
+echouera de facon differente. Mesure au 31 aout 2026 : **150 devices sur 452**
+les remplissent toutes.
 
-Provisioning de masse (idempotent) :
+**1. ADBKeyboard installe.** Sans lui, l'execution echoue avec
+`Unknown input method com.android.adbkeyboard/.AdbIME cannot be enabled`
+(categorie `device_setup_required`). Note que l'IME *active* n'a pas a etre
+verifie a froid : VMOS purge `enabled_input_methods` a chaque redemarrage de
+conteneur et `activateAdbKeyboard()` refait `pm enable` + `ime enable` +
+`ime set` a chaque job. Seule la presence de l'APK compte au repos.
+
+**2. Une application sociale installee.** Un device sans TikTok ni X ne peut
+executer aucun job — c'est la source directe des echecs
+`device_setup_required` « TikTok app not installed ». C'etait le vrai
+plafond de la plateforme : **301 devices sur 452** n'avaient aucune app sociale.
+
+**3. Android qui demarre reellement.** `state: running` prouve qu'un processus
+conteneur existe, pas qu'Android est monte. Un conteneur peut rester bloque sur
+le `bootanimation` indefiniment ; il echouera en
+`Container X ROM not ready within 120000ms` (categorie `infrastructure`).
+
 ```bash
-node scripts/install-adbkeyboard.mjs --concurrency 1
+# Ce qui est installe — lecture HORS LIGNE des data.img arretes, aucun boot
+node scripts/audit-device-packages.mjs
+
+# Ce qui demarre vraiment (voir le piege de contention dans AGENTS.md)
+node scripts/audit-device-health.mjs --box box-1.attila.army
+
+# Combler le manque, en ne demarrant que les devices concernes
+node scripts/install-adbkeyboard.mjs --missing-only --box box-3.attila.army
 ```
 
-Audit read-only :
-```bash
-node scripts/audit-adbkeyboard.mjs
-```
+Les resultats vivent dans `devices` : `adbkeyboard_installed`,
+`tiktok_installed`, `twitter_installed`, `boot_health`. **Le selecteur de
+devices du pipeline ne les lit pas encore** — c'est deliberement hors du
+chantier d'infrastructure, et c'est la suite naturelle a faire avec ses tests.
+En attendant, ces colonnes servent au diagnostic et a `check-drift.mjs`, qui
+remonte le nombre de devices exploitables par box.
 
-Detail technique : voir `ADB-REFERENCE.md` section 2 bis. Tous les 46 devices
-de `box-1.attila.army` ont ete provisionnes le 17 avril 2026.
+Detail technique de l'IME : voir `ADB-REFERENCE.md` section 2 bis.
+Runbook complet des box : `infra/boxes/MAINTENANCE.md`.
 
 ---
 
