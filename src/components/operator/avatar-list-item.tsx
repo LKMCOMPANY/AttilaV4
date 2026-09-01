@@ -6,8 +6,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn, countryCodeToFlag } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
-import { Loader2, Clock, Eye } from "lucide-react";
+import { Loader2, Clock, Eye, TriangleAlert, ZapOff } from "lucide-react";
 import { PLATFORM_LIST, STATUS_CONFIG } from "@/lib/constants/avatar";
+import { actionableBootHealth, BOOT_HEALTH_COPY } from "@/lib/devices/boot-health";
 import {
   worstAvatarVerdict,
   isAlarmingKind,
@@ -17,7 +18,7 @@ import { SocialIcon } from "@/components/icons/social-icons";
 import { AccountHealthDot } from "@/components/shared/account-health-badge";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { OperatorPresence } from "@/hooks/use-realtime-account";
-import type { AvatarPlatformBlock, AvatarWithRelations } from "@/types";
+import type { AvatarPlatformBlock, AvatarWithRelations, DeviceBootHealth } from "@/types";
 
 interface AvatarListItemProps {
   avatar: AvatarWithRelations;
@@ -44,6 +45,11 @@ export function AvatarListItem({
     (p) => avatar[p.enabledKey]
   );
   const deviceState = avatar.device?.state ?? null;
+  // A container that does not boot is worse news than whatever lifecycle state
+  // VMOS reports for it — `running` on a device where Android never came up is
+  // exactly the trap this replaces — so the boot verdict takes the slot when
+  // there is one worth showing.
+  const bootVerdict = avatar.device ? actionableBootHealth(avatar.device) : null;
   // Only an account that needs a look (critical / watch) is worth a list
   // indicator; a healthy or unchecked account stays visually quiet. An active
   // guardrail block outranks the time-windowed signals, so the dot stays
@@ -51,7 +57,9 @@ export function AvatarListItem({
   const worstVerdict = worstAvatarVerdict(avatar.platform_health, healthSignals, blocks);
   const alarmingVerdict =
     worstVerdict && isAlarmingKind(worstVerdict.kind) ? worstVerdict : null;
-  const hasIndicators = !!(automatorInfo || operators?.length || deviceState || alarmingVerdict);
+  const hasIndicators = !!(
+    automatorInfo || operators?.length || deviceState || alarmingVerdict || bootVerdict
+  );
 
   return (
     <button
@@ -154,7 +162,11 @@ export function AvatarListItem({
             {alarmingVerdict && (
               <AccountHealthDot kind={alarmingVerdict.kind} health={alarmingVerdict.health} />
             )}
-            {deviceState && <DeviceStateDot state={deviceState} />}
+            {bootVerdict ? (
+              <BootHealthDot verdict={bootVerdict} />
+            ) : (
+              deviceState && <DeviceStateDot state={deviceState} />
+            )}
             {operators && operators.length > 0 && (
               <OperatorBadge operators={operators} />
             )}
@@ -167,8 +179,38 @@ export function AvatarListItem({
 }
 
 // ---------------------------------------------------------------------------
-// Device state dot
+// Device signals
 // ---------------------------------------------------------------------------
+
+/**
+ * Shown in place of the state dot when the last boot probe found a fault, so
+ * an operator does not spend thirty seconds opening a device that was never
+ * going to show them anything.
+ */
+function BootHealthDot({ verdict }: { verdict: DeviceBootHealth }) {
+  const { label, explanation } = BOOT_HEALTH_COPY[verdict];
+  const isDead = verdict === "dead";
+  return (
+    <div
+      className="flex items-center gap-1"
+      title={`${label} — ${explanation}`}
+    >
+      {isDead ? (
+        <ZapOff className="h-2.5 w-2.5 text-destructive" aria-hidden />
+      ) : (
+        <TriangleAlert className="h-2.5 w-2.5 text-warning" aria-hidden />
+      )}
+      <span
+        className={cn(
+          "text-[9px] tabular-nums",
+          isDead ? "text-destructive" : "text-warning",
+        )}
+      >
+        {label}
+      </span>
+    </div>
+  );
+}
 
 function DeviceStateDot({ state }: { state: string }) {
   const isRunning = state === "running";

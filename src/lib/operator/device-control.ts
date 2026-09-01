@@ -207,6 +207,65 @@ const SCRCPY_AUDIO_CMD = [
   "> /dev/null 2>&1 &",
 ].join(" ");
 
+// ---------------------------------------------------------------------------
+// Reloading the screen-projection service
+// ---------------------------------------------------------------------------
+
+/**
+ * `scd` is an Android init service, so init restarts it — the same mechanism
+ * the platform uses for any of its own services. `refreshScreenService` on the
+ * Container API is NOT this: it uploads a new scd binary.
+ *
+ * Measured on box-5: a new scrcpy process and a passing `/stream-ready`
+ * handshake **two seconds** later, against 30-90 s for a container restart plus
+ * a full Android boot. So when the box reports `projection_dead` — Android
+ * answers, scrcpy does not — this is the remedy, and restarting the container
+ * is the heavy fallback.
+ */
+const RELOAD_PROJECTION_CMD = "setprop ctl.restart scd";
+
+/** How long to wait for the reloaded service to accept a connection again. */
+const PROJECTION_RELOAD_TIMEOUT_MS = 15_000;
+const PROJECTION_RELOAD_POLL_MS = 500;
+
+/**
+ * Reload the projection service and confirm it is listening again.
+ *
+ * Verified from the UI tree of the device itself (the scrcpy video port
+ * accepting), never optimistically: a remedy that reports success without
+ * proof is worse than no remedy, because the operator stops looking.
+ */
+export async function reloadProjectionCore(
+  ctx: RequestSession,
+  deviceId: string,
+): Promise<{ error: string | null }> {
+  try {
+    const { dbId, tunnelHostname } = await resolveDeviceAccess(ctx, deviceId);
+
+    await shell(tunnelHostname, dbId, RELOAD_PROJECTION_CMD);
+
+    const deadline = Date.now() + PROJECTION_RELOAD_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const probe = await shellSafe(
+        tunnelHostname,
+        dbId,
+        "netstat -tlnp 2>/dev/null | grep ':9999 ' | grep -q LISTEN && echo UP || echo DOWN",
+      );
+      if (probe?.message.includes("UP")) {
+        return { error: null };
+      }
+      await new Promise((resolve) => setTimeout(resolve, PROJECTION_RELOAD_POLL_MS));
+    }
+
+    return {
+      error:
+        "The projection service did not come back — restart the device instead.",
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Unknown error" };
+  }
+}
+
 export async function enableAudioCore(
   ctx: RequestSession,
   deviceId: string,

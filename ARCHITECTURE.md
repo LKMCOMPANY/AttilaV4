@@ -674,6 +674,24 @@ par box et en total. Le runbook complet est dans
 > pourquoi les autres ne le sont pas. Le branchement sur le sélecteur est la
 > suite naturelle, à faire avec les tests qui vont avec.
 
+### `boot_health` côté opérateur
+
+Mesurer sans montrer ne sert à rien : un opérateur qui clique sur un des dix
+devices `dead` attend trente secondes un écran qui ne viendra jamais. Le verdict
+est donc rendu dans les deux clients, à la place du point d'état — un conteneur
+qui ne démarre pas est une plus mauvaise nouvelle que son état de cycle de vie,
+et `running` sur un device où Android n'est jamais monté est exactement le piège
+que ce badge remplace.
+
+Une seule règle de présentation, dupliquée nulle part :
+`actionableBootHealth()` (`src/lib/devices/boot-health.ts` et l'extension
+`Device` de `AttilaModels`). Elle se tait dans quatre cas — jamais sondé, sondé
+il y a plus de 14 jours, sain, ou verdict inconnu. Un badge qui crie au loup est
+un badge qu'on ignore, et c'est le device mort suivant qui passe inaperçu.
+
+La péremption n'est pas cosmétique : un conteneur en échec il y a un mois a très
+bien pu être réparé depuis par une passe de maintenance hôte.
+
 ---
 
 ## Modèle de données — Boxes et Devices

@@ -21,14 +21,9 @@
  *   node scripts/audit-device-packages.mjs --box box-3.attila.army
  */
 
-import { spawn } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { loadBoxSshPassword, runOverSsh } from "./lib/box-ssh.mjs";
 import { fetchDevicesWithBoxes, recordPackageAudit } from "./lib/fleet.mjs";
 
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SSH_TIMEOUT_MS = 300_000;
 
 // Packages we care about. ADBKeyboard is the hard requirement for any typing
 // (AGENTS.md rule 3); the social apps decide whether a device can run a job at all.
@@ -49,75 +44,6 @@ for D in /container_nswc_lv/EDGE*; do
   printf '%s\\t%s\\n' "$ID" "$pkgs"
 done
 `;
-
-function loadBoxSshPassword() {
-  const envFile = path.join(PROJECT_ROOT, "infra", "boxes", ".env");
-  if (fs.existsSync(envFile)) {
-    for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
-      const m = line.trim().match(/^BOX_SSH_PASSWORD=(.*)$/);
-      if (m) return m[1].replace(/^["']|["']$/g, "");
-    }
-  }
-  return process.env.BOX_SSH_PASSWORD ?? null;
-}
-
-/** `box-3.attila.army` → `ssh-box-3.attila.army` (manifest convention). */
-function sshHostFor(tunnelHostname) {
-  return `ssh-${tunnelHostname}`;
-}
-
-/**
- * Feed the audit script to a box's shell and collect its stdout.
- *
- * Uses `spawn` rather than `execFile`: the async `execFile` has no `input`
- * option (that is `execFileSync`), so `bash -s` would sit waiting on a stdin
- * that never closes until the timeout fired.
- */
-function runOverSsh(tunnelHostname, sshPassword, script) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      "sshpass",
-      [
-        "-e",
-        "ssh",
-        "-o", "ConnectTimeout=25",
-        "-o", "PreferredAuthentications=password",
-        "-o", "PubkeyAuthentication=no",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "LogLevel=ERROR",
-        "-o", "ProxyCommand=cloudflared access ssh --hostname %h",
-        `root@${sshHostFor(tunnelHostname)}`,
-        "bash -s",
-      ],
-      {
-        env: {
-          ...process.env,
-          SSHPASS: sshPassword,
-          TUNNEL_SERVICE_TOKEN_ID: process.env.CF_ACCESS_CLIENT_ID,
-          TUNNEL_SERVICE_TOKEN_SECRET: process.env.CF_ACCESS_CLIENT_SECRET,
-        },
-      },
-    );
-
-    let stdout = "";
-    let stderr = "";
-    const timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(new Error(`timed out after ${SSH_TIMEOUT_MS / 1000}s`));
-    }, SSH_TIMEOUT_MS);
-
-    child.stdout.on("data", (c) => { stdout += c; });
-    child.stderr.on("data", (c) => { stderr += c; });
-    child.on("error", (err) => { clearTimeout(timer); reject(err); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve(stdout);
-      else reject(new Error(`ssh exited ${code}: ${stderr.trim().slice(0, 200)}`));
-    });
-
-    child.stdin.end(script);
-  });
-}
 
 async function readBoxPackages(tunnelHostname, sshPassword) {
   const stdout = await runOverSsh(tunnelHostname, sshPassword, REMOTE_SCRIPT);

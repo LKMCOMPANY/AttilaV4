@@ -21,10 +21,12 @@ import {
   RefreshCw,
   Unlink,
   AlertTriangle,
+  ZapOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
+import { actionableBootHealth, BOOT_HEALTH_COPY } from "@/lib/devices/boot-health";
 import { Section, InfoRow } from "./device-info";
 import { ProxySection } from "./proxy-section";
 import { DeviceAssignDialog } from "./device-assign-dialog";
@@ -108,6 +110,9 @@ export function DeviceTab({ avatar, accountId, onUpdated }: DeviceTabProps) {
   };
 
   const isRemoved = device.state === "removed";
+  // Spell out a bad boot verdict where the operator decides what to do, rather
+  // than leaving them to infer it from a device that never wakes.
+  const bootVerdict = actionableBootHealth(device);
 
   return (
     <div className="space-y-5">
@@ -123,6 +128,41 @@ export function DeviceTab({ avatar, accountId, onUpdated }: DeviceTabProps) {
             <Button size="sm" className="mt-2 h-7 gap-1.5 text-[11px]" onClick={() => setAssignOpen(true)}>
               <RefreshCw className="h-3 w-3" /> Reassign device
             </Button>
+          </div>
+        </div>
+      )}
+
+      {/* The container is there but Android never comes up inside it — the
+          one fault a lifecycle state cannot express. */}
+      {bootVerdict && !isRemoved && (
+        <div
+          className={cn(
+            "flex items-start gap-2.5 rounded-lg border px-3 py-2.5",
+            bootVerdict === "dead"
+              ? "border-destructive/30 bg-destructive/5"
+              : "border-warning/30 bg-warning/5",
+          )}
+        >
+          {bootVerdict === "dead" ? (
+            <ZapOff className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          ) : (
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p
+              className={cn(
+                "text-[12px] font-medium",
+                bootVerdict === "dead" ? "text-destructive" : "text-warning",
+              )}
+            >
+              {BOOT_HEALTH_COPY[bootVerdict].label}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {BOOT_HEALTH_COPY[bootVerdict].explanation}
+              {device.boot_checked_at && (
+                <> · checked {formatDistanceToNow(new Date(device.boot_checked_at), { addSuffix: true })}</>
+              )}
+            </p>
           </div>
         </div>
       )}

@@ -50,7 +50,11 @@ is what bounds production. `check-drift.mjs` reports it per box.
 
 These columns are **observed, not enforced**: the pipeline's device selector is
 unchanged and nothing filters on `boot_health` yet. Wiring it in is a deliberate
-follow-up, with the tests that belong to it.
+follow-up, with the tests that belong to it. Operators do see it — the roster
+and the inspector render the verdict in place of the state dot on both clients
+— via one shared rule, `actionableBootHealth()`, which stays silent unless the
+verdict is bad *and* less than 14 days old. Don't add a second rule; a badge
+that cries wolf gets ignored, and the next dead device with it.
 
 Two measurement traps, both paid for the hard way:
 
@@ -63,6 +67,26 @@ Two measurement traps, both paid for the hard way:
   VMOS clears the enabled-IME list on every container restart, and
   `activateAdbKeyboard()` re-does `pm enable` + `ime enable` + `ime set` on
   every job. Only the APK being *installed* matters at rest.
+
+## Hard rules — screen projection
+
+1. **A dead projection does not need a container restart.** `scd` is an Android
+   init service, so `setprop ctl.restart scd` brings it back — measured at two
+   seconds against 30-90 s for a restart plus a full boot, and the operator's
+   session survives. That is what `projection_dead` from `/stream-ready` means
+   and what `POST /api/devices/{id}/stream/reload` does. Restarting the
+   container is the fallback, for when Android itself is gone.
+2. **`/refreshScreenService` on the Container API is not that.** Despite the
+   name it uploads a replacement scd binary. Don't reach for it to restart
+   anything.
+3. **Never write a guest `data.img` that is mounted.** The offline scripts
+   (`audit-device-packages.mjs`, `tune-scrcpy-offline.mjs`) reach into stopped
+   containers with `debugfs`, which is what makes fleet-wide work cost minutes
+   instead of hours. Both check `/proc/mounts` *and* `losetup -j` on the box
+   before touching an image, because VMOS reporting `stopped` is not proof the
+   loop device was released — observed in the wild on the first fleet run.
+4. **The scrcpy conf has one definition**, `scripts/lib/scrcpy.mjs`. The online
+   and offline writers differ in delivery only, never in content.
 
 ## Hard rules — automation code
 

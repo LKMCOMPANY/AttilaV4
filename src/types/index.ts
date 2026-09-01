@@ -6,6 +6,15 @@ export type BoxStatus = "online" | "offline";
 
 export type DeviceState = "running" | "stopped" | "creating" | "removed";
 
+/**
+ * Whether the container actually boots Android, as measured by a real probe.
+ *
+ * - `healthy` — came up within the deadline and stayed up.
+ * - `unstable` — came up, then dropped out; jobs may fail part-way.
+ * - `dead` — never reached `sys.boot_completed`; a black screen for operators.
+ */
+export type DeviceBootHealth = "healthy" | "unstable" | "dead";
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -82,6 +91,18 @@ export interface Device {
   serial: string | null;
 
   state: DeviceState;
+  /**
+   * Verdict of the last boot probe — `null` when never probed.
+   *
+   * Distinct from `state`, and the distinction is the point: VMOS reporting
+   * `running` only means the container process is up, not that Android came up
+   * inside it. This is `sys.boot_completed` polled to a deadline, so it is the
+   * signal that tells an operator whether clicking a device gives them
+   * anything.
+   */
+  boot_health: DeviceBootHealth | null;
+  /** When that verdict was reached — a stale one is aged out, not trusted. */
+  boot_checked_at: string | null;
   screen_state: string | null;
   foreground_app: string | null;
   country: string | null;

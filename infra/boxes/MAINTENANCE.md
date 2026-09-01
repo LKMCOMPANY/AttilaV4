@@ -180,17 +180,56 @@ So tuning is per device, survives restarts, and is undone by deleting the file.
 The defaults set no bit rate, no `max_fps` and no key-frame interval, and leave
 `log_level=verbose` writing to an unbounded `/data/local/tmp/scd.log`.
 
+Two scripts write that file; they share `scripts/lib/scrcpy.mjs` so they can
+never disagree about what it says.
+
 ```bash
-node scripts/tune-scrcpy.mjs --box box-5.attila.army            # every running device
+# Offline — the whole fleet, nothing booted. ~2 min for 450 devices.
+node scripts/tune-scrcpy-offline.mjs --dry-run
+node scripts/tune-scrcpy-offline.mjs
+
+# Online — the containers that are already up, which the offline pass skips.
+node scripts/tune-scrcpy.mjs --box box-5.attila.army
 node scripts/tune-scrcpy.mjs --box box-5.attila.army --revert
 ```
 
+The offline pass writes straight into the guest's data partition with
+`debugfs`: `data.img` **is** the guest's `/data`, so `/local/scd.conf` in the
+image is `/data/local/scd.conf` to Android. It costs no boots, where the online
+pass costs one per device and is capped at 10 running containers per box.
+
+> **The one rule.** ext4 must never be written underneath a mounted
+> filesystem. Every image is checked for a mount entry and a loop device on the
+> box before it is touched. This is not theoretical: on the first fleet-wide
+> run, one container that VMOS reported as `stopped` still had its image held
+> by a loop device, and the guard skipped it. Re-run later to catch those.
+
 The key setting is `video_codec_options=i-frame-interval=1`: one key frame per
 second, so a reconnect paints within a second instead of waiting out a long GOP.
+`log_level=info` is the other one that matters — the conf is appended *after*
+the defaults and the last value wins, so it overrides the stock
+`log_level=verbose` that filled box-1's disk.
 
-Killing the scrcpy process is safe — the box supervises it and brings it back
-within a few seconds. That is what the tuning script relies on to reload the
-conf, and what makes `projection_dead` recoverable without a container restart.
+### Reloading the projection service
+
+`scd` is an Android **init service** (a oneshot that spawns the daemon), so init
+restarts it:
+
+```sh
+setprop ctl.restart scd
+```
+
+Measured on box-5: a new scrcpy process and a passing `/stream-ready` handshake
+**two seconds** later, against 30-90 s for a container restart plus a full
+Android boot. This is what makes `projection_dead` cheap to recover from, and
+it is what `POST /api/devices/{id}/stream/reload` does.
+
+Note this is *not* the Container API's `/refreshScreenService`, whose name
+suggests otherwise: that one uploads a replacement scd binary.
+
+Killing the scrcpy process is also safe — the box supervises it and brings it
+back within a few seconds — but `ctl.restart` is deterministic and three times
+faster, so nothing needs to kill anything.
 
 ## 4. Diagnosing a stream that will not start
 

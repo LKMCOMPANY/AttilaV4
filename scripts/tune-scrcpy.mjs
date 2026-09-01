@@ -37,25 +37,12 @@ import {
   shell,
   sleep,
 } from "./lib/fleet.mjs";
-
-const CONF_PATH = "/data/local/scd.conf";
-const SCRCPY_MAIN_CLASS = "com.genymobile.scrcpy.Server";
-
-/**
- * Appended to scd.sh's defaults, in scrcpy's `key=value` form.
- *
- * `i-frame-interval=1` is the point of the exercise: one key frame per second
- * means a reconnect paints within a second instead of waiting out a default GOP.
- * The cost is bandwidth, which `video_bit_rate` then caps. `max_fps` matches the
- * panel (1080x2340 @ 30) so the encoder never spends bits on frames the device
- * cannot produce.
- */
-const TUNED_ARGS = [
-  "video_bit_rate=4000000",
-  "max_fps=30",
-  "video_codec_options=i-frame-interval=1",
-  "log_level=info",
-].join(" ");
+import {
+  CONF_PATH,
+  RESTART_PROJECTION_CMD,
+  SCRCPY_MAIN_CLASS,
+  TUNED_ARGS,
+} from "./lib/scrcpy.mjs";
 
 function parseArgs(argv) {
   const args = { box: null, device: null, revert: false, dryRun: false };
@@ -77,26 +64,39 @@ function parseArgs(argv) {
   return args;
 }
 
-/** Restart the projection service so the new conf takes effect. */
+/**
+ * Restart the projection service so the new conf takes effect.
+ *
+ * Asks init to do it — the platform's own mechanism for its own services —
+ * rather than killing the process and waiting on the box's supervisor to
+ * notice. Two seconds instead of six, and deterministic.
+ */
 async function restartProjection(boxHost, dbId) {
-  // scd.sh runs it as `app_process`, so match on the class, not the binary.
-  const found = await shell(
+  const before = await shell(
     boxHost,
     dbId,
     `ps -ef | grep ${SCRCPY_MAIN_CLASS} | grep -v grep | awk '{print $2}'`,
   );
-  const pid = found.message.trim().split(/\s+/)[0];
-  if (!pid) return { restarted: false, note: "no scrcpy process found" };
+  const oldPid = before.message.trim().split(/\s+/)[0] ?? "";
 
-  await shell(boxHost, dbId, `kill -9 ${pid}`);
-  // The box supervises scd and brings it straight back — verified on box-5.
-  await sleep(6000);
-  const after = await shell(
-    boxHost,
-    dbId,
-    `ps -ef | grep ${SCRCPY_MAIN_CLASS} | grep -v grep | head -1`,
-  );
-  return { restarted: after.message.includes(SCRCPY_MAIN_CLASS), args: after.message.trim() };
+  await shell(boxHost, dbId, RESTART_PROJECTION_CMD);
+
+  // Poll rather than sleep a fixed span: it is back in ~2 s, and waiting
+  // longer than that on 450 devices adds up to nothing useful.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await sleep(1000);
+    const after = await shell(
+      boxHost,
+      dbId,
+      `ps -ef | grep ${SCRCPY_MAIN_CLASS} | grep -v grep | head -1`,
+    );
+    const line = after.message.trim();
+    const pid = line.split(/\s+/)[1] ?? "";
+    if (line.includes(SCRCPY_MAIN_CLASS) && pid !== oldPid) {
+      return { restarted: true, args: line };
+    }
+  }
+  return { restarted: false, note: "projection did not come back" };
 }
 
 async function applyToDevice(boxHost, device, { revert, dryRun }) {

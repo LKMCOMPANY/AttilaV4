@@ -161,7 +161,6 @@ export class AudioPlayer {
   private feed(chunk: Uint8Array<ArrayBuffer>) {
     this.buffer = concat(this.buffer, chunk);
 
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       switch (this.parseState) {
         case ParseState.DeviceName: {

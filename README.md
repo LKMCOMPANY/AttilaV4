@@ -108,7 +108,13 @@ node scripts/audit-proxies.mjs --running-only --geo
 # only the devices that actually lack the APK are booted
 node scripts/install-adbkeyboard.mjs --missing-only --box box-3.attila.army
 
-# Tune the on-device scrcpy (short GOP, capped bitrate/fps, quieter log)
+# Tune the on-device scrcpy (short GOP, capped bitrate/fps, quieter log).
+# Offline writes into each stopped container's data.img — the whole fleet in
+# ~2 min with nothing booted. Skips any image still mounted.
+node scripts/tune-scrcpy-offline.mjs --dry-run
+node scripts/tune-scrcpy-offline.mjs
+
+# Online, for the containers already up (which the offline pass skips)
 node scripts/tune-scrcpy.mjs --box box-5.attila.army
 node scripts/tune-scrcpy.mjs --box box-5.attila.army --revert
 
