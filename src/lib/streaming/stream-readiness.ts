@@ -51,19 +51,18 @@ export const STREAM_READY_MESSAGES: Partial<Record<StreamReadyOutcome, StreamRea
 };
 
 /**
- * Map the box's `reason` to an outcome. Unknown or absent values keep polling:
- * a box on magicbox-proxy < 1.2.0 sends no reason at all, and failing a device
- * that is merely booting would be worse than waiting.
+ * Map the box's `reason` to a TERMINAL outcome, or null to keep polling.
+ *
+ * Only `projection_dead` qualifies. There the in-guest agent answered, so
+ * Android is provably up and scrcpy is provably not — waiting cannot fix it.
+ *
+ * `android_down` deliberately does NOT qualify: from the box, a device 20 s
+ * into a 40 s boot is indistinguishable from a dead one — both have a listed
+ * container, a silent agent and no handshake. Treating it as terminal made the
+ * client give up on devices that were merely starting.
  */
 function diagnose(reason: string | undefined): StreamReadyOutcome | null {
-  switch (reason) {
-    case "projection_dead":
-      return "projection-dead";
-    case "android_down":
-      return "android-down";
-    default:
-      return null;
-  }
+  return reason === "projection_dead" ? "projection-dead" : null;
 }
 
 const DEFAULT_INTERVAL_MS = 1000;

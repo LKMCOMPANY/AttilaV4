@@ -118,10 +118,13 @@ function probeAgent(dbId) {
  * `reason` tells the caller WHICH remedy applies instead of leaving it to guess:
  *
  *   ready            both alive — stream away
- *   projection_dead  Android answers, scrcpy does not → refresh the projection
- *                    service; restarting the whole container is overkill
- *   android_down     neither answers though the container is listed → the
- *                    container needs a restart (or it is still booting)
+ *   projection_dead  Android answers, scrcpy does not. A definite fault: the
+ *                    projection service needs restarting, and no amount of
+ *                    waiting will change it.
+ *   android_down     neither answers though the container is listed. AMBIGUOUS
+ *                    on purpose — a device 20 s into a 40 s boot looks exactly
+ *                    like a dead one from here. Callers must keep polling this
+ *                    one; only `projection_dead` is safe to treat as terminal.
  *   not_listed       no container / no port yet → stopped or very early boot
  *   resolve_failed   the VMOS API itself is unreachable
  *
