@@ -21,10 +21,14 @@ export type StreamReadyOutcome =
   | "timeout"
   | "aborted"
   | "unavailable"
-  /** Android answers but scrcpy does not — only a restart clears this. */
-  | "projection-dead"
-  /** Neither answers though a container is listed — Android itself is down. */
-  | "android-down";
+  /**
+   * Android answers but scrcpy does not — only a restart clears this, so it is
+   * the ONE box verdict worth reporting instead of polling through. The box's
+   * other failure reason, `android_down`, is deliberately not represented: it
+   * is what a booting device looks like, so it is polled like any other
+   * not-yet-ready state.
+   */
+  | "projection-dead";
 
 /**
  * Operator-facing wording for the outcomes that need an action.
@@ -43,10 +47,6 @@ export const STREAM_READY_MESSAGES: Partial<Record<StreamReadyOutcome, StreamRea
     label: "Projection dead — restart",
     detail:
       "Android is running but the screen-projection service died. Restarting the device brings the stream back.",
-  },
-  "android-down": {
-    label: "Android down — restart",
-    detail: "The container is up but Android is not responding. Restart the device.",
   },
 };
 
@@ -92,16 +92,17 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
  * - `unavailable`     : the probe endpoint is missing/erroring (box not yet
  *                       deployed) — caller should fall back to a direct connect.
  * - `projection-dead` : Android is up, the projection stack is not.
- * - `android-down`    : the container is listed but Android is not answering.
  *
  * On `timeout`/`unavailable` the caller may still attempt to connect; the
  * stream's own warm-up retry will cope. This keeps the gate strictly additive
  * and never regresses boxes that lack the probe.
  *
- * The two diagnosed faults return IMMEDIATELY instead of burning the remaining
+ * `projection-dead` returns IMMEDIATELY instead of burning the remaining
  * window: nothing about a dead projection stack heals by polling, and the
  * operator needs to be told to restart the device, not left watching a spinner
- * for two minutes. Requires magicbox-proxy ≥ 1.2.0.
+ * for two minutes. Every other not-ready answer — including the box's
+ * `android_down`, which is exactly what a booting device looks like — keeps
+ * polling until the deadline. Requires magicbox-proxy ≥ 1.2.0.
  */
 export async function waitForStreamReady(
   boxId: string,
