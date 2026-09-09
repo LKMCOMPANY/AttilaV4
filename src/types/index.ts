@@ -103,6 +103,14 @@ export interface Device {
   boot_health: DeviceBootHealth | null;
   /** When that verdict was reached — a stale one is aged out, not trusted. */
   boot_checked_at: string | null;
+  /**
+   * Control API v2 line the guest runs (`"1.1.1"` / `"1.1.3"`), read once from
+   * `base/version_info`. The lines differ in how the accessibility tree
+   * refreshes after a gesture (measured 9 September 2026), so the engine's
+   * reader picks its freshness strategy from this. `null` = never read.
+   */
+  agent_line: string | null;
+  agent_checked_at: string | null;
   screen_state: string | null;
   foreground_app: string | null;
   country: string | null;
@@ -603,4 +611,7 @@ export interface AnalystDecision {
   reason: string;
   suggested_avatar_count: number;
 }
+
+// Avatar-maintenance layer (attention queue, ledger, app versions, settings).
+export * from "./maintenance";
 
