@@ -27,7 +27,7 @@ import { gunzipSync } from "node:zlib";
 import { loadBoxSshPassword, runOverSsh } from "./lib/box-ssh.mjs";
 import { packagesFromAbx } from "./lib/abx.mjs";
 import { fetchDevicesWithBoxes, recordAppVersions, recordPackageAudit } from "./lib/fleet.mjs";
-import { WATCHED_PACKAGES, twitterWallStatus, versionNameFor } from "./lib/app-versions.mjs";
+import { WATCHED_PACKAGES, twitterWallStatus, versionNameFor } from "../src/lib/maintenance/app-versions.mjs";
 
 /** On the box: one line per container — `db_id<TAB>RUNNING` or `db_id<TAB><gzip+base64 of packages.xml>`. */
 const REMOTE_SCRIPT = `

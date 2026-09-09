@@ -1,3 +1,5 @@
+import type { MaintenanceProfile } from "./maintenance";
+
 export type UserRole = "admin" | "manager" | "operator";
 
 export type AccountStatus = "active" | "standby" | "archived";
@@ -192,6 +194,10 @@ export interface Avatar {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  /** Maintenance layer (migration 20260909200000): the switch, the maturation profile, day zero. */
+  maintenance_enabled: boolean;
+  maintenance_profile: MaintenanceProfile;
+  maintenance_day_zero: string | null;
 }
 
 export interface AvatarWithRelations extends Avatar {

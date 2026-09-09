@@ -181,3 +181,131 @@ export interface RuntimeSetting {
   updated_at: string;
   updated_by: string | null;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1 — the twin, the task queue, the profiles and the briefs
+// (migration 20260909200000)
+// ---------------------------------------------------------------------------
+
+/** What the device last showed for one account (`avatar_platform_state`). */
+export const ON_DEVICE_STATUSES = [
+  "unknown",
+  "logged_in",
+  "logged_out",
+  "challenge",
+  "suspended",
+  "app_missing",
+  "app_outdated",
+  "unreadable",
+] as const;
+export type OnDeviceStatus = (typeof ON_DEVICE_STATUSES)[number];
+
+export interface AvatarPlatformState {
+  avatar_id: string;
+  platform: SocialPlatform;
+  on_device_status: OnDeviceStatus;
+  last_screen_state: string | null;
+  probed_at: string | null;
+  last_session_at: string | null;
+  last_login_at: string | null;
+  followers_seen: number | null;
+  following_seen: number | null;
+  notes: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export const MAINTENANCE_TASK_KINDS = [
+  "probe",
+  "warmup",
+  "dismiss_dialogs",
+  "coherence",
+  "app_check",
+  "social_session",
+  "relogin",
+] as const;
+export type MaintenanceTaskKind = (typeof MAINTENANCE_TASK_KINDS)[number];
+
+export const MAINTENANCE_TASK_STATUSES = ["scheduled", "running", "done", "failed", "skipped", "cancelled"] as const;
+export type MaintenanceTaskStatus = (typeof MAINTENANCE_TASK_STATUSES)[number];
+
+export type MaintenanceTaskCreator = "scheduler" | "operator" | "attention_reprobe" | "system";
+
+/** One journaled step of a task; `proof_path` is a `maintenance-proofs` storage path. */
+export interface MaintenanceStep {
+  name: string;
+  at: string;
+  duration_ms: number;
+  outcome: "ok" | "skipped" | "failed";
+  screen_state?: string;
+  detail?: string;
+  proof_path?: string;
+}
+
+export interface MaintenanceTask {
+  id: string;
+  account_id: string;
+  avatar_id: string;
+  device_id: string | null;
+  platform: SocialPlatform | null;
+  kind: MaintenanceTaskKind;
+  status: MaintenanceTaskStatus;
+  priority: number;
+  scheduled_for: string;
+  params: Record<string, unknown>;
+  attempt: number;
+  created_by: MaintenanceTaskCreator;
+  attention_item_id: string | null;
+  worker_id: string | null;
+  claimed_at: string | null;
+  lease_until: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  outcome: string | null;
+  error_category: string | null;
+  error_message: string | null;
+  steps: MaintenanceStep[];
+  result: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Maturation profile of an avatar (`avatars.maintenance_profile`). */
+export const MAINTENANCE_PROFILES = ["new", "mature"] as const;
+export type MaintenanceProfile = (typeof MAINTENANCE_PROFILES)[number];
+
+/** `runtime_settings['maintenance.budgets']` — one entry per profile. */
+export interface MaintenanceBudget {
+  sessions_per_day: number;
+  /** [min, max] minutes of one passive session. */
+  session_minutes: [number, number];
+  likes_per_day: number;
+  follows_per_day: number;
+}
+export type MaintenanceBudgets = Record<MaintenanceProfile, MaintenanceBudget>;
+
+export interface ArmyBrief {
+  army_id: string;
+  objective: string;
+  cluster_keywords: string[];
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A contradiction between the persona and an objective, shown, never hidden. */
+export interface BriefContradiction {
+  between: string;
+  detail: string;
+}
+
+export interface AvatarBrief {
+  avatar_id: string;
+  effective_brief: string;
+  contradictions: BriefContradiction[];
+  sources: Record<string, unknown>;
+  compiled_at: string | null;
+  compiled_by: string | null;
+  created_at: string;
+  updated_at: string;
+}

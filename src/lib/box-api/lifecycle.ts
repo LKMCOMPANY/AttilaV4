@@ -15,6 +15,8 @@ const ROM_READY_POLL_MS = 1500;
 const ROM_READY_TIMEOUT_MS = 120_000; // covers container start + Android boot
 const BOOT_CONFIRM_RETRIES = 3;
 const BOOT_CONFIRM_INTERVAL_MS = 1000;
+/** A maintenance task due within this window keeps the container up rather than cold-starting it again. */
+const MAINTENANCE_LOOKAHEAD_MS = 10 * 60_000;
 
 /**
  * Ensure the container is running AND Android has finished booting.
@@ -101,14 +103,22 @@ export async function stopContainerIfIdle(
   supabase: ReturnType<typeof import("@/lib/supabase/admin").createAdminClient>,
 ): Promise<void> {
   const nowIso = new Date().toISOString();
-  const { count } = await supabase
-    .from("campaign_jobs")
-    .select("*", { count: "exact", head: true })
-    .eq("device_id", deviceId)
-    .or(`status.eq.executing,and(status.eq.ready,scheduled_at.lte.${nowIso})`);
+  const soonIso = new Date(Date.now() + MAINTENANCE_LOOKAHEAD_MS).toISOString();
+  const [{ count: jobs }, { count: tasks }] = await Promise.all([
+    supabase
+      .from("campaign_jobs")
+      .select("*", { count: "exact", head: true })
+      .eq("device_id", deviceId)
+      .or(`status.eq.executing,and(status.eq.ready,scheduled_at.lte.${nowIso})`),
+    supabase
+      .from("maintenance_tasks")
+      .select("*", { count: "exact", head: true })
+      .eq("device_id", deviceId)
+      .or(`status.eq.running,and(status.eq.scheduled,scheduled_for.lte.${soonIso})`),
+  ]);
 
-  if (count && count > 0) {
-    console.log(`[Container] ${dbId} kept running — ${count} due/executing job(s) on this device`);
+  if ((jobs ?? 0) > 0 || (tasks ?? 0) > 0) {
+    console.log(`[Container] ${dbId} kept running — ${jobs ?? 0} job(s), ${tasks ?? 0} maintenance task(s) due on this device`);
     return;
   }
 

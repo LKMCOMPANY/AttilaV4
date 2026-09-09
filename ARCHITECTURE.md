@@ -13,16 +13,27 @@
 > - Les automations s'exécutent dans le **web service** via
 >   [src/app/api/pipeline/execute/route.ts](src/app/api/pipeline/execute/route.ts),
 >   orchestré par les **worker loops de [server.mjs](server.mjs)** (process,
->   execute, gorgone-sweep, reconcile, reap, verify, account-health) — pas
+>   execute, gorgone-sweep, reconcile, reap, verify, account-health, et depuis
+>   le 9/09/2026 schedule + maintain pour la maintenance des avatars) — pas
 >   par un gateway sur la box.
 > - Toute connexion box passe par `https://{tunnel_hostname}` + CF-Access via
 >   [src/lib/box-api/](src/lib/box-api/index.ts) (Container API v1, shell v1,
 >   Control API v2) ; la box n'exécute que `cloudflared` + `magicbox-proxy`
 >   (voir [infra/boxes](infra/boxes)).
 > - Les flux X et TikTok tournent sur le **moteur** [src/lib/engine](src/lib/engine)
->   (arbre d'accessibilité v2, sélecteurs nommés, relecture positive) ; le
->   même moteur portera la maintenance des avatars (voir
->   [MAINTENANCE-AGENT.md](MAINTENANCE-AGENT.md)).
+>   (arbre d'accessibilité v2, sélecteurs nommés, relecture positive) ; la
+>   **maintenance des avatars** ([src/lib/maintenance](src/lib/maintenance),
+>   voir [MAINTENANCE-AGENT.md](MAINTENANCE-AGENT.md)) tourne sur le même
+>   moteur : le planificateur pur (`scheduler.ts`, jour local du persona,
+>   courbe de maturation, rampe de reprise) alimente `maintenance_tasks` ;
+>   `/api/maintenance/tick` réclame une tâche (RPC `claim_maintenance_task`,
+>   bail) et exécute la recette (`recipes/` : probe, warmup, app_check,
+>   coherence, social_session passive) dans une session device (arbitre de
+>   slots, priorité campagne, IME restaurée, journal de pas avec preuves dans
+>   le bucket privé `maintenance-proofs`). `runtime_settings.maintenance.mode`
+>   (observe / supervised / autonomous) et `maintenance.global_enabled`
+>   gouvernent ce qui s'exécute ; `avatars.maintenance_enabled` choisit la
+>   cohorte.
 > Les mentions de "gateway", "sync toutes les 30s" et
 > `src/infrastructure/magicbox/device-bridge.ts` ci-dessous sont périmées.
 

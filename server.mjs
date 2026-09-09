@@ -346,6 +346,9 @@ const REAP_INTERVAL_MS = parseInt(process.env.DEVICE_REAP_INTERVAL_MS || "120000
 const VERIFY_INTERVAL_MS = parseInt(process.env.PIPELINE_VERIFY_INTERVAL_MS || "60000", 10);
 const ACCOUNT_HEALTH_INTERVAL_MS = parseInt(process.env.ACCOUNT_HEALTH_INTERVAL_MS || "300000", 10);
 const RECONCILE_INTERVAL_MS = parseInt(process.env.DEVICE_RECONCILE_INTERVAL_MS || "180000", 10);
+const MAINTAIN_CONCURRENCY = parseInt(process.env.MAINTENANCE_TICK_CONCURRENCY || "2", 10);
+const MAINTAIN_IDLE_MS = parseInt(process.env.MAINTENANCE_IDLE_MS || "15000", 10);
+const SCHEDULE_INTERVAL_MS = parseInt(process.env.MAINTENANCE_SCHEDULE_INTERVAL_MS || "1800000", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function workerLoop(name, port, path, opts = {}) {
@@ -440,4 +443,19 @@ function startPipelineWorkers(port) {
     fixedIntervalMs: ACCOUNT_HEALTH_INTERVAL_MS,
   });
   console.log(`> Account health worker: every ${ACCOUNT_HEALTH_INTERVAL_MS}ms`);
+
+  // Avatar maintenance ("opérateur IA"). Schedule plans each avatar's day in
+  // its persona's local time and queues the probes that verify a human's
+  // "done"; Maintain claims one due task per beat (lease + FOR UPDATE SKIP
+  // LOCKED) and runs it on the engine — probes, checks, passive sessions —
+  // yielding to campaign jobs at the box slot arbiter. Both answer `idle`
+  // while `runtime_settings.maintenance.global_enabled` is false.
+  workerLoop("Schedule", port, "/api/maintenance/schedule", {
+    fixedIntervalMs: SCHEDULE_INTERVAL_MS,
+  });
+  console.log(`> Maintenance schedule worker: every ${SCHEDULE_INTERVAL_MS}ms`);
+  for (let i = 0; i < MAINTAIN_CONCURRENCY; i++) {
+    workerLoop(`Maintain-${i}`, port, "/api/maintenance/tick", { idleMs: MAINTAIN_IDLE_MS });
+  }
+  console.log(`> Maintain workers: ${MAINTAIN_CONCURRENCY} (idle ${MAINTAIN_IDLE_MS}ms)`);
 }

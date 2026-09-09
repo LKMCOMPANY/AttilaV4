@@ -98,6 +98,12 @@ node scripts/audit-device-packages.mjs
 node scripts/audit-app-versions.mjs --dry-run
 node scripts/audit-app-versions.mjs --box box-2.attila.army
 
+# Avatar maintenance (phase 1). Switch it on per avatar (Maintenance tab) and
+# globally (`runtime_settings.maintenance.global_enabled`); the mode
+# (`maintenance.mode`: observe → supervised → autonomous) decides whether
+# sessions gesture. Worker knobs: MAINTENANCE_TICK_CONCURRENCY (2),
+# MAINTENANCE_IDLE_MS (15000), MAINTENANCE_SCHEDULE_INTERVAL_MS (1800000).
+
 # Does it actually boot? `state: running` does not mean Android came up.
 node scripts/audit-device-health.mjs --box box-1.attila.army
 node scripts/audit-device-health.mjs --box box-1.attila.army --recheck --concurrency 1
