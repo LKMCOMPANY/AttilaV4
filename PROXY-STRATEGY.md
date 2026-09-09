@@ -85,9 +85,35 @@ latency probe can see.
 > returned 82.26.244.28, Paris, Orange — matching its `Europe/Paris` timezone
 > and `fr` SIM.
 
-Two upstream providers are live today, contrary to what this document used to
-imply: **Oxylabs** (`disp.oxylabs.io`, sticky port per device) on the European
-devices, and **NodeMaven** (`gate.nodemaven.com:1080`) on the US ones.
+Two upstream providers are live today. The split is **per box**, not per
+region (DB `devices.proxy_host`, 9 September 2026):
+
+| Box | NodeMaven `gate.nodemaven.com` | Oxylabs `disp.oxylabs.io` | none recorded |
+|---|---:|---:|---:|
+| box-1 | 82 | 10 | 4 |
+| box-2 | 55 | 1 | 1 |
+| box-3 | 0 | 14 | **112** |
+| box-4 | 65 | 1 | 7 |
+| box-5 | 0 | 100 | 0 |
+
+NodeMaven accounts encode the exit in the username
+(`…-country-us-region-massachusetts-type-mobile-…-sid-US13-ttl-24h-…`): on
+box-2 and box-4 every device probed on 9 September had a `mobile` proxy whose
+country matched the device locale, and its measured exit IP matched too
+(`ip-api` from inside the guest). On **box-3** the DB has no proxy recorded for
+112 of 126 devices (columns never synced — `proxy_get` needs a running
+container), and the live probes were incoherent: 3 of 6 FR devices egressed
+through US IPs (Sacramento, Newark), and the **same** FR device egressed from
+Bastia on one boot and London on the next. Whatever box-3 runs is not pinned
+to the persona's country. Audit it with the devices running, then fix it,
+before any maintenance session touches those accounts.
+
+Persona ↔ device mismatches are a separate problem the proxy cannot fix: the
+three Emirati avatars probed on box-4 live on US devices (New York timezone,
+Connecticut/Massachusetts exits). The coherence check to automate is
+`avatars.country_code` ↔ device timezone/locale ↔ exit-IP country ↔ language
+of the notifications the apps receive, at every session, with an attention
+item when it fails.
 
 ## What is implemented vs recommended
 

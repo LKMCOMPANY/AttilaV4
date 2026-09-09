@@ -2,6 +2,9 @@
 
 > Reference for posting comments on TikTok through VMOS Android containers.
 > Coords validated 18 April 2026 — `box-1.attila.army`, AOSP 13, 1080×2340.
+> **Re-tested live on 9 September 2026 — see the section at the end: on
+> TikTok 44.8.3 the coordinate flow opened the camera instead of the
+> comments, while a selector-based replay posted and verified a comment.**
 
 ---
 
@@ -116,6 +119,12 @@ Note the composer phase runs with **no `uiautomator dump`** between focusing the
 field and the send tap — a dump collapses TikTok's composer and drops input
 focus (verified on box-1). All verification is deferred to after the submit.
 
+> **Measured 9 September 2026:** this side effect belongs to `uiautomator
+> dump`, not to the accessibility service itself. A Control API v2
+> `GET /accessibility/dump_compact` taken **while the composer holds typed
+> text** left the composer open with focus intact (screenshot-verified). Once
+> the read path moves to v2, the compose phase becomes observable.
+
 ---
 
 ## Error categories surfaced
@@ -169,3 +178,48 @@ npx tsx scripts/tiktok-reply.ts --calibrate --box <host> --device <db_id>
 # disable
 npx tsx scripts/tiktok-reply.ts --calibrate --off --box <host> --device <db_id>
 ```
+
+---
+
+## Live test — 9 September 2026 (what changed since July)
+
+Full record in `MAINTENANCE-AGENT.md` §2. Device US13 (`EDGEMK9EWI0B3EAJ`,
+box-2, TikTok 44.8.3, EN locale), target video @nba with 49 comments.
+
+### The coordinate flow failed, correctly
+
+`postTikTokComment` returned `[ui_unexpected] Could not confirm submission`
+after **99 s**, nothing posted (TikHub-verified). The three pre-compose
+`uiautomator dump` calls took **12 s each**. Then the "comment input bar" tap
+`(540, 2262)` landed on the **Create (+)** button of the bottom navigation —
+the comments sheet was not open at that moment — so the camera opened, the
+text was broadcast into a screen without a field, and the "submit" tap
+`(970, 1515)` hit the capture screen. The positive-signal verification held
+(no false `done`); the hard-coded coordinates did not survive a layout change.
+
+### Selector-based replay, one real comment posted and verified
+
+| Step | How | Measured |
+|---|---|---|
+| Read | `GET /android_api/v2/{db}/accessibility/dump_compact` | 0.5–1.2 s, 33 KB, 0 empty reads out of 10 on a stable feed |
+| Open comments | `accessibility/node` `{"xpath":"//*[contains(@content-desc,\"comments\")]"}` + `click` | matches "Read or add comments. 52 comments"; 90 ms on device |
+| Focus field | `accessibility/node` `{"resource_id":"com.zhiliaoapp.musically:id/e02"}` + `click` | `text` selector on "Add comment..." **misses** (exact match, ellipsis); resource id works |
+| Type | `activateAdbKeyboard()` + `typeText()` | unchanged hard rule |
+| Observe | `dump_compact` during compose | composer stays open, `EditText` shows the text |
+| Send | `accessibility/node` `{"resource_id":"com.zhiliaoapp.musically:id/cj9"}` + `click` | the send button's `content-desc` is an unresolved "@2131953937" — only the resource id is usable |
+| **Verify** | `dump_compact` | our text present as a `TextView` (`…:id/eim`), `EditText` empty, count 52 → 53 |
+| Off-device | TikHub `fetch_video_comments` | comment visible after ≈ 2 min |
+
+Resource ids are per-build (`e02`, `cj9`, `eim` on 44.8.3) and must live in a
+versioned per-app table, never in code constants; `content-desc` strings are
+locale-dependent (EN "Read or add comments", FR "Lire ou ajouter des
+commentaires", ES "Leer o añadir comentarios").
+
+### Dialogs met on 17 devices
+
+"Give TikTok access to your Facebook friends list and email?" (OK / Don’t
+allow), "Link email" (OK / Not now), the FR ads-consent sheet, and the
+logged-out account picker ("Welcome back", handle, "Log in", "Add another
+account"). Only the last two are known to the current detectors. While a
+dialog is up, `accessibility/dump` returns **only the dialog window** — the
+feed underneath is not in the tree, so classify the top window first.

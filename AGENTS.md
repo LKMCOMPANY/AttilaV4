@@ -31,6 +31,7 @@ Read these in order before touching anything in this repo.
 | `infra/boxes/MAINTENANCE.md` | **Anything about a box itself** — disk, boot health, device provisioning, scrcpy tuning, stream diagnosis, vendor upgrades, proxy hygiene |
 | `PROXY-STRATEGY.md` | Proxy assignment, testing, and the exit-IP geo check |
 | `VMOS-API-V2-EVALUATION.md` | The Android Control API v2 — measured agent versions, MCP, what to adopt and what not to |
+| `MAINTENANCE-AGENT.md` | **Read before touching any automation.** The 9 September 2026 study of avatar maintenance ("opérateur IA"): fleet and account measurements, live tests of the production flows (one false `done` reproduced), the selector-based path validated on X and TikTok, the screen-state taxonomy, decisions, target architecture, roadmap. Nothing in it is implemented yet. |
 
 ## What a device actually is
 
@@ -128,6 +129,34 @@ regress on them:
    with "Mark resolved" in the Overview panel. Never re-introduce tag-based
    (`blocked_*`) or ad-hoc gating — one table, one gate.
 
+## Hard rules — measured on 9 September 2026 (see `MAINTENANCE-AGENT.md`)
+
+These come from live tests of the production flows and of the Control API v2.
+They are constraints for any future automation work, including the campaign
+flows themselves:
+
+1. **Never trust "focus returned to the activity" as a success signal on X.**
+   It produced a `done` while the tweet had never loaded ("Cannot retrieve
+   posts at this time"). Success on X = our reply read back as a posted node
+   in the tree (or on the avatar's timeline via TikHub), exactly like TikTok.
+2. **Never tap a hard-coded coordinate to reach an element that the tree can
+   name.** On TikTok 44.8.3 the "comment bar" coordinate hit the Create button.
+   Use `accessibility/node` with `xpath contains()` / `@resource-id`; resource
+   ids are per app build and belong in a versioned table, not in constants.
+3. **Probe before acting.** TikHub account status (1 s) and a `dump_compact`
+   classification of the screen before any gesture; a `suspended`, a version
+   wall, a bouncer or "Cannot retrieve posts" means no job on that account.
+4. **v2 may be unreachable right after `run`** (host routes to a stale Docker
+   IP). Probe `base/version_info` with retries; fall back to
+   `curl 127.0.0.1:18185` through the v1 shell.
+5. **The VMOS API accepts an 11th container.** The 10-per-box ceiling and
+   serial boots (two starts at a time, at most) are enforced by our code only.
+6. **Selector text is a strict, case- and apostrophe-sensitive equality.**
+   Never build a selector from a string produced by a model or by a locale
+   without normalising through `contains()`.
+7. **Never log a raw `proxy_get` response** — it carries proxy passwords in
+   `nodes[]`.
+
 ## Hard rules — frontend
 
 1. **Tailwind v4 + shadcn/ui (base-nova).** Don't import unrelated UI libs.
@@ -187,7 +216,9 @@ node scripts/audit-adbkeyboard.mjs
 ```
 
 VMOS host limit: **10 containers running simultaneously max** per box.
-Always respect with `--concurrency` on bulk scripts.
+Always respect with `--concurrency` on bulk scripts — the API itself does not
+refuse an 11th start (measured 9 September 2026), and boots under contention
+take 35–90 s instead of 10–17 s.
 
 ## VMOS vendor documentation (authoritative)
 
@@ -205,7 +236,11 @@ npx skills add https://github.com/vmos-dev/vmos-edge-skills --skill vmos-edge-co
 ```
 
 Each box also serves the Container API as an **MCP server** at
-`https://box-N.attila.army/mcp/sse` (CF-Access headers required).
+`https://box-N.attila.army/mcp/sse` (CF-Access headers required; proprietary
+"mcp-sse 1.0" transport, 65 tools). Each **running device** serves the Control
+API v2 as an MCP server too, at
+`https://box-N.attila.army/android_api/v2/{db_id}/mcp/sse` (MCP 2024-11-05,
+20 tools including `system_shell` and `input_text`, no `accessibility_node`).
 `.cursor/mcp.json` points at box-5 — the tool *surface* is identical on every
 box, only the target differs, so one entry is enough for discovery.
 

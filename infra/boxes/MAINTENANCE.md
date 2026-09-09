@@ -275,6 +275,28 @@ The correlation is suggestive, not proven. Acting on it needs the vendor's
 kernel `.img` — no kernel image is retained on any box — and a maintenance
 window, since `update_kernel` reboots the host. **Not actionable without VMOS.**
 
+## 6 bis. Concurrency, the 10-container ceiling and the v2 agent — measured 9 September 2026
+
+Full record in `../../MAINTENANCE-AGENT.md` §2.5.
+
+- **The API does not enforce the ceiling.** With 10 containers running on
+  box-3, `POST /container_api/v1/run` accepted an 11th (state `starting`). It
+  stayed unstoppable until it reached `running` a minute later. The limit of
+  10 — and any lower operational limit — is ours to enforce in the scheduler.
+- **Boot times under contention (box-3, 16 GB):** serial 10–17 s; six
+  simultaneous starts 35–82 s; four more on top 69–89 s; at 10 running, CPU
+  100 % and RAM 12.1/15.9 GB. Consistent with the 24 s vs 93 s figures above.
+  Start at most two containers at a time per box.
+- **v2 agent route after a restart.** When a container restarts with a new
+  Docker IP the host may keep routing `/android_api/v2/{db_id}/…` to the old
+  one (`dial tcp 172.17.0.2:18185: no route to host` while the guest is on
+  `.3`) for minutes. The v1 shell and `curl http://127.0.0.1:18185/api/…`
+  from inside the guest work throughout. Probe `base/version_info` with
+  retries after every start; never assume v2 is up because Android is.
+- **Reconciliation drift seen the same day:** box-4 answered on its tunnel
+  with 18.8 h uptime while `boxes.status` said `offline`; one container ran on
+  box-2 with `devices.state = 'stopped'`. The reaper cannot see either.
+
 ## 6. Proxy hygiene
 
 ```bash

@@ -110,10 +110,12 @@ The X/TikTok flows encode hard-won, verified behavior (`AGENTS.md`,
   contract — the dump source changing from shell to `/accessibility/dump` is
   fine; the decision logic must not be loosened.
 - **TikTok composer**: a `uiautomator dump` collapses TikTok's composer, so the
-  compose phase runs with NO dump. `/accessibility/dump` is the same underlying
+  compose phase runs with NO dump. ~~`/accessibility/dump` is the same underlying
   AccessibilityService — assume it has the same side effect until proven
-  otherwise on a device. Do not enable dump-during-compose just because the
-  transport changed.
+  otherwise on a device.~~ **Proven otherwise on 9 September 2026**: a v2
+  `dump_compact` taken while the composer held typed text left it open with
+  focus intact (TikTok 44.8.3, box-2). The compose phase can be observed
+  through v2 — keep the shell-dump prohibition, drop it for v2.
 
 ## Recommended phased adoption
 
@@ -150,10 +152,62 @@ This is read-only, touches no flow, and is available on both agent versions.
 See `ARCHITECTURE.md` § "Sonde de disponibilité" and
 `infra/boxes/MAINTENANCE.md` § 4.
 
+## Measured on 9 September 2026 (30 devices, box-2/3/4, agents 1.1.1 and 1.1.3)
+
+Facts to design against — full record in `MAINTENANCE-AGENT.md` §2.5.
+
+**Selectors (`POST /accessibility/node`, body `{selector, wait_timeout, action}`).**
+`text` and `content_desc` are strict equalities (case- and
+apostrophe-sensitive: "Add comment..." with an ellipsis and "Don’t allow" with a
+typographic apostrophe both miss when typed with ASCII). `xpath` with
+`contains()` and `@resource-id` works and is the form to standardise on.
+`class_name` does not filter (71 nodes returned for `android.widget.EditText`).
+`resource_id` needs the `package:id/name` form — X's un-prefixed ids
+(`post-detail-reply-text-field`) are only reachable through xpath. A miss
+costs the whole `wait_timeout` (3.7 s through the tunnel for 3 000 ms). Latency
+of a hit: ~90 ms on the device, ~1.1 s through the tunnel from an office
+connection.
+
+**Reads.** `dump_compact` 0.5–1.2 s for a 33 KB feed tree, 0 empty reads out
+of 10 on a stable screen; the empty reads seen during sweeps happened during
+app launch or with a heads-up notification — re-read after 1 s before
+concluding. While a dialog is up the dump contains **only the dialog window**.
+
+**Availability after `run`.** Sometimes on the first probe, sometimes after
+~16 s, sometimes unreachable for minutes: the host keeps routing to the
+container's previous Docker IP (`dial tcp 172.17.0.2:18185: no route to host`
+while the guest sits on `.3`). The in-guest agent is fine — `curl
+http://127.0.0.1:18185/api/…` through the v1 shell works, and a gzip+base64
+`dump_compact` is ~2.5 KB, under the shell truncation. **Probe
+`base/version_info` with retries after every start and keep the in-guest
+fallback.**
+
+**Not available.** `POST /workflow` (inline actions, in the vendor's AI
+reference) is 404 on both 1.1.1 and 1.1.3; `workflow/execute` wants a named
+script and `script_list` is empty. No call batching for now.
+
+**MCP.** Per-device `…/android_api/v2/{db_id}/mcp/sse` answers as
+`vmos-edge-control-api 1.1.1`, MCP protocol **2024-11-05** (legacy SSE), 20
+tools including `input_text` and `system_shell`, without `accessibility_node`.
+The box `/mcp/sse` speaks a proprietary "mcp-sse 1.0" and pushes 65 tools.
+Both remain development tools.
+
+**Host.** The Container API accepts an 11th `run` on a box already running
+10 (it sits in `starting`, and `stop` refuses it until it reaches `running`).
+Six simultaneous starts on box-3 (16 GB) came up in 35–82 s against 10–17 s
+serially; four more took 69–89 s; at 10 running, CPU 100 %, RAM 12.1/15.9 GB,
+`dump_compact` still 0.5–0.65 s with one 4.3 s spike. The 10-container
+ceiling and serial boots are our responsibility, not VMOS's.
+
+**Embedded AI agent.** `ai_agent/config_get`: provider `dashscope`, empty
+model and base URL — unconfigured, and out of scope for production anyway.
+
 ## Net
 
 v2 is a real upgrade for the **read/inspect** and **navigation** paths and
 should be adopted incrementally, read-path first. It is **not** a reason to
-touch text entry or the success-verification contract, which are the parts that
-actually keep jobs honest. No automation flow has been changed; implementation
-is a follow-up once step 1–2 are validated on box-5.
+touch text entry, which stays on ADBKeyboard. The September tests showed the
+success-verification contract must move **towards** v2 on X (read the posted
+reply in the tree) because the focus gate produced a false `done`. No
+automation flow has been changed yet; the adoption plan is in
+`MAINTENANCE-AGENT.md` §5, phase 0.

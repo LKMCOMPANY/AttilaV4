@@ -2,6 +2,9 @@
 
 > Reference for posting replies on Twitter/X through VMOS Android containers.
 > Last validated: 18 April 2026 — `box-1.attila.army`, AOSP 13, 1080×2340.
+> **Re-tested live on 9 September 2026 — see the section at the end: the
+> focus-return success gate produced a false `done`, and the coordinate flow
+> is superseded by the selector-based path described there.**
 
 ---
 
@@ -158,3 +161,60 @@ Saves `screenshot_source_<ts>.jpg` and `screenshot_proof_<ts>.jpg`
 beside the script (gitignored). The CLI wrapper does **not** restore the
 IME — only the pipeline executor does. Restart the device or re-run the
 pipeline to bring Gboard back after a CLI test.
+
+---
+
+## Live test — 9 September 2026 (what changed since April)
+
+Full record in `MAINTENANCE-AGENT.md` §2. Two runs on box-2 / box-3 devices,
+production code unchanged.
+
+### The focus-return gate is a false-positive generator
+
+`postReply` on US24 (`EDGE5R3QHJ8G7MUS`, X 11.97.0) returned **SUCCESS** in
+37.8 s: focus came back to `TweetDetailActivity`. The PROOF screenshot shows
+**"Cannot retrieve posts at this time"** — the tweet never loaded, the text
+was typed into nothing, TikHub confirms zero replies on the account. No UI
+dump ran in that flow, so `detectBlockingState` never saw the
+`network_unavailable` marker it already knows. Three minutes later the app
+sent the account to `BouncerWebViewActivity` (Cloudflare "Performing security
+verification", never completing); TikHub then reported the account as
+**suspended**. Its state before the test is unknown — it had never been
+probed. **Rule: probe TikHub before acting, read the tree before typing, and
+accept success only on a positive signal (see below).**
+
+### Screen states met on 30 devices (versions 11.83 → 12.21)
+
+| State | Marker | Meaning |
+|---|---|---|
+| Version wall | "This app is out of date. Update now" / "Esta app está desactualizada" | Blocks everything; seen on **9 of 16** readable screens, all versions ≤ 12.5 |
+| Play Store sheet | top package `com.android.vending`, "Mise à jour disponible… Mettre à jour" | Soft update prompt (12.21.1), dismissable |
+| Payment state | "Failed to load payment state" · Close | Transient, dismissable |
+| Content unavailable | "Cannot retrieve posts at this time" | Restricted/suspended account or blocked exit IP — never type |
+| Bouncer | `com.twitter.bouncer.BouncerWebViewActivity`, "Performing security verification" | Challenge — operator escalation, never retried |
+| Slow load | black screen, spinner, only "Fermer" after 9 s | Wait and re-read |
+| Feed OK | "For you" / "Pour vous", "Following" / "Abonnements", "Home" / "Accueil" | Logged in |
+
+None of the first five are classified by the current detectors; the version
+wall and the bouncer are the two that matter most.
+
+### Selector-based reply, validated end to end (FR32, X 12.21.1, FR locale)
+
+Manual replay of the target flow with the Control API v2 — one real reply
+posted and confirmed:
+
+| Step | How | Note |
+|---|---|---|
+| Probe account | TikHub `fetch_user_profile` | `active` — never act on `suspended` |
+| Open tweet | `am start -a VIEW -d <url> com.twitter.android` | package qualifier as for TikTok |
+| Read | `GET /android_api/v2/{db}/accessibility/dump_compact` | 0.5–1.2 s; tree shows "Postez votre réponse", `EditText resource-id="post-detail-reply-text-field"` |
+| Focus field | `accessibility/node` with `{"xpath":"//*[@resource-id=\"post-detail-reply-text-field\"]"}` + `click` | X ids have **no package prefix**: the `resource_id` selector misses them, xpath works |
+| Type | `activateAdbKeyboard()` + `typeText()` | unchanged hard rule; the typed text is then readable in the focused `EditText` |
+| Submit | `accessibility/node` with `{"xpath":"//*[@text=\"Répondre\"]"}` + `click` | the reply **icon** carries the same word as `content-desc`; `@text` selects the button |
+| **Verify** | `dump_compact` again | our text present as a `TextView` (not `EditText`), authored "Kylian Moretti · 1s", field empty again |
+| Off-device | TikHub `fetch_user_tweet_replies` | reply visible **39 s** after posting |
+
+This is the positive-signal contract TikTok already has and X lacks:
+**success = our reply read back in the conversation tree**, not "the
+composer closed". Coordinates `(540, 2277)` / `(947, 2220)` are kept above
+for history only; they must not be reused.

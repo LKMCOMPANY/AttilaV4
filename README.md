@@ -131,6 +131,11 @@ spec including the mandatory `pm enable` step, and
 [`infra/boxes/MAINTENANCE.md`](infra/boxes/MAINTENANCE.md) for the box runbook
 — disk reclamation, the `starting` deadlock, vendor upgrades, stream diagnosis.
 
+Avatar maintenance (daily sessions, account health, screen-state probing) is
+**studied, not built**: [`MAINTENANCE-AGENT.md`](MAINTENANCE-AGENT.md) holds
+the 9 September 2026 measurements, live tests and decisions that any work on
+the automation flows must start from.
+
 ## For agents
 
 If you're an AI assistant being asked to modify this codebase, **read
