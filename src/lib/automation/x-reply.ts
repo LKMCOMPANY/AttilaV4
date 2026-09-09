@@ -1,51 +1,50 @@
 /**
- * Post a reply on X/Twitter via the native Android app.
+ * Post a reply on X through the native Android app — on the engine.
+ *
+ * The 18 April 2026 flow accepted a reply when the focus came back to
+ * `TweetDetailActivity`; on 9 September 2026 that produced a `done` while the
+ * post had never loaded ("Cannot retrieve posts at this time"). This flow
+ * reads the tree before every gesture, reaches elements by named selectors
+ * (X ids carry no package prefix: `post-detail-reply-text-field`), types
+ * through ADBKeyboard only, and calls success only when OUR reply is read
+ * back as a posted node in the conversation and the field is empty again.
+ * "Cannot verify" is a failure. TikHub's deferred pass stays the off-device
+ * arbiter (`verification` column).
  *
  * Pre-conditions enforced by the caller (`pipeline/executor`):
- *   - Container is fully booted (`ensureContainerReady`)
- *   - Original IME captured for restore in the surrounding try/finally
- *
- * Success contract:
- *   - SOURCE screenshot is captured once the tweet detail activity is on
- *     screen (proves we are looking at the right post).
- *   - PROOF screenshot is captured with the composer open and the typed
- *     comment visible (proves what is about to be sent).
- *   - The post is considered successful only when, after tapping the post
- *     button, focus returns to `TweetDetailActivity`. Any other state
- *     (composer still up, error toast, app crash) throws.
+ *   - container fully booted (`ensureContainerReady`)
+ *   - original IME captured for restore in the surrounding try/finally
  */
 
 import {
-  shell,
+  fetchControlApiVersion,
+  fetchPackageInfo,
+  fetchTimezoneLocale,
   screenshot,
+  shell,
+} from "@/lib/box-api";
+import { ensureRtlBaseDirection } from "@/lib/text/bidi";
+import { clickNode, clickTarget, pressBack, scrollFeed, typeIntoField } from "@/lib/engine/actor";
+import type { DeviceRef } from "@/lib/engine/device";
+import { readTree, readTreeAfterGesture } from "@/lib/engine/reader";
+import { editTexts, type CompactTree, type TreeNode } from "@/lib/engine/ui/compact-tree";
+import { classifyScreen, findSafeAffordance, SAFE_REACTION, type ScreenState } from "@/lib/engine/ui/screen-state";
+import type { SelectorContext } from "@/lib/engine/ui/selectors";
+import { postedTextNode, textStillInField } from "@/lib/engine/verifier";
+import {
+  androidDeepLink,
+  grantAppPermissions,
+  isPackageInstalled,
+  relaunchUntilFocus,
   sleep,
   wakeDevice,
-  isPackageInstalled,
-  grantAppPermissions,
-  activateAdbKeyboard,
-  typeText,
-  tap,
-  getCurrentFocus,
   waitForSystemReady,
-  relaunchUntilFocus,
-  androidDeepLink,
-  dumpUiXml,
-  parseUiNodes,
-  editTextContains,
-  findCommentEditText,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
-import { ensureRtlBaseDirection } from "@/lib/text/bidi";
 
 const X_PACKAGE = "com.twitter.android";
-const TWEET_DETAIL_FOCUS_HINT = "TweetDetailActivity";
-const COMPOSER_FOCUS_HINT = "ComposerActivity";
 
-/**
- * Pre-granted so X never raises a focus-stealing runtime permission dialog
- * (photos/camera/notifications) mid-reply. Best-effort — see
- * `grantAppPermissions`.
- */
+/** Pre-granted so no runtime-permission dialog steals focus mid-reply (best-effort). */
 const X_PERMISSIONS = [
   "android.permission.CAMERA",
   "android.permission.RECORD_AUDIO",
@@ -54,131 +53,19 @@ const X_PERMISSIONS = [
   "android.permission.READ_MEDIA_VIDEO",
 ] as const;
 
-/**
- * Blocking states detected from the UI tree right after the tweet loads.
- * Order matters: a "logged out" page also contains generic content, so we
- * check explicit auth markers first. Patterns kept short and multilingual
- * (FR/EN/ES seen in the wild on our avatar accounts).
- */
-const X_LOGGED_OUT_MARKERS = [
-  "Connecte-toi",
-  "Crée un compte",
-  "Sign in to X",
-  "Sign in to Twitter",
-  "Log in to X",
-  "Inicia sesión",
-  "LoginActivity",
-  "OnboardingActivity",
-  "SsoActivity",
-];
-
-const X_CONTENT_UNAVAILABLE_MARKERS = [
-  "This Post is unavailable",
-  "This Tweet is unavailable",
-  "Cette publication n'est pas disponible",
-  "Ce post n'est pas disponible",
-  "Ce Tweet n'est pas disponible",
-  "Hmm...this page doesn't exist",
-  "Cette page n'existe pas",
-  "Account suspended",
-  "compte a été suspendu",
-];
-
-// X's full-screen network-error state ("Something went wrong. Try reloading."
-// / « Un problème est survenu. Réessayez. »). Same failure mode as TikTok's
-// (see tiktok-reply): a dead device proxy or blocked exit IP — the app
-// foregrounds but no content loads, and job retries cannot help. Compound
-// match (error phrase + reload affordance) to avoid false positives.
-const X_NETWORK_ERROR_PHRASES = [
-  "Something went wrong",
-  "Un problème est survenu",
-  "Une erreur s'est produite",
-  "Algo salió mal",
-  "Etwas ist schiefgelaufen",
-];
-const X_NETWORK_RETRY_LABELS = [
-  "Try reloading",
-  "Try again",
-  "Retry",
-  "Réessayer",
-  "Reintentar",
-  "Erneut versuchen",
-];
-
-// X's tweet-detail content-error state has NO retry button (seen live 07/2026:
-// a job proof showed "Cannot retrieve posts at this time. Please try again
-// later." on a dead-proxy device — and the job was wrongly marked done). These
-// phrases never appear in a healthy thread, so they match standalone.
-const X_CONTENT_ERROR_MARKERS = [
-  "Cannot retrieve posts at this time",
-  "Impossible de récupérer les posts",
-  "Impossible de récupérer les Tweets",
-  "No se pueden recuperar las publicaciones",
-];
-
-function isNetworkErrorScreen(ui: string): boolean {
-  if (X_CONTENT_ERROR_MARKERS.some((m) => ui.includes(m))) return true;
-  return (
-    X_NETWORK_ERROR_PHRASES.some((m) => ui.includes(m)) &&
-    X_NETWORK_RETRY_LABELS.some((m) => ui.includes(m))
-  );
-}
-
-function detectBlockingState(ui: string): JobError | null {
-  if (X_LOGGED_OUT_MARKERS.some((m) => ui.includes(m))) {
-    return new JobError(
-      "account_logged_out",
-      "X session expired or no avatar logged in on this device — operator must sign in again",
-    );
-  }
-  if (isNetworkErrorScreen(ui)) {
-    return new JobError(
-      "network_unavailable",
-      "X cannot load any content on this device — its proxy is down or the exit IP is blocked; check/replace the device proxy",
-    );
-  }
-  if (X_CONTENT_UNAVAILABLE_MARKERS.some((m) => ui.includes(m))) {
-    return new JobError(
-      "content_unavailable",
-      "Tweet is deleted, private, suspended, or geo-blocked — skip this post",
-    );
-  }
-  return null;
-}
-
-const COORDS = {
-  // Reply field hint at the bottom of the tweet detail screen — opens
-  // either the inline composer (stays inside TweetDetailActivity) or
-  // the fullscreen ComposerActivity depending on the device/account.
-  replyField: { x: 540, y: 2277 },
-  // Active "Répondre/Reply" button when the composer renders inline as
-  // a fragment of TweetDetailActivity (bottom-right of the composer row).
-  postButtonInline: { x: 947, y: 2220 },
-  // Active "Répondre/Reply" button when the composer takes over the
-  // screen (ComposerActivity) — top-right of the screen.
-  postButtonFullscreen: { x: 947, y: 165 },
-} as const;
-
-// Timings tuned for a believable human pace AND to give VMOS' ~5 s
-// screenshot cache time to invalidate between source and proof shots.
-// `screenshot()` already retries on stale hashes; these durations make the
-// whole flow look natural even when the cache cooperates.
 const TIMING = {
   afterForceStop: 800,
-  systemReadyMs: 30_000,     // wait for launcher to own mCurrentFocus after boot
-  beforeSourceShot: 1800,    // simulate reading the tweet
-  afterImeSwitch: 800,       // field focus to settle after a reply-field tap
-  afterType: 2000,           // reread before sending
-  beforeSubmit: 1200,        // pause before the decisive tap
-  postSubmit: 4000,
-  focusOpenTimeoutMs: 15_000, // per deep-link attempt
-  launchAttempts: 3,          // re-fire the deep link up to 3× before failing
+  systemReadyMs: 30_000,
+  postSettle: 4_000,
+  launchAttempts: 3,
+  foregroundTimeoutMs: 15_000,
+  afterFieldFocus: 1_000,
+  afterType: 1_500,
+  beforeSubmit: 1_200,
+  afterSubmit: 3_000,
+  settleRounds: 6,
+  settleWaitMs: 1_500,
 } as const;
-
-// First iteration opens the composer, the next taps the field at its real
-// bounds and types; extra attempts absorb a slow-box lag where the EditText
-// isn't in the tree yet on the first dump.
-const COMPOSER_TYPE_ATTEMPTS = 4;
 
 export interface ReplyResult {
   success: boolean;
@@ -201,247 +88,240 @@ export async function postReply(
   const start = Date.now();
   xLog(dbId, "postReply START", { tweetUrl, textPreview: text.slice(0, 60) });
 
-  // Captured progressively so the catch can surface them as proofs even on
-  // partial flows (e.g. when the submit verification fails, we still want
-  // the source + proof shots for operator debugging).
   let source: Buffer = Buffer.alloc(0);
   let proof: Buffer = Buffer.alloc(0);
 
   try {
     if (!tweetUrl || !tweetUrl.trim()) {
-      throw new JobError(
-        "ui_unexpected",
-        "Empty tweet URL — pipeline produced a job without a deep link target",
-      );
+      throw new JobError("ui_unexpected", "Empty tweet URL — pipeline produced a job without a deep link target");
     }
-
     if (!(await isPackageInstalled(tunnelHostname, dbId, X_PACKAGE))) {
-      throw new JobError(
-        "device_setup_required",
-        `X app (${X_PACKAGE}) not installed on device`,
-      );
+      throw new JobError("device_setup_required", `X app (${X_PACKAGE}) not installed on device`);
     }
 
-    // Pre-grant so a runtime permission dialog never blocks the reply flow.
+    const { dev, ctx } = await prepareDevice(tunnelHostname, dbId);
     await grantAppPermissions(tunnelHostname, dbId, X_PACKAGE, X_PERMISSIONS);
-
     await wakeDevice(tunnelHostname, dbId);
-
-    // Wait for the window system to settle onto a real focused window before
-    // deep-linking — on a loaded host `boot_completed` fires while services
-    // are still starting and the launch gets swallowed (see tiktok-reply).
     await waitForSystemReady(tunnelHostname, dbId, TIMING.systemReadyMs);
 
-    // Force-stop X to guarantee a clean entry point — avoids inheriting a
-    // stale composer or an unrelated tweet from a prior interrupted job.
-    await shell(tunnelHostname, dbId, `am force-stop ${X_PACKAGE}`);
-    await sleep(TIMING.afterForceStop);
+    await openPost(dev, tweetUrl);
 
-    // Open the tweet via deep link and confirm the tweet-detail screen owns
-    // the focus, re-firing the (cheap) intent if a loaded box swallowed the
-    // first launch — cheaper than failing the job and cold-restarting (~120s).
-    // `androidDeepLink` canonicalises + quotes the url (drops any `?…` query
-    // that would split the shell command on `&`).
-    const deepLink = androidDeepLink(tweetUrl);
-    const opened = await relaunchUntilFocus(
-      tunnelHostname,
-      dbId,
-      deepLink,
-      TWEET_DETAIL_FOCUS_HINT,
-      {
-        attempts: TIMING.launchAttempts,
-        perAttemptMs: TIMING.focusOpenTimeoutMs,
-        onRetry: (n) => xLog(dbId, `tweet detail not open — re-firing deep link (attempt ${n + 1})`),
-      },
-    );
-    if (!opened) {
-      // Either the app is stuck on a login wall / error page, or the launch
-      // never took. Classify a blocker; otherwise fail retryable (pre-compose).
-      const ui = await dumpUiXml(tunnelHostname, dbId);
-      const blocker = ui ? detectBlockingState(ui) : null;
-      if (blocker) throw blocker;
-      throw new JobError(
-        "app_not_ready",
-        `Tweet detail did not open after ${TIMING.launchAttempts} deep-link attempts`,
-      );
-    }
-    await sleep(TIMING.beforeSourceShot); // give content a beat to render
-
-    // Detect blocking states (login wall, deleted post, suspended account)
-    // before we start interacting — better to fail fast with a clear cause.
-    const preUi = await dumpUiXml(tunnelHostname, dbId);
-    if (preUi) {
-      const blocker = detectBlockingState(preUi);
-      if (blocker) throw blocker;
-    }
-
-    xLog(dbId, "source screenshot");
+    // Gate 1 — the post detail is on screen, dialogs dismissed, no wall.
+    const detail = await settleOnPostDetail(dev);
     source = await screenshot(tunnelHostname, dbId);
 
-    // ADBKeyboard FIRST — before opening the composer. Swapping the IME AFTER
-    // the composer is open steals focus AND shifts the field down (measured on
-    // box-4: tweet_text goes focused=true@y~1400 → focused=false@y~2100 once
-    // the keyboard mounts), so a tap at the fixed reply-field coord then lands
-    // below the moved field and the text never arrives. With the IME already
-    // active, opening the composer focuses the field directly.
-    await activateAdbKeyboard(tunnelHostname, dbId);
-
-    // Open the composer + type, confirming the field holds focus before each
-    // broadcast. The X composer opens inline (TweetDetailActivity) or as the
-    // fullscreen ComposerActivity depending on device/account — both are fine.
-    if (!(await typeIntoComposer(tunnelHostname, dbId, text))) {
-      throw new JobError(
-        "app_not_ready",
-        "Typed text never landed in the X composer — IME or focus failure before submit",
-      );
-    }
-
-    // Detect inline vs fullscreen now that the composer is open — it decides
-    // which submit-button coord to tap.
-    const composerMode = await detectComposerMode(tunnelHostname, dbId);
-    xLog(dbId, "composer mode detected", { mode: composerMode });
-
-    xLog(dbId, "proof screenshot (composer ready)");
+    // Compose — focus the reply field, swap the IME, refocus, type. The inline
+    // composer is an in-window change: on the 1.1.3 line the tree only shows
+    // it after a kick (X's composer survives one, unlike TikTok's).
+    const field = await focusReplyField(dev, ctx, detail);
+    await typeIntoField(dev, field, ensureRtlBaseDirection(text));
+    await sleep(TIMING.afterType);
+    let composed = (await readTreeAfterGesture(dev, { previousHash: detail.hash, expectChange: true })).tree;
+    xLog(dbId, "typed", { visibleInField: textStillInField(composed, text) });
     proof = await screenshot(tunnelHostname, dbId);
     await sleep(TIMING.beforeSubmit);
 
-    // Submit using the coords for the current composer mode.
-    const submit = composerMode === "fullscreen"
-      ? COORDS.postButtonFullscreen
-      : COORDS.postButtonInline;
-    await shell(tunnelHostname, dbId, `input tap ${submit.x} ${submit.y}`);
-    await sleep(TIMING.postSubmit);
-
-    // Verify the send actually went through — two independent signals:
-    //   1. No EditText may still hold our text. If it does, the submit tap
-    //      did not fire (rate limit, disabled button, dead network). NOT
-    //      auto-retryable: X can park the reply in drafts/outbox and flush it
-    //      later, so a blind retry risks a double-post.
-    //   2. Focus must be back on the tweet detail without the composer.
-    // A posted reply shows as a TextView in the thread, never an EditText, so
-    // signal 1 cannot false-positive on success. TikHub's deferred sweep
-    // (`verification` column) remains the independent off-device arbiter.
-    const postXml = await dumpUiXml(tunnelHostname, dbId);
-    if (postXml && editTextContains(parseUiNodes(postXml), text)) {
-      throw new JobError(
-        "ui_unexpected",
-        "Submit tap did not send — the reply text is still in the composer (rate limit or dead network)",
-      );
+    // Submit through the button carrying the word (the reply ICON carries the
+    // same word as content-desc; the exact @text selector picks the button).
+    // When the inline button is not readable, the full composer is a window of
+    // its own — fresh tree on every agent line — and carries the typed text.
+    let submitted = await clickTarget(dev, composed, "x.reply_button", ctx);
+    if (!submitted.clicked) {
+      composed = await openFullComposer(dev, composed);
+      submitted = await clickTarget(dev, composed, "x.reply_button", ctx);
     }
-    const focus = await getCurrentFocus(tunnelHostname, dbId);
-    if (!focus.includes(TWEET_DETAIL_FOCUS_HINT) || focus.includes(COMPOSER_FOCUS_HINT)) {
-      throw new JobError(
-        "ui_unexpected",
-        `Post not submitted — focus did not return to tweet detail (mode=${composerMode}, current=${focus})`,
-      );
+    if (!submitted.clicked) {
+      throw new JobError("ui_unexpected", "Reply button not found with the composer open — nothing was sent");
     }
 
-    // Upgrade the proof from "composer with text" (pre-submit) to the thread
-    // AFTER the send, so the operator sees the actual posted state, not a shot
-    // that merely proves we typed. Best-effort — keep the composer shot if this
-    // capture fails.
+    // Verify — our reply read back as a posted node, the field empty again.
+    const verified = await verifyPosted(dev, text, composed.hash);
+    if (!verified.ok) throw verified.error;
+
     const postedShot = await screenshot(tunnelHostname, dbId).catch(() => Buffer.alloc(0));
     if (postedShot.length > 0) proof = postedShot;
 
     const durationMs = Date.now() - start;
-    xLog(dbId, "postReply SUCCESS", {
-      durationMs,
-      mode: composerMode,
-      sourceBytes: source.length,
-      proofBytes: proof.length,
-    });
+    xLog(dbId, "postReply SUCCESS", { durationMs, signal: verified.signal, sourceBytes: source.length, proofBytes: proof.length });
     return { success: true, source, proof, durationMs };
   } catch (err) {
     const error = encodeJobError(err);
     const durationMs = Date.now() - start;
-    // Honest failure evidence: replace the pre-submit composer shot with the
-    // actual end state (error page, stuck composer, blocker) so a failed job
-    // never shows a success-looking screenshot. Best-effort.
     const endState = await screenshot(tunnelHostname, dbId).catch(() => Buffer.alloc(0));
     if (endState.length > 0) proof = endState;
-    xLog(dbId, "postReply FAILED", {
-      error,
-      durationMs,
-      sourceBytes: source.length,
-      proofBytes: proof.length,
-    });
-    return {
-      success: false,
-      source,
-      proof,
-      error,
-      durationMs,
-    };
+    xLog(dbId, "postReply FAILED", { error, durationMs, sourceBytes: source.length, proofBytes: proof.length });
+    return { success: false, source, proof, error, durationMs };
   }
 }
 
-/**
- * Open the reply composer and type `text`, tapping the composer's EditText at
- * its REAL bounds (read from the UI tree) rather than a fixed coordinate.
- *
- * Root cause this fixes (proven live on box-1 AND box-4, latin AND arabic,
- * 07/2026): the reply field's Y position is not stable. The collapsed reply
- * bar sits at the very bottom, but once the composer opens and the keyboard
- * mounts the `tweet_text` EditText moves UP (measured to `[0,2031][1080,2157]`,
- * centre y≈2094). The old flow re-tapped a hardcoded `(540,2277)` — ~180px
- * below the moved field, landing on the toolbar/IME strip — so the broadcast
- * fired into an unfocused field and the text never landed (this is why 8/8 of
- * the earlier X "done" jobs were never actually published). Tapping the field's
- * own centre lands the text every time.
- *
- * Returns true once the composer holds our text; false if every attempt failed
- * (the caller fails the job as `app_not_ready` — nothing was sent).
- */
-async function typeIntoComposer(
+// ---------------------------------------------------------------------------
+// Steps
+// ---------------------------------------------------------------------------
+
+async function prepareDevice(
   tunnelHostname: string,
   dbId: string,
-  text: string,
-): Promise<boolean> {
-  // Force an RTL base direction for Arabic/RTL content so a leading @mention or
-  // Latin term can't flip the whole reply to left-to-right (see lib/text/bidi).
-  // Only the KEYSTROKES carry the zero-width mark; verification below still uses
-  // the clean `text` because the dumped UI tree is stripped of bidi marks.
-  const rtlText = ensureRtlBaseDirection(text);
-  for (let attempt = 0; attempt < COMPOSER_TYPE_ATTEMPTS; attempt++) {
-    const field = findCommentEditText(parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? ""));
-    if (!field?.bounds) {
-      // Composer not up yet — tap the collapsed reply bar to open it.
-      await shell(tunnelHostname, dbId, `input tap ${COORDS.replyField.x} ${COORDS.replyField.y}`);
-      await sleep(TIMING.afterImeSwitch);
+): Promise<{ dev: DeviceRef; ctx: SelectorContext }> {
+  const [version, packages, tz] = await Promise.all([
+    fetchControlApiVersion(tunnelHostname, dbId),
+    fetchPackageInfo(tunnelHostname, dbId, [X_PACKAGE]).catch(() => []),
+    fetchTimezoneLocale(tunnelHostname, dbId).catch(() => null),
+  ]);
+  const x = packages.find((p) => p.package_name === X_PACKAGE);
+  const dev: DeviceRef = { tunnelHostname, dbId, agentLine: version?.agentLine ?? null, locale: tz?.locale ?? null };
+  const ctx: SelectorContext = { versionCode: x?.version_code ?? null, locale: tz?.locale ?? null };
+  xLog(dbId, "device prepared", { agentLine: dev.agentLine, x: x?.version_name ?? null, locale: ctx.locale });
+  return { dev, ctx };
+}
+
+/** Cold-start on the post (canonical URL, package-qualified), re-firing a swallowed launch. */
+async function openPost(dev: DeviceRef, tweetUrl: string): Promise<void> {
+  await shell(dev.tunnelHostname, dev.dbId, `am force-stop ${X_PACKAGE}`);
+  await sleep(TIMING.afterForceStop);
+  const foregrounded = await relaunchUntilFocus(
+    dev.tunnelHostname,
+    dev.dbId,
+    androidDeepLink(tweetUrl, X_PACKAGE),
+    X_PACKAGE,
+    {
+      attempts: TIMING.launchAttempts,
+      perAttemptMs: TIMING.foregroundTimeoutMs,
+      onRetry: (n) => xLog(dev.dbId, `X not foreground — re-firing deep link (attempt ${n + 1})`),
+    },
+  );
+  if (!foregrounded) {
+    throw new JobError("app_not_ready", `X did not reach the foreground after ${TIMING.launchAttempts} deep-link attempts`);
+  }
+  await sleep(TIMING.postSettle);
+}
+
+/**
+ * Read, classify, react until the post detail is on screen. The version
+ * wall, the bouncer, "Cannot retrieve posts" and the logged-out landing stop
+ * the job with the category the operator needs; the Play Store sheet and the
+ * payment error are backed out of; a home feed means the deep link did not
+ * land (retryable, nothing typed).
+ */
+async function settleOnPostDetail(dev: DeviceRef): Promise<CompactTree> {
+  let lastState: ScreenState = "unknown";
+  let quietRounds = 0;
+  for (let round = 0; round < TIMING.settleRounds; round++) {
+    const { tree } = await readTree(dev);
+    const c = classifyScreen(tree, "twitter");
+    lastState = c.state;
+    xLog(dev.dbId, "screen", { state: c.state, evidence: c.evidence, round });
+    if (c.state === "post_detail") return tree;
+
+    const reaction = SAFE_REACTION[c.state];
+    if (reaction === "stop") throw stopError(c.state, c.evidence);
+    if (c.state === "feed_ok") {
+      throw new JobError("app_not_ready", "Deep link landed on the home feed, not the post — nothing typed, safe to retry");
+    }
+    if (reaction === "reread" || reaction === "vision") {
+      // A tree with no markers that does not change is not a slow load: X
+      // shows full-screen Premium upsells with almost no accessibility text
+      // (measured 9/09 on 12.21.1). One BACK clears them; log what we saw.
+      quietRounds++;
+      if (quietRounds >= 2) {
+        xLog(dev.dbId, "quiet screen — backing out", { nodes: tree.nodes.length, labels: labelsOf(tree) });
+        await pressBack(dev);
+        quietRounds = 0;
+      }
+      await sleep(TIMING.settleWaitMs);
       continue;
     }
-
-    // Tap the field's own centre to guarantee focus lands on it (a fixed coord
-    // misses it once the keyboard shifts the field up), then type.
-    const [x1, y1, x2, y2] = field.bounds;
-    await tap(tunnelHostname, dbId, { x: Math.round((x1 + x2) / 2), y: Math.round((y1 + y2) / 2) });
-    await sleep(TIMING.afterImeSwitch);
-
-    await typeText(tunnelHostname, dbId, rtlText);
-    await sleep(TIMING.afterType);
-
-    if (editTextContains(parseUiNodes((await dumpUiXml(tunnelHostname, dbId)) ?? ""), text)) {
-      return true;
+    quietRounds = 0;
+    const affordance = reaction === "proceed" || reaction === "back" ? null : findSafeAffordance(c.state, tree.nodes);
+    if (affordance) {
+      xLog(dev.dbId, "dismissing", { state: c.state, via: affordance.text || affordance.contentDesc });
+      await clickNode(dev, affordance);
+    } else {
+      await pressBack(dev);
     }
+    await sleep(TIMING.settleWaitMs);
   }
-  return false;
+  throw new JobError("ui_unexpected", `Screen never settled on the post detail (last state: ${lastState})`);
+}
+
+/** Texts and descriptions of a small tree, for the step log. */
+function labelsOf(tree: CompactTree): string[] {
+  return tree.nodes
+    .flatMap((n) => [n.text, n.contentDesc])
+    .filter((s) => s.length > 0)
+    .slice(0, 12);
+}
+
+function stopError(state: ScreenState, evidence: string): JobError {
+  switch (state) {
+    case "logged_out":
+      return new JobError("account_logged_out", `X session expired or no avatar logged in on this device (${evidence})`);
+    case "content_unavailable":
+      return new JobError("content_unavailable", `Post deleted, private, suspended or geo-blocked — skip (${evidence})`);
+    case "network_error":
+      return new JobError("network_unavailable", `X cannot load content on this device — proxy down or exit IP blocked (${evidence})`);
+    case "bouncer":
+      return new JobError("account_captcha", `Security verification on screen — operator escalation (${evidence})`);
+    case "version_wall":
+      return new JobError("device_setup_required", `X build refused by the platform — update the APK (${evidence})`);
+    default:
+      return new JobError("ui_unexpected", `Blocking screen ${state} (${evidence})`);
+  }
 }
 
 /**
- * Inspect the current window focus to decide which submit-button coords
- * to use. The X app sometimes opens a compact composer fragment inside
- * TweetDetailActivity, sometimes the full-screen ComposerActivity — the
- * positions of the active "Répondre" button differ between the two.
- *
- * Treats missing/empty focus as `inline` — that's the conservative choice
- * because the inline coord (947, 2220) overlaps the bottom action row in
- * fullscreen mode, while the fullscreen coord (947, 165) sits in the top
- * status area in inline mode (no-op tap).
+ * Focus the reply field and return the node to refocus before typing. The
+ * composer opens inline (the field grows in place) or as a full-screen
+ * activity; either way the focused EditText is the target.
  */
-async function detectComposerMode(
-  tunnelHostname: string,
-  dbId: string,
-): Promise<"inline" | "fullscreen"> {
-  const focus = await getCurrentFocus(tunnelHostname, dbId);
-  return focus.includes(COMPOSER_FOCUS_HINT) ? "fullscreen" : "inline";
+async function focusReplyField(dev: DeviceRef, ctx: SelectorContext, detail: CompactTree): Promise<TreeNode> {
+  const first = await clickTarget(dev, detail, "x.reply_field", ctx);
+  if (!first.clicked || !first.node) {
+    throw new JobError("app_not_ready", "Reply field not found on the post detail — nothing typed, safe to retry");
+  }
+  await sleep(TIMING.afterFieldFocus);
+  const after = await readTreeAfterGesture(dev, { previousHash: detail.hash, expectChange: true, noKick: true });
+  return editTexts(after.tree.nodes).find((n) => n.focused) ?? first.node;
+}
+
+const FULL_COMPOSER_DESC = ["open full composer", "ouvrir l'éditeur", "abrir el editor completo"];
+
+/**
+ * Expand the inline composer into the full-screen one (its own window, so
+ * the tree is fresh on every agent line); the typed text carries over.
+ */
+async function openFullComposer(dev: DeviceRef, current: CompactTree): Promise<CompactTree> {
+  const expand = current.nodes.find((n) => FULL_COMPOSER_DESC.some((d) => n.contentDesc.toLowerCase().includes(d)));
+  if (!expand) return current;
+  xLog(dev.dbId, "opening the full composer");
+  await clickNode(dev, expand);
+  await sleep(TIMING.afterFieldFocus);
+  return (await readTreeAfterGesture(dev, { previousHash: current.hash, expectChange: true })).tree;
+}
+
+/**
+ * Publication check: our text present as a non-input node (the reply signed
+ * with the avatar's name in the conversation) and no longer in any field.
+ * One scroll down covers a reply that landed below the fold.
+ */
+async function verifyPosted(
+  dev: DeviceRef,
+  text: string,
+  composedHash: string,
+): Promise<{ ok: true; signal: string } | { ok: false; error: JobError }> {
+  let read = await readTreeAfterGesture(dev, { previousHash: composedHash, expectChange: true, settleMs: TIMING.afterSubmit });
+  if (textStillInField(read.tree, text)) {
+    return { ok: false, error: new JobError("rate_limited", "Submit did not send — the reply text is still in the composer") };
+  }
+  if (postedTextNode(read.tree, text)) return { ok: true, signal: "posted_item" };
+
+  await scrollFeed(dev, read.tree, { distance: 0.35 });
+  read = await readTreeAfterGesture(dev, { previousHash: read.tree.hash, expectChange: true, settleMs: 1_200 });
+  if (postedTextNode(read.tree, text)) return { ok: true, signal: "posted_item_after_scroll" };
+  if (read.tree.nodes.length === 0) {
+    return { ok: false, error: new JobError("ui_unexpected", "Could not read the conversation after sending — publication unverifiable") };
+  }
+  return {
+    ok: false,
+    error: new JobError("ui_unexpected", "Composer closed but the reply was not read back in the conversation — unverified, not counted as posted"),
+  };
 }

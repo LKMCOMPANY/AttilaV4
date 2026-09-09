@@ -1,16 +1,17 @@
 /**
- * High-level Android helpers used by automation scripts (X, TikTok, …).
+ * Android-level helpers on the v1 shell (X, TikTok, the maintenance engine):
+ * power, packages, permissions, the ADBKeyboard IME lifecycle, window focus
+ * and deep links. Reading the screen is the engine's job (`src/lib/engine`,
+ * Control API v2) — there is no `uiautomator dump` here any more.
  *
- * Built on top of the shell primitives in `@/lib/box-api`. Helpers here:
+ * Helpers here:
  *   - assume the container has already passed `ensureContainerReady`
  *   - propagate `ContainerNotReadyError` if the device dies mid-flow
  *   - never silently ignore failures (use `shellSafe` for explicit cleanup)
  */
 
-import { gunzipSync } from "node:zlib";
 import { shell, shellSafe, ContainerNotReadyError } from "@/lib/box-api";
 import { JobError } from "./errors";
-import { parseUiNodes, type UiNode } from "./ui-tree";
 
 const ADBKEYBOARD_PACKAGE = "com.android.adbkeyboard";
 const ADBKEYBOARD_IME = "com.android.adbkeyboard/.AdbIME";
@@ -164,33 +165,6 @@ export async function grantAppPermissions(
   for (const permission of permissions) {
     await shellSafe(tunnelHostname, dbId, `pm grant ${packageName} ${permission}`);
   }
-}
-
-// ---------------------------------------------------------------------------
-// Foreground app gate
-// ---------------------------------------------------------------------------
-
-/** True when the target package currently owns the focused window. */
-export async function isForegroundApp(
-  tunnelHostname: string,
-  dbId: string,
-  packageName: string,
-): Promise<boolean> {
-  const focus = await getCurrentFocus(tunnelHostname, dbId).catch(() => "");
-  return focus.includes(packageName);
-}
-
-// ---------------------------------------------------------------------------
-// Tap helpers
-// ---------------------------------------------------------------------------
-
-/** Tap a screen coordinate. Thin wrapper for readability at call sites. */
-export async function tap(
-  tunnelHostname: string,
-  dbId: string,
-  point: { x: number; y: number },
-): Promise<void> {
-  await shell(tunnelHostname, dbId, `input tap ${Math.round(point.x)} ${Math.round(point.y)}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -435,98 +409,3 @@ export async function relaunchUntilFocus(
   }
   return false;
 }
-
-// ---------------------------------------------------------------------------
-// UI tree introspection — used by both Twitter and TikTok flows to detect
-// blocking states (login screen, content unavailable, captcha…).
-// ---------------------------------------------------------------------------
-
-const UI_DUMP_ATTEMPTS = 4;
-const UI_DUMP_RETRY_MS = 900;
-
-// The VMOS shell API truncates a command's stdout at ~4 KB (measured: 4120
-// bytes, hard cap regardless of `head -c`). A `uiautomator dump` of a rich
-// screen is 8–12 KB, so a plain `cat` returns a TRUNCATED tree — nodes past
-// the cut (e.g. X's `tweet_text` composer field, which sits low in the tree)
-// silently vanish. Every UI-tree check then reasons about a partial screen:
-// the X composer looked empty, blocker/verification scans missed late nodes.
-// gzip+base64 the dump on-device (an 11 KB tree compresses to ~2.4 KB of
-// base64, well under the cap) and inflate it here. This is THE fix for the
-// "typed text never landed" X failures and a class of silent TikTok misreads.
-const UI_DUMP_CMD =
-  "uiautomator dump --compressed /sdcard/ui.xml >/dev/null 2>&1; " +
-  "gzip -c /sdcard/ui.xml 2>/dev/null | base64 2>/dev/null | tr -d '\\n'";
-
-/** Inflate the gzip+base64 payload; returns null if it isn't a valid dump. */
-function decodeUiDump(payload: string): string | null {
-  const b64 = payload.trim();
-  if (!b64) return null;
-  try {
-    const xml = gunzipSync(Buffer.from(b64, "base64")).toString("utf8");
-    return xml.includes("<hierarchy") ? xml : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * `uiautomator dump --compressed` with bounded retry, retrieved WITHOUT
- * truncation (see `UI_DUMP_CMD`).
- *
- * uiautomator also refuses to dump while the window is animating or a video is
- * mid-frame ("could not get idle state"), so a single attempt frequently
- * returns nothing on TikTok — hence the bounded retry. A failed dump still
- * leaves the previous `/sdcard/ui.xml`, but we only accept a payload that
- * inflates to a real `<hierarchy>`.
- *
- * Returns the full XML, or `null` only when every attempt failed. Callers must
- * treat `null` as "could not verify" — for a success check that means FAILURE,
- * never an optimistic pass.
- */
-export async function dumpUiXml(
-  tunnelHostname: string,
-  dbId: string,
-  attempts = UI_DUMP_ATTEMPTS,
-): Promise<string | null> {
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    const result = await shellSafe(tunnelHostname, dbId, UI_DUMP_CMD);
-    if (result && result.code === 200) {
-      const xml = decodeUiDump(result.message);
-      if (xml) return xml;
-    }
-    if (attempt < attempts - 1) await sleep(UI_DUMP_RETRY_MS);
-  }
-  return null;
-}
-
-/**
- * Parsed variant of {@link dumpUiXml}. Returns the typed node list, or `null`
- * when the dump could not be captured. Preferred entry point for flows that
- * reason about on-screen elements (composer open, text landed, dialog present).
- */
-export async function dumpUiNodes(
-  tunnelHostname: string,
-  dbId: string,
-  attempts = UI_DUMP_ATTEMPTS,
-): Promise<UiNode[] | null> {
-  const xml = await dumpUiXml(tunnelHostname, dbId, attempts);
-  return xml ? parseUiNodes(xml) : null;
-}
-
-// ---------------------------------------------------------------------------
-// Re-exports — convenience for automation modules so they import from a
-// single place (every helper they need lives in `adb-helpers`).
-// ---------------------------------------------------------------------------
-
-export { shell, shellSafe, screenshot } from "@/lib/box-api";
-// Only the UI-tree helpers the platform modules actually consume are re-exported
-// here (so automation code has a single import surface). Pure/internal helpers
-// like nodeCenter / normalizedIncludes stay private to `ui-tree`.
-export {
-  parseUiNodes,
-  findCommentEditText,
-  editTextContains,
-  findInterstitialDismiss,
-  isCommentsPanelOpen,
-  countPostedMatches,
-} from "./ui-tree";
