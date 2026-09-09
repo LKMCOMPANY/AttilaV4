@@ -4,6 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import { Group, Panel } from "react-resizable-panels";
 import { ResizableHandle } from "@/components/ui/resizable";
 import { useRealtimeAccount } from "@/hooks/use-realtime-account";
+import { useAttentionQueue } from "@/hooks/use-attention-queue";
 import {
   getAvatarAutomatorStatuses,
   getDeviceStates,
@@ -13,6 +14,7 @@ import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import { getAvatarHealthSignals } from "@/app/actions/account-health";
 import { getActiveBlocks } from "@/app/actions/avatar-blocks";
 import { AvatarListPanel } from "./avatar-list-panel";
+import { AttentionPanel } from "./attention/attention-panel";
 import { DevicePanel } from "./device-panel";
 import { AvatarDetailPanel } from "./avatar-detail-panel";
 import { avatarNeedsAttention, type AvatarHealthSignals } from "@/lib/constants/account-health";
@@ -39,6 +41,8 @@ interface OperatorLayoutProps {
   deviceCount: number;
   displayName: string;
   canManage: boolean;
+  /** Managers and admins may resolve an attention item without a probe. */
+  canResolveAttention: boolean;
 }
 
 function stableSort(
@@ -60,10 +64,13 @@ export function OperatorLayout({
   deviceCount,
   displayName,
   canManage,
+  canResolveAttention,
 }: OperatorLayoutProps) {
   const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(
     avatars[0]?.id ?? null
   );
+  /** The left panel shows the roster or the attention queue (per-window lens). */
+  const [leftView, setLeftView] = useState<"avatars" | "attention">("avatars");
   const [sortField, setSortField] = useState<AvatarSortField>("last_used");
   const [filterArmyId, setFilterArmyId] = useState<string | null>(null);
   const [healthFilter, setHealthFilter] = useState(false);
@@ -83,10 +90,14 @@ export function OperatorLayout({
     [selectedAvatarId, displayName],
   );
 
-  const { jobsVersion, devicesVersion, presenceMap } = useRealtimeAccount({
+  const { jobsVersion, devicesVersion, attentionVersion, presenceMap } = useRealtimeAccount({
     accountId,
     presence: presenceState,
   });
+
+  // The attention queue: server-ordered, refetched on its own realtime tick,
+  // patched in place after a mutation (see the hook).
+  const attention = useAttentionQueue(accountId, attentionVersion);
 
   useEffect(() => {
     setLocalAvatars(avatars);
@@ -204,15 +215,20 @@ export function OperatorLayout({
     return [...map.entries()].map(([id, name]) => ({ id, name }));
   }, [avatarsWithLiveState]);
 
-  // Count of avatars with an active block or an alarming account signal —
-  // powers the "needs attention" filter toggle (hidden when the fleet is
-  // healthy).
+  // Count of avatars with an active block, an alarming account signal or an
+  // open attention item — powers the "needs attention" filter toggle (hidden
+  // when the fleet is healthy).
   const attentionCount = useMemo(
     () =>
       avatarsWithLiveState.filter((a) =>
-        avatarNeedsAttention(a.platform_health, healthSignals[a.id], blocksByAvatar[a.id]),
+        avatarNeedsAttention(
+          a.platform_health,
+          healthSignals[a.id],
+          blocksByAvatar[a.id],
+          attention.byAvatar[a.id]?.length ?? 0,
+        ),
       ).length,
-    [avatarsWithLiveState, healthSignals, blocksByAvatar],
+    [avatarsWithLiveState, healthSignals, blocksByAvatar, attention.byAvatar],
   );
 
   // Derived in render (React 19 idiom — no state-sync effect): a stale
@@ -229,7 +245,12 @@ export function OperatorLayout({
     }
     if (effectiveHealthFilter) {
       result = result.filter((a) =>
-        avatarNeedsAttention(a.platform_health, healthSignals[a.id], blocksByAvatar[a.id]),
+        avatarNeedsAttention(
+          a.platform_health,
+          healthSignals[a.id],
+          blocksByAvatar[a.id],
+          attention.byAvatar[a.id]?.length ?? 0,
+        ),
       );
     }
     const q = searchQuery.trim().toLowerCase();
@@ -242,7 +263,7 @@ export function OperatorLayout({
       });
     }
     return result;
-  }, [avatarsWithLiveState, filterArmyId, effectiveHealthFilter, healthSignals, blocksByAvatar, searchQuery]);
+  }, [avatarsWithLiveState, filterArmyId, effectiveHealthFilter, healthSignals, blocksByAvatar, attention.byAvatar, searchQuery]);
 
   const sortedAvatars = useMemo(() => {
     switch (sortField) {
@@ -282,6 +303,18 @@ export function OperatorLayout({
   return (
     <Group orientation="horizontal" defaultLayout={defaultLayout}>
       <Panel id="avatars" minSize="15%" maxSize="50%" style={panelStyle}>
+        {leftView === "attention" ? (
+          <AttentionPanel
+            queue={attention}
+            avatars={avatarsWithLiveState}
+            canResolve={canResolveAttention}
+            onBack={() => setLeftView("avatars")}
+            onSelectAvatar={(id) => {
+              handleSelectAvatar(id);
+              setLeftView("avatars");
+            }}
+          />
+        ) : (
         <AvatarListPanel
           avatars={sortedAvatars}
           selectedId={selectedAvatarId}
@@ -303,7 +336,11 @@ export function OperatorLayout({
           presenceMap={presenceMap}
           healthSignals={healthSignals}
           blocksByAvatar={blocksByAvatar}
+          attentionByAvatar={attention.byAvatar}
+          attentionQueueCount={attention.items.length}
+          onOpenAttentionQueue={() => setLeftView("attention")}
         />
+        )}
       </Panel>
 
       <ResizableHandle withHandle />

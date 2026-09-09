@@ -180,7 +180,14 @@ flows themselves:
    shape, `use-realtime-campaign.ts` the render-phase reset.
 4. **Realtime updates** go through `broadcastCampaignEvent` /
    `broadcastAccountEvent` from `src/lib/supabase/realtime`. The frontend
-   subscribes via `useCampaignChannel` / `useAccountChannel`.
+   subscribes via `useRealtimeCampaign` / `useRealtimeAccount` (`jobs`,
+   `devices`, `attention` + presence on the account channel).
+5. **Presentation vocabularies shared with the macOS client live in
+   `src/lib/presentation/*`**, one label and one semantic tone per wire value,
+   pinned to a JSON fixture under `__fixtures__/` that the Swift side copies
+   and tests too (`attention.ts` ↔ `AttentionPresentation.swift`). A component
+   never re-labels a wire value; the two cockpits change wording together or
+   not at all.
 
 ### Quality gates (web)
 

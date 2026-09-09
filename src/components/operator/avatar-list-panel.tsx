@@ -11,7 +11,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { UserPlus, Search, Radar, X, Archive, ShieldAlert } from "lucide-react";
+import { UserPlus, Search, Radar, X, Archive, ShieldAlert, BellRing } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AvatarListItem } from "./avatar-list-item";
 import { ArchivedAvatarsDialog } from "./archived-avatars-dialog";
@@ -19,7 +19,7 @@ import { CreateAvatarDialog } from "@/components/avatars/create-avatar-dialog";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { OperatorPresence } from "@/hooks/use-realtime-account";
 import type { AvatarHealthSignals } from "@/lib/constants/account-health";
-import type { AvatarPlatformBlock, AvatarWithRelations, Army } from "@/types";
+import type { AttentionQueueItem, AvatarPlatformBlock, AvatarWithRelations, Army } from "@/types";
 import type { AvatarSortField } from "./operator-layout";
 
 const SORT_OPTIONS: { value: AvatarSortField; label: string; short: string }[] = [
@@ -51,6 +51,11 @@ interface AvatarListPanelProps {
   presenceMap?: Record<string, OperatorPresence[]>;
   healthSignals?: Record<string, AvatarHealthSignals>;
   blocksByAvatar?: Record<string, AvatarPlatformBlock[]>;
+  /** Open attention items per avatar (account scope), server order. */
+  attentionByAvatar?: Record<string, AttentionQueueItem[]>;
+  /** Every open item of the workspace (all scopes) — the header count. */
+  attentionQueueCount: number;
+  onOpenAttentionQueue: () => void;
 }
 
 export function AvatarListPanel({
@@ -74,6 +79,9 @@ export function AvatarListPanel({
   presenceMap,
   healthSignals,
   blocksByAvatar,
+  attentionByAvatar,
+  attentionQueueCount,
+  onOpenAttentionQueue,
 }: AvatarListPanelProps) {
   const isSearching = searchQuery.trim().length > 0;
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -100,6 +108,32 @@ export function AvatarListPanel({
           </span>
         </h2>
         <div className="flex items-center gap-0.5">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onOpenAttentionQueue}
+                  aria-label="Open the attention queue"
+                  className={cn(
+                    "h-7 gap-1 px-1.5",
+                    attentionQueueCount > 0 ? "text-warning hover:text-warning" : "text-muted-foreground",
+                  )}
+                >
+                  <BellRing className="h-3.5 w-3.5" />
+                  {attentionQueueCount > 0 && (
+                    <span className="text-[11px] tabular-nums">{attentionQueueCount}</span>
+                  )}
+                </Button>
+              }
+            />
+            <TooltipContent side="bottom" className="text-xs">
+              {attentionQueueCount > 0
+                ? `Attention queue — ${attentionQueueCount} item${attentionQueueCount !== 1 ? "s" : ""} need a hand`
+                : "Attention queue — nothing needs a hand"}
+            </TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
@@ -179,7 +213,7 @@ export function AvatarListPanel({
           <button
             onClick={() => onHealthFilterChange(!healthFilter)}
             aria-pressed={healthFilter}
-            title={`${attentionCount} account${attentionCount !== 1 ? "s" : ""} suspended or not found`}
+            title={`${attentionCount} avatar${attentionCount !== 1 ? "s" : ""} with a block, an alarming account or an open attention item`}
             className={cn(
               "inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
               healthFilter
@@ -285,6 +319,7 @@ export function AvatarListPanel({
                   operators={presenceMap?.[avatar.id]}
                   healthSignals={healthSignals?.[avatar.id]}
                   blocks={blocksByAvatar?.[avatar.id]}
+                  attentionItems={attentionByAvatar?.[avatar.id]}
                 />
               ))}
             </div>

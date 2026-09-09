@@ -16,9 +16,10 @@ import {
 } from "@/lib/constants/account-health";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { AccountHealthDot } from "@/components/shared/account-health-badge";
+import { AttentionSignal } from "@/components/shared/attention-badge";
 import type { AvatarAutomatorInfo } from "@/app/actions/avatars";
 import type { OperatorPresence } from "@/hooks/use-realtime-account";
-import type { AvatarPlatformBlock, AvatarWithRelations, DeviceBootHealth } from "@/types";
+import type { AttentionQueueItem, AvatarPlatformBlock, AvatarWithRelations, DeviceBootHealth } from "@/types";
 
 interface AvatarListItemProps {
   avatar: AvatarWithRelations;
@@ -28,6 +29,8 @@ interface AvatarListItemProps {
   operators?: OperatorPresence[];
   healthSignals?: AvatarHealthSignals;
   blocks?: AvatarPlatformBlock[];
+  /** Open attention items about this avatar's accounts (server order). */
+  attentionItems?: AttentionQueueItem[];
 }
 
 export function AvatarListItem({
@@ -38,6 +41,7 @@ export function AvatarListItem({
   operators,
   healthSignals,
   blocks,
+  attentionItems,
 }: AvatarListItemProps) {
   const fullName = `${avatar.first_name} ${avatar.last_name}`;
   const flag = countryCodeToFlag(avatar.country_code);
@@ -57,8 +61,9 @@ export function AvatarListItem({
   const worstVerdict = worstAvatarVerdict(avatar.platform_health, healthSignals, blocks);
   const alarmingVerdict =
     worstVerdict && isAlarmingKind(worstVerdict.kind) ? worstVerdict : null;
+  const hasAttention = (attentionItems?.length ?? 0) > 0;
   const hasIndicators = !!(
-    automatorInfo || operators?.length || deviceState || alarmingVerdict || bootVerdict
+    automatorInfo || operators?.length || deviceState || alarmingVerdict || bootVerdict || hasAttention
   );
 
   return (
@@ -162,6 +167,7 @@ export function AvatarListItem({
             {alarmingVerdict && (
               <AccountHealthDot kind={alarmingVerdict.kind} health={alarmingVerdict.health} />
             )}
+            {hasAttention && attentionItems && <AttentionSignal items={attentionItems} />}
             {bootVerdict ? (
               <BootHealthDot verdict={bootVerdict} />
             ) : (

@@ -6,7 +6,8 @@ import type { RealtimeConnectionStatus } from "./use-realtime-campaign";
 
 /**
  * Subscribes to Supabase Realtime for an account:
- *   - Broadcast events: `jobs` (pipeline changes), `devices` (state changes)
+ *   - Broadcast events: `jobs` (pipeline changes), `devices` (state changes),
+ *     `attention` (an attention item opened, changed or resolved)
  *   - Presence: tracks which operator is viewing which avatar
  *
  * Channel: `account:<accountId>`
@@ -35,6 +36,7 @@ interface UseRealtimeAccountOptions {
 interface UseRealtimeAccountResult {
   jobsVersion: number;
   devicesVersion: number;
+  attentionVersion: number;
   presenceMap: Record<string, OperatorPresence[]>;
   status: RealtimeConnectionStatus;
 }
@@ -49,6 +51,7 @@ export function useRealtimeAccount({
 }: UseRealtimeAccountOptions): UseRealtimeAccountResult {
   const [jobsVersion, setJobsVersion] = useState(0);
   const [devicesVersion, setDevicesVersion] = useState(0);
+  const [attentionVersion, setAttentionVersion] = useState(0);
   const [presenceMap, setPresenceMap] = useState<Record<string, OperatorPresence[]>>({});
   const [status, setStatus] = useState<RealtimeConnectionStatus>("connecting");
 
@@ -64,6 +67,7 @@ export function useRealtimeAccount({
 
   const jobsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const devicesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attentionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
 
   // Stable serialized presence for dependency tracking
@@ -86,6 +90,12 @@ export function useRealtimeAccount({
         if (devicesTimerRef.current) clearTimeout(devicesTimerRef.current);
         devicesTimerRef.current = setTimeout(() => {
           setDevicesVersion((v) => v + 1);
+        }, DEBOUNCE_MS);
+      })
+      .on("broadcast", { event: "attention" }, () => {
+        if (attentionTimerRef.current) clearTimeout(attentionTimerRef.current);
+        attentionTimerRef.current = setTimeout(() => {
+          setAttentionVersion((v) => v + 1);
         }, DEBOUNCE_MS);
       })
       .on("presence", { event: "sync" }, () => {
@@ -128,6 +138,7 @@ export function useRealtimeAccount({
       channelRef.current = null;
       if (jobsTimerRef.current) clearTimeout(jobsTimerRef.current);
       if (devicesTimerRef.current) clearTimeout(devicesTimerRef.current);
+      if (attentionTimerRef.current) clearTimeout(attentionTimerRef.current);
       setStatus("disconnected");
     };
   }, [accountId]);
@@ -145,7 +156,7 @@ export function useRealtimeAccount({
   }, [presenceKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return useMemo(
-    () => ({ jobsVersion, devicesVersion, presenceMap, status }),
-    [jobsVersion, devicesVersion, presenceMap, status],
+    () => ({ jobsVersion, devicesVersion, attentionVersion, presenceMap, status }),
+    [jobsVersion, devicesVersion, attentionVersion, presenceMap, status],
   );
 }

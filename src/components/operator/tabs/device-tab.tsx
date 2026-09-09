@@ -29,6 +29,7 @@ import { formatDistanceToNow } from "date-fns";
 import { actionableBootHealth, BOOT_HEALTH_COPY } from "@/lib/devices/boot-health";
 import { Section, InfoRow } from "./device-info";
 import { ProxySection } from "./proxy-section";
+import { AppVersionsSection } from "./app-versions-section";
 import { DeviceAssignDialog } from "./device-assign-dialog";
 import { setAvatarDevice } from "@/app/actions/avatars";
 import type { DeviceProxyFields } from "@/app/actions/device-proxy";
@@ -215,6 +216,9 @@ export function DeviceTab({ avatar, accountId, onUpdated }: DeviceTabProps) {
         <InfoRow icon={Monitor} label="Screen" value={device.screen_state} />
         <InfoRow icon={Monitor} label="Foreground App" value={device.foreground_app} />
       </Section>
+
+      {/* Apps — TikTok / X / ADBKeyboard builds, online or off the stopped image */}
+      <AppVersionsSection key={`apps-${device.id}`} deviceId={device.id} />
 
       {/* Network */}
       <Section title="Network" icon={Globe}>

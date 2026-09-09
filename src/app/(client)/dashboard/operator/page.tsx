@@ -44,6 +44,9 @@ export default async function OperatorPage({
       deviceCount={deviceCount ?? 0}
       displayName={session.profile.display_name ?? session.profile.email}
       canManage={canManage}
+      // Same gate as `resolveAttentionCore`: managers and admins close items
+      // on their own authority; operators take them and mark them done.
+      canResolveAttention={canManage}
     />
   );
 }

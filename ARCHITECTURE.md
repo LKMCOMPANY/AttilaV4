@@ -948,6 +948,29 @@ CF-Access-Client-Secret: {service_token_secret}
 
 ## Flux opérateur
 
+### File d'attention (maintenance, phase 0 — 9 septembre 2026)
+
+```
+1. Le serveur ouvre un item (`attention_items`) : mainteneur, exécuteur,
+   worker santé, Reconcile — avec portée (avatar×plateforme, device, box),
+   raison, gravité, preuve, et diffuse `attention` sur `account:{id}`.
+2. Le client web lit `attention_queue_v` par la Server Action
+   `listAttentionItems` (`useAttentionQueue`, refetch sur le tick realtime)
+   — la priorité est calculée par la vue, jamais par le client.
+3. Panneau gauche de l'Operator : bouton « cloche » (compte des items) →
+   `AttentionPanel` (lens par portée, `AttentionItemCard`) ; un item de
+   compte vise l'avatar dans le panneau détail.
+4. Verbes : Take (`ack`), Mark done (`done` → `done_pending_reprobe`, une
+   sonde résout ou rouvre), Resolve (managers/admins, `resolve`, audité).
+   Les Server Actions et les routes `/api/attention/**` du Mac partagent les
+   cores `src/lib/operator/attention.ts`.
+5. Le roster : `avatarNeedsAttention()` intègre les items ouverts ; la ligne
+   porte `AttentionSignal` (pire raison, compte). Onglet Device › Apps :
+   `device_app_versions` (builds X / TikTok / ADBKeyboard).
+6. Vocabulaire (libellés, tons) : `src/lib/presentation/attention.ts`,
+   miroir exact du Mac, épinglé par fixture.
+```
+
 ### Streaming (contrôle manuel + audio)
 
 ```

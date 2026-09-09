@@ -308,12 +308,19 @@ export function worstAvatarVerdict(
   );
 }
 
-/** True when at least one platform needs a look (critical or watch). */
+/**
+ * True when the operator must look: at least one platform verdict is
+ * alarming (critical or watch), or the attention queue holds an open item
+ * about one of the avatar's accounts. Mirrored by `OperatorStore.needsAttention`
+ * in the macOS client.
+ */
 export function avatarNeedsAttention(
   platformHealth: AvatarPlatformHealth[] | undefined | null,
   signals: AvatarHealthSignals | undefined,
   blocks?: AvatarPlatformBlock[] | null,
+  openAttentionItems = 0,
 ): boolean {
+  if (openAttentionItems > 0) return true;
   const worst = worstAvatarVerdict(platformHealth, signals, blocks);
   return worst !== null && isAlarmingKind(worst.kind);
 }
