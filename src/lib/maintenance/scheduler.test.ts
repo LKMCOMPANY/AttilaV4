@@ -165,3 +165,18 @@ function dayZeroFor(day: number): string {
   const zero = new Date(Date.UTC(2026, 8, 9) - (day - 1) * 86_400_000);
   return zero.toISOString().slice(0, 10);
 }
+
+describe("re-login planning", () => {
+  it("a logged-out account gets one re-login inside the hours and no session", () => {
+    const plan = planDay(input({ onDeviceStatus: "logged_out", lastReloginAt: null, reloginCooldownHours: 24 }));
+    expect(plan.map((t) => t.kind)).toEqual(["relogin"]);
+    expect(plan[0].scheduledFor.getTime()).toBeGreaterThan(input().now.getTime());
+  });
+
+  it("respects the cooldown and the active hours", () => {
+    const recent = new Date("2026-09-09T02:00:00.000Z");
+    expect(planDay(input({ onDeviceStatus: "logged_out", lastReloginAt: recent, reloginCooldownHours: 24 }))).toEqual([]);
+    const night = input({ now: new Date("2026-09-09T00:00:00.000Z"), onDeviceStatus: "logged_out", lastReloginAt: null });
+    expect(planDay(night)).toEqual([]);
+  });
+});

@@ -1,0 +1,8 @@
+# Attila Email Worker — see worker.mjs.
+#   wrangler deploy
+#   wrangler secret put ATTILA_WEBHOOK_URL   # https://<dashboard>/api/maintenance/verification-codes
+#   wrangler secret put EMAIL_WORKER_SECRET  # same value as the Render env var EMAIL_WORKER_SECRET
+# Then route each avatar mail domain's catch-all to this worker (Email Routing).
+name = "attila-email-worker"
+main = "worker.mjs"
+compatibility_date = "2026-09-01"

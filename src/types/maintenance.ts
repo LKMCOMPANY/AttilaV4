@@ -39,7 +39,8 @@ export type AttentionSource = (typeof ATTENTION_SOURCES)[number];
  * suspended_decision, credentials_missing, account_missing, handle_invalid,
  * persona_device_mismatch. Device scope: app_outdated, app_missing,
  * adbkeyboard_missing, proxy_incoherent, timezone_incoherent, boot_dead,
- * dialog_unknown, container_untracked. Box scope: box_unreachable.
+ * dialog_unknown, container_untracked. Box scope: box_unreachable. Account
+ * scope, phase 2: email_code (a login code was sent and never arrived).
  */
 export const ATTENTION_REASONS = [
   "needs_login",
@@ -59,6 +60,7 @@ export const ATTENTION_REASONS = [
   "dialog_unknown",
   "container_untracked",
   "box_unreachable",
+  "email_code",
   "manual",
 ] as const;
 export type AttentionReason = (typeof ATTENTION_REASONS)[number];

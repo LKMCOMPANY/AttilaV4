@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { format, formatDistanceToNow } from "date-fns";
-import { CalendarClock, ChevronDown, ChevronRight, Image as ImageIcon, XCircle } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronRight, Hand, Image as ImageIcon, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TaskStatusBadge } from "@/components/shared/maintenance-badge";
 import { TASK_KIND_LABEL } from "@/lib/presentation/maintenance";
@@ -56,11 +56,16 @@ export function MaintenanceTaskList({ tasks, onCancel }: { tasks: MaintenanceTas
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                  title="Cancel"
+                  className="h-6 gap-1 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
+                  title={
+                    task.status === "running"
+                      ? "Interrupt the maintainer at its next step and take the device — the stream is in the middle panel"
+                      : "Cancel this planned task"
+                  }
                   onClick={() => void onCancel(task.id)}
                 >
-                  <XCircle className="h-3 w-3" />
+                  {task.status === "running" ? <Hand className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                  {task.status === "running" ? "Take over" : null}
                 </Button>
               )}
             </div>

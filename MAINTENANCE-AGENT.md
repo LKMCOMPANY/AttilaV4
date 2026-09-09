@@ -445,6 +445,20 @@ device » sur la règle unique `actionableOnDeviceStatus`. Quatre tâches réell
 ont tourné par le chemin de production (box-2, box-3, box-4 — §2.6). Le pilote
 (§5.1) démarre au déploiement.
 
+**Phase 2, même soir** : mesure sur US56 (TikTok 45.2.3) — « Log in » sur
+l'écran « Welcome back » envoie immédiatement un code à la boîte du compte,
+sans étape mot de passe ; la reconnexion déterministe est donc « code e-mail
+d'abord ». Livré : table `verification_codes` (migration `20260909220000`),
+webhook signé `/api/maintenance/verification-codes`, Email Worker Cloudflare
+(`infra/email-worker`, à déployer et router sur les domaines des boîtes),
+recette `relogin` (compte de l'écran = identifiants, Log in, attente du code
+150 s, saisie ADBKeyboard, relecture du feed, un essai par 24 h, escalade
+`email_code` sinon), planifiée quand le jumeau dit `logged_out` ; agent vision
+borné (12 pas, liste blanche de gestes, jamais Allow / Log in / Update / Pay,
+détection de boucle, `maintenance.vision_agent_enabled` faux par défaut) ;
+« Take over » sur une tâche en cours dans les deux cockpits (interruption au
+pas suivant, le flux est sous les yeux de l'opérateur).
+
 ---
 
 ## 6. Ouvert

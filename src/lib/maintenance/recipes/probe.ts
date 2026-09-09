@@ -1,16 +1,17 @@
 import { fetchPackageInfo } from "@/lib/box-api";
 import { closeBlock, openBlock } from "@/lib/account-state/blocks";
 import { sleep } from "@/lib/engine/reader";
-import type { Classification } from "@/lib/engine/ui/screen-state";
+import { classifyScreen, type Classification } from "@/lib/engine/ui/screen-state";
 import type { OnDeviceStatus, SocialPlatform } from "@/types";
 import { openAttention, resolveAttentionForTarget } from "../attention";
 import { appFor, launcherActivityOf, openApp, settleApp, statusFromScreen, MAIN_STATES } from "../runner/screens";
+import { runVisionAgent } from "../runner/vision-agent";
 import type { RecipeContext, RecipeResult } from "./context";
 
 const LAUNCH_SETTLE_MS = 2_500;
 
 /** Reasons a healthy probe closes on the account. */
-const ACCOUNT_REASONS_CLEARED_BY_LOGIN = ["needs_login", "captcha", "dialog_unknown"] as const;
+const ACCOUNT_REASONS_CLEARED_BY_LOGIN = ["needs_login", "captcha", "dialog_unknown", "email_code"] as const;
 
 /**
  * The daily question: is the account still there on its device, and what
@@ -56,7 +57,7 @@ export async function runProbe(ctx: RecipeContext): Promise<RecipeResult> {
     return {};
   });
 
-  const settled = await ctx.journal.step("settle", async () => {
+  let settled = await ctx.journal.step("settle", async () => {
     const result = await settleApp(dev, target.app);
     return {
       ...result,
@@ -65,6 +66,24 @@ export async function runProbe(ctx: RecipeContext): Promise<RecipeResult> {
       proof: !MAIN_STATES.includes(result.classification.state),
     };
   });
+
+  // An unknown screen may get the bounded vision agent (whitelisted moves,
+  // twelve steps, loop detector) before a human — only when switched on.
+  if (settled.classification.state === "unknown" && ctx.settings.visionAgentEnabled) {
+    const recovered = await ctx.journal.step("vision_agent", async () => {
+      const outcome = await runVisionAgent(dev, target.app, settled.read);
+      const moves = outcome.steps.map((s) => `${s.decision.action}${s.decision.label ? `(${s.decision.label})` : ""}→${s.screenState}`).join(" ");
+      return {
+        outcome,
+        screenState: classifyScreen(outcome.read.tree, target.app).state,
+        detail: `${outcome.reason} after ${outcome.steps.length} move(s): ${moves}`.slice(0, 480),
+        proof: !outcome.recovered,
+      };
+    });
+    if (recovered.outcome.recovered) {
+      settled = { ...settled, read: recovered.outcome.read, classification: classifyScreen(recovered.outcome.read.tree, target.app) };
+    }
+  }
 
   const status = statusFromScreen(settled.classification.state);
   await writeState(ctx, platform, status, settled.classification);

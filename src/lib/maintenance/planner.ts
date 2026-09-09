@@ -99,7 +99,7 @@ async function planAvatarPlatform(
       .neq("status", "cancelled"),
     supabase
       .from("avatar_platform_state")
-      .select("probed_at, last_session_at")
+      .select("probed_at, last_session_at, on_device_status")
       .eq("avatar_id", avatar.id)
       .eq("platform", platform)
       .maybeSingle(),
@@ -107,10 +107,11 @@ async function planAvatarPlatform(
       .from("maintenance_tasks")
       .select("kind, finished_at")
       .eq("avatar_id", avatar.id)
-      .eq("status", "done")
-      .in("kind", ["app_check", "coherence"])
+      .eq("platform", platform)
+      .in("status", ["done", "failed"])
+      .in("kind", ["app_check", "coherence", "relogin"])
       .order("finished_at", { ascending: false })
-      .limit(20),
+      .limit(30),
   ]);
 
   const rows = (todayRows ?? []) as TodayRow[];
@@ -136,6 +137,9 @@ async function planAvatarPlatform(
     lastCoherenceAt: lastOf("coherence"),
     probeEveryHours: settings.probeEveryHours,
     appCheckEveryDays: settings.appCheckEveryDays,
+    onDeviceStatus: state?.on_device_status ?? null,
+    lastReloginAt: lastOf("relogin"),
+    reloginCooldownHours: settings.reloginCooldownHours,
   });
 
   // Weekly checks already on the books today (any status but failed) are not

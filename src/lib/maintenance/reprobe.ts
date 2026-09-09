@@ -5,7 +5,7 @@ import { PRIORITY } from "./scheduler";
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 /** Reasons a probe on the device can confirm or refute once a human says "done". */
-const ACCOUNT_REASONS = new Set<AttentionReason>(["needs_login", "captcha", "dialog_unknown", "suspended_decision"]);
+const ACCOUNT_REASONS = new Set<AttentionReason>(["needs_login", "captcha", "dialog_unknown", "suspended_decision", "email_code"]);
 const DEVICE_REASONS_APP = new Set<AttentionReason>(["app_outdated", "app_missing", "adbkeyboard_missing"]);
 const DEVICE_REASONS_COHERENCE = new Set<AttentionReason>(["proxy_incoherent", "timezone_incoherent", "persona_device_mismatch"]);
 

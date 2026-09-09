@@ -48,6 +48,10 @@ export interface PlannerInput {
   lastCoherenceAt: Date | null;
   probeEveryHours: number;
   appCheckEveryDays: number;
+  /** What the device last showed; a logged-out account gets a re-login instead of sessions. */
+  onDeviceStatus?: "logged_out" | string | null;
+  lastReloginAt?: Date | null;
+  reloginCooldownHours?: number;
   /** Deterministic jitter source for tests; defaults to Math.random. */
   random?: () => number;
 }
@@ -61,6 +65,7 @@ export interface PlannedTask {
 
 export const PRIORITY = {
   warmup: 130,
+  relogin: 125,
   probe: 120,
   coherence: 95,
   app_check: 90,
@@ -131,6 +136,17 @@ export function planDay(input: PlannerInput): PlannedTask[] {
   const now = input.now;
   const local = localParts(now, tz);
   const tasks: PlannedTask[] = [];
+
+  // A logged-out account has no session to plan: one re-login attempt per
+  // cooldown, inside the active hours, and nothing else until it is back.
+  if (input.onDeviceStatus === "logged_out") {
+    const inHours = local.hour >= input.activeHours.start && local.hour < input.activeHours.end;
+    const cooldownMs = (input.reloginCooldownHours ?? 24) * HOUR_MS;
+    if (inHours && due(input.lastReloginAt ?? null, cooldownMs, now)) {
+      tasks.push({ kind: "relogin", scheduledFor: new Date(now.getTime() + (2 + rnd() * 10) * 60_000), priority: PRIORITY.relogin, params: {} });
+    }
+    return tasks;
+  }
 
   // Session slots: the active window sliced evenly, one jittered time per
   // slice, only the slices still ahead of us (or just behind, within grace).

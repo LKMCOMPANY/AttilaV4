@@ -9,6 +9,7 @@ import { runAppCheck } from "../recipes/app-check";
 import { runCoherence } from "../recipes/coherence";
 import type { RecipeContext, RecipeResult } from "../recipes/context";
 import { runProbe } from "../recipes/probe";
+import { runRelogin } from "../recipes/relogin";
 import { runSocialSession } from "../recipes/social-session";
 import { runDismissDialogs, runWarmup } from "../recipes/warmup";
 import type { MaintenanceSettings } from "../settings";
@@ -33,10 +34,7 @@ const RECIPES: Record<MaintenanceTaskKind, (ctx: RecipeContext) => Promise<Recip
   coherence: runCoherence,
   app_check: runAppCheck,
   social_session: (ctx) => runSocialSession(ctx),
-  relogin: async (ctx) => {
-    await ctx.journal.skip("relogin", "phase 2 — not implemented in this build");
-    return { outcome: "not_implemented" };
-  },
+  relogin: runRelogin,
 };
 
 export interface RunOutcome {

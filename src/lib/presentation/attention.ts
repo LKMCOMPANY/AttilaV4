@@ -42,6 +42,7 @@ export const ATTENTION_REASON_META: Record<AttentionReason, AttentionMeta> = {
   dialog_unknown: { label: "Unknown dialog", tone: "watch" },
   container_untracked: { label: "Untracked container", tone: "info" },
   box_unreachable: { label: "Box unreachable", tone: "critical" },
+  email_code: { label: "Email code awaited", tone: "critical" },
   manual: { label: "Manual", tone: "info" },
 };
 

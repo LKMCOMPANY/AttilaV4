@@ -20,6 +20,10 @@ export interface MaintenanceSettings {
   probeEveryHours: number;
   appCheckEveryDays: number;
   proofRetentionDays: number;
+  /** One re-login attempt per account per this many hours. */
+  reloginCooldownHours: number;
+  /** Let the bounded vision agent try to clear an unknown screen before escalating. */
+  visionAgentEnabled: boolean;
 }
 
 const budgetSchema = z.object({
@@ -38,6 +42,8 @@ const SCHEMAS = {
   "maintenance.probe_every_hours": z.number().min(1).max(168),
   "maintenance.app_check_every_days": z.number().min(1).max(90),
   "maintenance.proof_retention_days": z.number().int().min(1).max(365),
+  "maintenance.relogin_cooldown_hours": z.number().min(1).max(168),
+  "maintenance.vision_agent_enabled": z.boolean(),
 } as const;
 
 export const DEFAULT_SETTINGS: MaintenanceSettings = {
@@ -52,6 +58,8 @@ export const DEFAULT_SETTINGS: MaintenanceSettings = {
   probeEveryHours: 24,
   appCheckEveryDays: 7,
   proofRetentionDays: 30,
+  reloginCooldownHours: 24,
+  visionAgentEnabled: false,
 };
 
 function pick<K extends keyof typeof SCHEMAS>(
@@ -82,5 +90,7 @@ export async function loadMaintenanceSettings(supabase: AdminClient): Promise<Ma
     probeEveryHours: pick(rows, "maintenance.probe_every_hours", d.probeEveryHours),
     appCheckEveryDays: pick(rows, "maintenance.app_check_every_days", d.appCheckEveryDays),
     proofRetentionDays: pick(rows, "maintenance.proof_retention_days", d.proofRetentionDays),
+    reloginCooldownHours: pick(rows, "maintenance.relogin_cooldown_hours", d.reloginCooldownHours),
+    visionAgentEnabled: pick(rows, "maintenance.vision_agent_enabled", d.visionAgentEnabled),
   };
 }

@@ -18,6 +18,7 @@ import {
   UserX,
   Hand,
   ArrowDownToLine,
+  MailWarning,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -63,6 +64,7 @@ const REASON_ICON: Record<AttentionReason | string, Glyph> = {
   dialog_unknown: LayoutTemplate,
   container_untracked: Boxes,
   box_unreachable: ServerCrash,
+  email_code: MailWarning,
   manual: Hand,
 };
 

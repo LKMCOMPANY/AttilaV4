@@ -107,6 +107,9 @@ node scripts/audit-app-versions.mjs --box box-2.attila.army
 # (the row, its journal and proofs stay in maintenance_tasks):
 npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind probe --platform tiktok
 npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind social_session --platform tiktok --minutes 3 --mode supervised
+# Re-login (phase 2) needs the Email Worker (infra/email-worker) and the
+# EMAIL_WORKER_SECRET env var: TikTok e-mails a code on "Log in", the recipe
+# waits for it in verification_codes and types it.
 
 # Does it actually boot? `state: running` does not mean Android came up.
 node scripts/audit-device-health.mjs --box box-1.attila.army
