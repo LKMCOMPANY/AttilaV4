@@ -13,18 +13,22 @@ import {
   setAvatarOperators,
 } from "@/app/actions/avatars";
 import { useAccountRoster } from "@/hooks/use-account-roster";
+import { ArmyBriefPopover } from "./army-brief-popover";
 import type { AvatarWithRelations } from "@/types";
 
 interface AssignmentSectionProps {
   avatar: AvatarWithRelations;
   accountId: string;
   onUpdated: (avatar: AvatarWithRelations) => void;
+  /** Managers and admins may write the armies' cluster objectives. */
+  canManage?: boolean;
 }
 
 export function AssignmentSection({
   avatar,
   accountId,
   onUpdated,
+  canManage = false,
 }: AssignmentSectionProps) {
   const { users, armies, loading, setArmies } = useAccountRoster(accountId);
   const [newArmyInput, setNewArmyInput] = useState("");
@@ -104,16 +108,19 @@ export function AssignmentSection({
         {armies.length > 0 && (
           <div className="max-h-[120px] space-y-0.5 overflow-y-auto rounded-lg border p-1 scrollbar-thin">
             {armies.map((army) => (
-              <label
+              <div
                 key={army.id}
-                className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
+                className="flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-muted"
               >
-                <Checkbox
-                  checked={selectedArmyIds.includes(army.id)}
-                  onCheckedChange={() => toggleArmy(army.id)}
-                />
-                <span className="text-[12px]">{army.name}</span>
-              </label>
+                <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5">
+                  <Checkbox
+                    checked={selectedArmyIds.includes(army.id)}
+                    onCheckedChange={() => toggleArmy(army.id)}
+                  />
+                  <span className="truncate text-[12px]">{army.name}</span>
+                </label>
+                <ArmyBriefPopover armyId={army.id} armyName={army.name} canManage={canManage} />
+              </div>
             ))}
           </div>
         )}

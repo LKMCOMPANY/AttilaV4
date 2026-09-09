@@ -17,6 +17,7 @@ import type {
   Avatar,
   AvatarWithRelations,
   AvatarPlatformHealth,
+  AvatarPlatformStateSummary,
   Army,
   Device,
   UserProfile,
@@ -106,7 +107,8 @@ export async function getAvatars(
       device:devices(*),
       avatar_armies(army:armies(*)),
       avatar_operators(operator:profiles(*)),
-      platform_health:avatar_platform_health(platform, status, followers, checked_at)`
+      platform_health:avatar_platform_health(platform, status, followers, checked_at),
+      platform_state:avatar_platform_state(platform, on_device_status, probed_at, last_session_at)`
     )
     .eq("account_id", accountId)
     .is("archived_at", null)
@@ -131,6 +133,8 @@ export async function getAvatars(
       (row.platform_health as AvatarPlatformHealth[] | null) ?? []
     ) as AvatarPlatformHealth[];
 
+    const platform_state = ((row.platform_state as AvatarPlatformStateSummary[] | null) ?? []) as AvatarPlatformStateSummary[];
+
     const { avatar_armies: _aa, avatar_operators: _ao, ...rest } = row;
     return {
       ...rest,
@@ -138,6 +142,7 @@ export async function getAvatars(
       armies,
       operators,
       platform_health,
+      platform_state,
     } as AvatarWithRelations;
   });
 

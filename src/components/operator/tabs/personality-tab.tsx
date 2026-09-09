@@ -27,6 +27,7 @@ import {
   toOptions,
 } from "@/lib/constants/avatar";
 import { updateAvatar } from "@/app/actions/avatars";
+import { EffectiveBriefSection } from "./effective-brief-section";
 import type { AvatarWithRelations, WritingStyle, Tone, VocabularyLevel, EmojiUsage } from "@/types";
 import { WRITING_STYLES, TONES, VOCABULARY_LEVELS, EMOJI_USAGES } from "@/types";
 import type { EditableTabProps } from "../avatar-detail-panel";
@@ -144,6 +145,7 @@ export function PersonalityTab({ avatar, onUpdated }: EditableTabProps) {
         variant="destructive"
         onSave={(items) => saveField("topics_avoid", items)}
       />
+      <EffectiveBriefSection key={avatar.id} avatarId={avatar.id} />
     </div>
   );
 }

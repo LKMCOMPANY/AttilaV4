@@ -26,6 +26,7 @@ export function OverviewTab({
   blocks = [],
   onBlockResolved,
   onBlockOpened,
+  canManage = false,
 }: EditableTabProps) {
   const handleStatusChange = async (value: string | null) => {
     if (!value) return;
@@ -58,6 +59,7 @@ export function OverviewTab({
         avatar={avatar}
         accountId={accountId}
         onUpdated={onUpdated}
+        canManage={canManage}
       />
 
       <Section title="Status" icon={CircleDot}>

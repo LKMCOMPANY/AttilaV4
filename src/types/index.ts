@@ -1,4 +1,4 @@
-import type { MaintenanceProfile } from "./maintenance";
+import type { AvatarPlatformState, MaintenanceProfile } from "./maintenance";
 
 export type UserRole = "admin" | "manager" | "operator";
 
@@ -206,7 +206,15 @@ export interface AvatarWithRelations extends Avatar {
   operators?: UserProfile[];
   /** Off-device (TikHub) account health, one row per probed platform. */
   platform_health?: AvatarPlatformHealth[];
+  /** On-device state written by the maintainer's probes, one row per platform. */
+  platform_state?: AvatarPlatformStateSummary[];
 }
+
+/** The slice of `avatar_platform_state` the roster embeds. */
+export type AvatarPlatformStateSummary = Pick<
+  AvatarPlatformState,
+  "platform" | "on_device_status" | "probed_at" | "last_session_at"
+>;
 
 // ---------------------------------------------------------------------------
 // Account health — off-device (TikHub) profile status per (avatar, platform)

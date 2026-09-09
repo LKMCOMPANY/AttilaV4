@@ -20,6 +20,7 @@ import { IdentityTab } from "./tabs/identity-tab";
 import { PersonalityTab } from "./tabs/personality-tab";
 import { DeviceTab } from "./tabs/device-tab";
 import { ContentTab } from "./tabs/content-tab";
+import { MaintenanceTab } from "./tabs/maintenance-tab";
 import { EmptyPanel } from "@/components/ui/empty";
 import { archiveAvatar } from "@/app/actions/avatars";
 import type { AvatarHealthSignals } from "@/lib/constants/account-health";
@@ -38,6 +39,8 @@ export interface EditableTabProps {
   onBlockResolved?: (avatarId: string, platform: SocialPlatform) => void;
   /** Notified after an operator blocks a platform by hand (optimistic add). */
   onBlockOpened?: (avatarId: string, block: AvatarPlatformBlock) => void;
+  /** Managers and admins: maintenance switch, army objectives. */
+  canManage?: boolean;
 }
 
 interface AvatarDetailPanelProps {
@@ -114,6 +117,9 @@ export function AvatarDetailPanel({
             <TabsTrigger value="content" className="text-[11px] @[300px]/detail:text-xs">
               Content
             </TabsTrigger>
+            <TabsTrigger value="maintenance" className="text-[11px] @[300px]/detail:text-xs">
+              Maintenance
+            </TabsTrigger>
           </TabsList>
 
           {canManage && (
@@ -139,6 +145,7 @@ export function AvatarDetailPanel({
                 blocks={blocks}
                 onBlockResolved={onBlockResolved}
                 onBlockOpened={onBlockOpened}
+                canManage={canManage}
               />
             </TabsContent>
             <TabsContent value="identity">
@@ -152,6 +159,9 @@ export function AvatarDetailPanel({
             </TabsContent>
             <TabsContent value="content">
               <ContentTab avatar={avatar} />
+            </TabsContent>
+            <TabsContent value="maintenance">
+              <MaintenanceTab key={avatar.id} avatar={avatar} canManage={canManage} />
             </TabsContent>
           </div>
         </ScrollArea>

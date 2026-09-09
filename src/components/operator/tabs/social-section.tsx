@@ -20,6 +20,7 @@ import {
 } from "@/lib/constants/avatar";
 import { SocialIcon } from "@/components/icons/social-icons";
 import { AccountHealthBadge } from "@/components/shared/account-health-badge";
+import { OnDeviceBadge } from "@/components/shared/maintenance-badge";
 import {
   deriveAccountHealth,
   type AvatarHealthSignals,
@@ -102,6 +103,8 @@ export function SocialSection({ avatar, onUpdated, healthSignals }: SocialSectio
         const creds = (avatar[platform.credKey] ?? {}) as SocialCredentials;
         const health =
           avatar.platform_health?.find((h) => h.platform === platform.id) ?? null;
+        const deviceState =
+          avatar.platform_state?.find((st) => st.platform === platform.id) ?? null;
         const sig = healthSignals?.[platform.id];
         // Only platforms we actually probe (a TikHub row) or that carry a live
         // signal get a badge — keeps Reddit/Instagram from reading "Unchecked".
@@ -130,6 +133,7 @@ export function SocialSection({ avatar, onUpdated, healthSignals }: SocialSectio
                   {enabled && probed && (
                     <AccountHealthBadge kind={healthKind} health={health} showOk />
                   )}
+                  {enabled && <OnDeviceBadge state={deviceState} showOk />}
                 </div>
               </AccordionTrigger>
               <Switch
