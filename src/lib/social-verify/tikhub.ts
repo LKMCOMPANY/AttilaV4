@@ -336,3 +336,46 @@ function normalizeStatus(raw: string | undefined): AccountHealthStatus {
       return "unknown";
   }
 }
+
+// ---------------------------------------------------------------------------
+// Cluster discovery (maintenance phase 3): who talks about what the avatar is
+// for. Read-only, best-effort, bounded by the caller (a few searches a day).
+// ---------------------------------------------------------------------------
+
+export interface TikTokCreatorCandidate {
+  uniqueId: string;
+  nickname: string | null;
+  followers: number | null;
+  signature: string | null;
+}
+
+interface TikTokWebSearchUsers {
+  user_list?: Array<{
+    user_info?: {
+      unique_id?: string;
+      nickname?: string;
+      follower_count?: number;
+      signature?: string;
+    };
+  }>;
+}
+
+/** Creators TikTok's own search returns for a keyword — the seeds of a cluster. */
+export async function searchTikTokCreators(keyword: string, count = 10): Promise<TikTokCreatorCandidate[] | null> {
+  const needle = keyword.trim();
+  if (!needle) return [];
+  const data = await tikhubGet<TikTokWebSearchUsers>("/api/v1/tiktok/web/fetch_search_user", {
+    keyword: needle,
+    count: String(Math.min(30, Math.max(1, count))),
+  });
+  if (!data) return null;
+  return (data.user_list ?? [])
+    .map((entry) => entry.user_info)
+    .filter((u): u is NonNullable<typeof u> => Boolean(u?.unique_id))
+    .map((u) => ({
+      uniqueId: u.unique_id!,
+      nickname: u.nickname ?? null,
+      followers: u.follower_count ?? null,
+      signature: u.signature ?? null,
+    }));
+}

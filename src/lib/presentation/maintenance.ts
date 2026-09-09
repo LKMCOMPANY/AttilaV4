@@ -85,3 +85,6 @@ export function actionableOnDeviceStatus(
   if (now.getTime() - probedAt > ON_DEVICE_SHELF_LIFE_DAYS * 86_400_000) return null;
   return state.on_device_status;
 }
+
+/** Human wording of the self-audit threshold (see `report.ts`). */
+export const TOO_REGULAR_THRESHOLD_LABEL = "start minutes within a few minutes of each other";

@@ -24,6 +24,10 @@ export interface MaintenanceSettings {
   reloginCooldownHours: number;
   /** Let the bounded vision agent try to clear an unknown screen before escalating. */
   visionAgentEnabled: boolean;
+  /** TikHub searches per avatar per day for cluster discovery. */
+  discoverySearchesPerDay: number;
+  /** Chance of liking a video the feed shows, per video, when engagement is allowed. */
+  likeProbability: number;
 }
 
 const budgetSchema = z.object({
@@ -44,6 +48,8 @@ const SCHEMAS = {
   "maintenance.proof_retention_days": z.number().int().min(1).max(365),
   "maintenance.relogin_cooldown_hours": z.number().min(1).max(168),
   "maintenance.vision_agent_enabled": z.boolean(),
+  "maintenance.discovery_searches_per_day": z.number().int().min(0).max(20),
+  "maintenance.like_probability": z.number().min(0).max(1),
 } as const;
 
 export const DEFAULT_SETTINGS: MaintenanceSettings = {
@@ -60,6 +66,8 @@ export const DEFAULT_SETTINGS: MaintenanceSettings = {
   proofRetentionDays: 30,
   reloginCooldownHours: 24,
   visionAgentEnabled: false,
+  discoverySearchesPerDay: 3,
+  likeProbability: 0.15,
 };
 
 function pick<K extends keyof typeof SCHEMAS>(
@@ -92,5 +100,7 @@ export async function loadMaintenanceSettings(supabase: AdminClient): Promise<Ma
     proofRetentionDays: pick(rows, "maintenance.proof_retention_days", d.proofRetentionDays),
     reloginCooldownHours: pick(rows, "maintenance.relogin_cooldown_hours", d.reloginCooldownHours),
     visionAgentEnabled: pick(rows, "maintenance.vision_agent_enabled", d.visionAgentEnabled),
+    discoverySearchesPerDay: pick(rows, "maintenance.discovery_searches_per_day", d.discoverySearchesPerDay),
+    likeProbability: pick(rows, "maintenance.like_probability", d.likeProbability),
   };
 }

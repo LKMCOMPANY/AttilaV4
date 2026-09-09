@@ -311,3 +311,30 @@ export interface AvatarBrief {
   created_at: string;
   updated_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 — the cluster (migration 20260909230000)
+// ---------------------------------------------------------------------------
+
+export const CLUSTER_CANDIDATE_STATUSES = ["candidate", "followed", "skipped", "rejected", "failed"] as const;
+export type ClusterCandidateStatus = (typeof CLUSTER_CANDIDATE_STATUSES)[number];
+
+export interface ClusterCandidate {
+  id: string;
+  account_id: string;
+  avatar_id: string;
+  platform: SocialPlatform;
+  kind: "creator" | "post" | "hashtag";
+  handle: string;
+  display_name: string | null;
+  followers: number | null;
+  keyword: string | null;
+  source: "tikhub_search" | "gorgone" | "manual";
+  score: number;
+  status: ClusterCandidateStatus;
+  discovered_at: string;
+  acted_at: string | null;
+  task_id: string | null;
+  created_at: string;
+  updated_at: string;
+}

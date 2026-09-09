@@ -7,6 +7,7 @@
 
 import type { RequestSession } from "@/lib/auth/session";
 import { audit } from "@/lib/maintenance/audit";
+import { buildMaintenanceReport, type MaintenanceReport } from "@/lib/maintenance/report";
 import { signProofUrl } from "@/lib/maintenance/runner/proofs";
 import { PRIORITY } from "@/lib/maintenance/scheduler";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -14,6 +15,7 @@ import { broadcastAccountEvent } from "@/lib/supabase/realtime";
 import type {
   AvatarBrief,
   AvatarPlatformState,
+  ClusterCandidate,
   MaintenanceProfile,
   MaintenanceTask,
   MaintenanceTaskKind,
@@ -27,6 +29,8 @@ export interface AvatarMaintenanceOverview {
   states: AvatarPlatformState[];
   tasks: MaintenanceTask[];
   brief: AvatarBrief | null;
+  /** The cluster: creators discovered for this avatar and what became of them. */
+  candidates: ClusterCandidate[];
 }
 
 export interface MaintenanceSettingsPatch {
@@ -39,6 +43,7 @@ export interface MaintenanceSettingsPatch {
 type Result<T> = T | { error: string };
 
 const TASK_HISTORY_LIMIT = 40;
+const CANDIDATE_LIMIT = 60;
 
 /** The avatar as the caller may see it — null when RLS hides it. */
 async function visibleAvatar(ctx: RequestSession, avatarId: string): Promise<{ id: string; account_id: string; device_id: string | null } | null> {
@@ -60,7 +65,7 @@ export async function getAvatarMaintenanceCore(ctx: RequestSession, avatarId: st
     .maybeSingle();
   if (!avatar) return { error: "Avatar introuvable" };
 
-  const [{ data: states }, { data: tasks }, { data: brief }] = await Promise.all([
+  const [{ data: states }, { data: tasks }, { data: brief }, { data: candidates }] = await Promise.all([
     ctx.supabase.from("avatar_platform_state").select("*").eq("avatar_id", avatarId),
     ctx.supabase
       .from("maintenance_tasks")
@@ -69,6 +74,13 @@ export async function getAvatarMaintenanceCore(ctx: RequestSession, avatarId: st
       .order("scheduled_for", { ascending: false })
       .limit(TASK_HISTORY_LIMIT),
     ctx.supabase.from("avatar_briefs").select("*").eq("avatar_id", avatarId).maybeSingle(),
+    ctx.supabase
+      .from("cluster_candidates")
+      .select("*")
+      .eq("avatar_id", avatarId)
+      .order("status", { ascending: true })
+      .order("score", { ascending: false })
+      .limit(CANDIDATE_LIMIT),
   ]);
   return {
     enabled: avatar.maintenance_enabled,
@@ -77,7 +89,16 @@ export async function getAvatarMaintenanceCore(ctx: RequestSession, avatarId: st
     states: (states ?? []) as AvatarPlatformState[],
     tasks: (tasks ?? []) as MaintenanceTask[],
     brief: (brief as AvatarBrief | null) ?? null,
+    candidates: (candidates ?? []) as ClusterCandidate[],
   };
+}
+
+/** The maintainer's report for an account the caller may see (RLS-scoped reads). */
+export async function getMaintenanceReportCore(ctx: RequestSession, accountId: string, days: number): Promise<Result<MaintenanceReport>> {
+  const isAdmin = ctx.session.profile.role === "admin";
+  if (!accountId || (!isAdmin && ctx.session.profile.account_id !== accountId)) return { error: "Compte introuvable" };
+  const window = Number.isFinite(days) ? Math.min(90, Math.max(1, Math.round(days))) : 7;
+  return buildMaintenanceReport(ctx.supabase, accountId, window);
 }
 
 /** Switch maintenance on or off, set the profile and day zero (managers and admins). */

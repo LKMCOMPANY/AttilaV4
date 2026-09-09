@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Activity, Loader2, RefreshCw, Stethoscope } from "lucide-react";
+import { Activity, FileBarChart, Loader2, RefreshCw, Stethoscope } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,8 @@ import type { AvatarMaintenanceOverview } from "@/lib/operator/maintenance";
 import { PLATFORM_LIST } from "@/lib/constants/avatar";
 import { PROFILE_LABEL } from "@/lib/presentation/maintenance";
 import { Section } from "./device-info";
+import { ClusterSection } from "./cluster-section";
+import { MaintenanceReportDialog } from "./maintenance-report-dialog";
 import { MaintenanceTaskList } from "./maintenance-task-list";
 import type { AvatarWithRelations, MaintenanceProfile, SocialPlatform } from "@/types";
 
@@ -36,6 +38,7 @@ export function MaintenanceTab({ avatar, canManage }: { avatar: AvatarWithRelati
   const [overview, setOverview] = useState<AvatarMaintenanceOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   const load = useCallback(async () => {
     const result = await getAvatarMaintenance(avatar.id);
@@ -93,9 +96,14 @@ export function MaintenanceTab({ avatar, canManage }: { avatar: AvatarWithRelati
         title="Maintenance"
         icon={Activity}
         action={
-          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => void load()} title="Refresh">
-            <RefreshCw className="h-3 w-3" />
-          </Button>
+          <>
+            <Button variant="ghost" size="sm" className="h-6 gap-1 px-1.5 text-[10px]" onClick={() => setReportOpen(true)} title="The account's weekly maintenance report">
+              <FileBarChart className="h-3 w-3" /> Report
+            </Button>
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => void load()} title="Refresh">
+              <RefreshCw className="h-3 w-3" />
+            </Button>
+          </>
         }
       >
         {error && <p className="py-1.5 text-[11px] text-destructive">{error}</p>}
@@ -192,6 +200,8 @@ export function MaintenanceTab({ avatar, canManage }: { avatar: AvatarWithRelati
       )}
 
       {overview && <MaintenanceTaskList tasks={overview.tasks} onCancel={cancel} />}
+      {overview && <ClusterSection candidates={overview.candidates} />}
+      <MaintenanceReportDialog accountId={avatar.account_id} open={reportOpen} onOpenChange={setReportOpen} />
     </div>
   );
 }

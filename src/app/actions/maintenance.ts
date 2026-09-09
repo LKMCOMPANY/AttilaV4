@@ -5,11 +5,13 @@ import { requireActionSession } from "@/lib/auth/session";
 import {
   cancelMaintenanceTaskCore,
   getAvatarMaintenanceCore,
+  getMaintenanceReportCore,
   requestMaintenanceTaskNowCore,
   setAvatarMaintenanceCore,
   signMaintenanceProofCore,
   type AvatarMaintenanceOverview,
 } from "@/lib/operator/maintenance";
+import type { MaintenanceReport } from "@/lib/maintenance/report";
 import { maintenancePatchSchema, requestTaskSchema, type MaintenancePatchInput, type RequestTaskInput } from "@/lib/validation/maintenance";
 
 /**
@@ -59,4 +61,11 @@ export async function signMaintenanceProof(path: string): Promise<{ url: string;
   if (typeof path !== "string" || path.length > 400) return { error: "Chemin invalide" };
   const ctx = await requireActionSession();
   return signMaintenanceProofCore(ctx, path);
+}
+
+export async function getMaintenanceReport(accountId: string, days = 7): Promise<MaintenanceReport | { error: string }> {
+  const parsed = idSchema.safeParse(accountId);
+  if (!parsed.success) return { error: "Identifiant invalide" };
+  const ctx = await requireActionSession();
+  return getMaintenanceReportCore(ctx, parsed.data, days);
 }

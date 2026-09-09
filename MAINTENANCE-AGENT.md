@@ -459,6 +459,20 @@ détection de boucle, `maintenance.vision_agent_enabled` faux par défaut) ;
 « Take over » sur une tâche en cours dans les deux cockpits (interruption au
 pas suivant, le flux est sous les yeux de l'opérateur).
 
+**Phase 3, même soir (socle)** : `cluster_candidates` (migration
+`20260909230000`) alimentée par la découverte TikHub (`fetch_search_user` sur
+les mots-clés de cluster des armées, 3 recherches / avatar / jour, score par
+taille avec plafond) ; la session mature (`allow_engagement`, hors mode
+`observe`) suit un créateur du cluster en début de session (deep link profil,
+Follow par sélecteur, vérification par l'en-tête) et aime une vidéo du feed
+avec une probabilité de 0,15, dans les budgets `likes_per_day` /
+`follows_per_day` du profil, chaque geste vérifié dans l'arbre et inscrit au
+registre ; rapport hebdomadaire par compte (`/api/maintenance/report`, boîte
+« Report » de l'onglet Maintenance) avec l'auto-audit de régularité (sessions
+qui démarrent à la même minute = horloge) ; section « Cluster » dans l'onglet
+Maintenance. Restent : réponses organiques rares, mémoire du jumeau,
+communautés Gorgone comme deuxième source, vue cluster macOS.
+
 ---
 
 ## 6. Ouvert
