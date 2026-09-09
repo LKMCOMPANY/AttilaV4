@@ -1,0 +1,48 @@
+{
+  "$comment": "Shared presentation vocabulary of the attention queue. The TypeScript module `src/lib/presentation/attention.ts` and the Swift module `AttilaDesignSystem/Presentation/AttentionPresentation.swift` must both reproduce this file exactly — each side has a test that asserts it. Tones map to the semantic colours: critical → danger, watch → warning, info → info, muted → muted foreground.",
+  "reasons": {
+    "needs_login": { "label": "Needs login", "tone": "critical" },
+    "captcha": { "label": "Captcha", "tone": "critical" },
+    "sms_verification": { "label": "SMS verification", "tone": "critical" },
+    "suspended_decision": { "label": "Suspended — decision needed", "tone": "critical" },
+    "credentials_missing": { "label": "Credentials missing", "tone": "watch" },
+    "account_missing": { "label": "No account", "tone": "info" },
+    "handle_invalid": { "label": "Handle to fix", "tone": "watch" },
+    "persona_device_mismatch": { "label": "Persona ≠ device", "tone": "watch" },
+    "app_outdated": { "label": "App out of date", "tone": "watch" },
+    "app_missing": { "label": "App missing", "tone": "watch" },
+    "adbkeyboard_missing": { "label": "ADBKeyboard missing", "tone": "watch" },
+    "proxy_incoherent": { "label": "Proxy mismatch", "tone": "watch" },
+    "timezone_incoherent": { "label": "Timezone mismatch", "tone": "watch" },
+    "boot_dead": { "label": "Won't boot", "tone": "critical" },
+    "dialog_unknown": { "label": "Unknown dialog", "tone": "watch" },
+    "container_untracked": { "label": "Untracked container", "tone": "info" },
+    "box_unreachable": { "label": "Box unreachable", "tone": "critical" },
+    "manual": { "label": "Manual", "tone": "info" }
+  },
+  "severities": {
+    "info": { "label": "Info", "tone": "info" },
+    "warning": { "label": "Warning", "tone": "watch" },
+    "critical": { "label": "Critical", "tone": "critical" }
+  },
+  "statuses": {
+    "open": { "label": "Open", "tone": "watch" },
+    "in_progress": { "label": "In progress", "tone": "info" },
+    "done_pending_reprobe": { "label": "Done — verifying", "tone": "info" },
+    "resolved": { "label": "Resolved", "tone": "muted" },
+    "reopened": { "label": "Reopened", "tone": "critical" }
+  },
+  "scopes": {
+    "avatar_platform": { "label": "Account" },
+    "device": { "label": "Device" },
+    "box": { "label": "Box" }
+  },
+  "sources": {
+    "maintainer": { "label": "Maintainer" },
+    "executor": { "label": "Automator" },
+    "health_worker": { "label": "Health check" },
+    "reconcile": { "label": "Reconcile" },
+    "operator": { "label": "Operator" }
+  },
+  "unknownReason": { "tone": "muted" }
+}
