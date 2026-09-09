@@ -1,0 +1,302 @@
+/**
+ * Screen-state classifier: what is on the device right now, decided from the
+ * accessibility tree alone, top window first.
+ *
+ * The taxonomy is the one measured on the fleet on 9 September 2026
+ * (MAINTENANCE-AGENT.md §2.4 and the phase 0-A sessions). Every state carries a
+ * single safe reaction (`SAFE_REACTION`) so recipes never improvise on a screen
+ * they did not expect: interface obstacles are dismissed or classified further
+ * by vision, security obstacles stop the session and go to a human.
+ *
+ * Pure function of the parsed tree — no device I/O.
+ */
+
+import {
+  editTexts,
+  findByDescContains,
+  findByTextContains,
+  packagesOf,
+  visibleText,
+  type CompactTree,
+  type TreeNode,
+} from "./compact-tree";
+
+export type SocialApp = "tiktok" | "twitter";
+
+export type ScreenState =
+  | "feed_ok"
+  | "post_detail"
+  | "comments_panel"
+  | "profile"
+  | "search"
+  | "logged_out"
+  | "consent_dialog"
+  | "plan_consent"
+  | "link_email_dialog"
+  | "permission_dialog"
+  | "system_permission"
+  | "settings_sheet"
+  | "opaque_overlay"
+  | "version_wall"
+  | "playstore_sheet"
+  | "payment_error"
+  | "content_unavailable"
+  | "network_error"
+  | "bouncer"
+  | "loading"
+  | "empty_tree"
+  | "unknown";
+
+/**
+ * How a recipe may react to a state without a human. `stop` states are the
+ * account-security obstacles: never retried, always escalated with a proof.
+ */
+export type SafeReaction =
+  | "proceed"
+  | "back"
+  | "dismiss_not_now"
+  | "deny_permission"
+  | "choose_free_option"
+  | "reread"
+  | "vision"
+  | "stop";
+
+export const SAFE_REACTION: Record<ScreenState, SafeReaction> = {
+  feed_ok: "proceed",
+  post_detail: "proceed",
+  comments_panel: "proceed",
+  profile: "proceed",
+  search: "proceed",
+  logged_out: "stop",
+  consent_dialog: "choose_free_option",
+  plan_consent: "choose_free_option",
+  link_email_dialog: "dismiss_not_now",
+  permission_dialog: "dismiss_not_now",
+  system_permission: "deny_permission",
+  settings_sheet: "back",
+  opaque_overlay: "back",
+  version_wall: "stop",
+  playstore_sheet: "back",
+  payment_error: "back",
+  content_unavailable: "stop",
+  network_error: "stop",
+  bouncer: "stop",
+  loading: "reread",
+  empty_tree: "reread",
+  unknown: "vision",
+};
+
+export interface Classification {
+  state: ScreenState;
+  /** The marker that decided, for the step journal and for tests. */
+  evidence: string;
+  topPackage: string | null;
+}
+
+const SYSTEM_PERMISSION_PACKAGES = [
+  "com.android.permissioncontroller",
+  "com.google.android.permissioncontroller",
+];
+const PLAY_STORE_PACKAGE = "com.android.vending";
+
+// Marker lists are lower-case substrings; EN / FR / ES / DE as met on the fleet.
+const M = {
+  versionWall: ["this app is out of date", "app is out of date", "está desactualizada", "ist veraltet", "n'est plus à jour"],
+  bouncer: ["performing security verification", "vérification de sécurité", "verificación de seguridad"],
+  paymentError: ["failed to load payment state"],
+  contentUnavailable: [
+    "cannot retrieve posts",
+    "impossible de récupérer les posts",
+    "no se pueden recuperar las publicaciones",
+    "this post is unavailable",
+    "this tweet is unavailable",
+    "cette publication n'est pas disponible",
+    "ce post n'est pas disponible",
+    "hmm...this page doesn't exist",
+    "cette page n'existe pas",
+    "account suspended",
+    "compte a été suspendu",
+    "vidéo non disponible",
+    "video unavailable",
+    "couldn't find this account",
+  ],
+  networkPhrase: ["something went wrong", "un problème est survenu", "algo salió mal", "etwas ist schiefgelaufen", "no network connection", "no internet connection"],
+  networkRetry: ["try reloading", "try again", "retry", "réessayer", "reintentar", "erneut versuchen", "tap to retry"],
+  xLoggedOut: ["see what's happening", "continue with phone", "login with username", "sign in to x", "log in to x", "create account", "connecte-toi", "crée un compte", "inicia sesión", "sign in to twitter"],
+  xFeed: ["for you", "pour vous", "para ti", "für dich"],
+  xFeedSecondary: ["following", "abonnements", "siguiendo", "home", "accueil", "inicio", "startseite"],
+  xPostDetail: ["post your reply", "postez votre réponse", "publica tu respuesta", "antwort posten"],
+  ttLoggedOut: ["welcome back", "log in to tiktok", "connecte-toi à tiktok", "inicia sesión en tiktok", "sign up for tiktok"],
+  ttLoggedOutSecondary: ["log in", "add another account", "sign up", "se connecter", "iniciar sesión"],
+  ttFeedDesc: ["like video", "read or add comments", "lire ou ajouter des commentaires", "leer o añadir comentarios"],
+  ttFeedTabs: ["for you", "pour toi", "para ti", "für dich"],
+  consent: ["choisir comment afficher les publicités", "choose your ads experience", "ads experience", "pubs personnalisées", "personalised ads", "personalized ads"],
+  planConsent: ["pick your plan", "standard (with ads)", "ad-free", "choose your plan"],
+  linkEmail: ["link email", "lier un e-mail", "vincular correo"],
+  inAppPermission: ["give tiktok access to your facebook", "access your contacts", "find your friends", "sync your contacts"],
+  settingsSheet: ["viewer history", "turned on", "activé", "activado"],
+  playStore: ["update available", "mise à jour disponible", "actualización disponible", "mettre à jour", "update now"],
+  comments: /^\s*(?:[\d.,\s]*[km]?)?\s*(comments?|comentarios?|commentaires?|kommentare?)\s*$/i,
+  profile: ["followers", "abonnés", "seguidores", "follower"],
+  profileSecondary: ["following", "abonnements", "siguiendo", "likes", "j'aime", "me gusta"],
+  search: ["search", "rechercher", "buscar", "suchen"],
+} as const;
+
+const OPAQUE_MAX_BYTES = 6_000;
+const OPAQUE_UNRESOLVED_DESC = /^@\d{8,}$/;
+const LOADING_MAX_NODES = 12;
+
+function has(hay: string, markers: readonly string[]): string | null {
+  for (const m of markers) if (hay.includes(m)) return m;
+  return null;
+}
+
+function decided(state: ScreenState, evidence: string, topPackage: string | null): Classification {
+  return { state, evidence, topPackage };
+}
+
+/**
+ * Classify the top window. Order matters: system windows and security states
+ * are decided before any content marker, because a dialog hides the feed
+ * underneath it (the tree then contains only the dialog).
+ */
+export function classifyScreen(tree: CompactTree, app: SocialApp): Classification {
+  const { nodes } = tree;
+  const packages = packagesOf(nodes);
+  const top = packages[0] ?? null;
+  if (nodes.length === 0) return decided("empty_tree", "no nodes", top);
+
+  const hay = visibleText(nodes);
+
+  if (packages.some((p) => SYSTEM_PERMISSION_PACKAGES.includes(p))) {
+    return decided("system_permission", "permissioncontroller window", top);
+  }
+  if (packages.includes(PLAY_STORE_PACKAGE) && has(hay, M.playStore)) {
+    return decided("playstore_sheet", "com.android.vending sheet", top);
+  }
+
+  const security = classifySecurity(hay, app);
+  if (security) return decided(security.state, security.evidence, top);
+
+  const dialog = classifyDialog(hay, nodes);
+  if (dialog) return decided(dialog.state, dialog.evidence, top);
+
+  const content = app === "tiktok" ? classifyTikTok(hay, nodes) : classifyTwitter(hay, nodes);
+  if (content) return decided(content.state, content.evidence, top);
+
+  if (isOpaqueOverlay(tree)) return decided("opaque_overlay", "collapsed tree with unresolved resource strings", top);
+  if (nodes.length <= LOADING_MAX_NODES) return decided("loading", `${nodes.length} nodes, no markers`, top);
+  return decided("unknown", "no marker matched", top);
+}
+
+type Partial = { state: ScreenState; evidence: string } | null;
+
+function classifySecurity(hay: string, app: SocialApp): Partial {
+  const wall = has(hay, M.versionWall);
+  if (wall) return { state: "version_wall", evidence: wall };
+  const bouncer = has(hay, M.bouncer);
+  if (bouncer) return { state: "bouncer", evidence: bouncer };
+  const unavailable = has(hay, M.contentUnavailable);
+  if (unavailable) return { state: "content_unavailable", evidence: unavailable };
+  const phrase = has(hay, M.networkPhrase);
+  const retry = has(hay, M.networkRetry);
+  if (phrase && retry) return { state: "network_error", evidence: `${phrase} + ${retry}` };
+  const payment = has(hay, M.paymentError);
+  if (payment) return { state: "payment_error", evidence: payment };
+
+  if (app === "twitter") {
+    const out = has(hay, M.xLoggedOut);
+    if (out) return { state: "logged_out", evidence: out };
+  } else {
+    const primary = has(hay, M.ttLoggedOut);
+    if (primary && has(hay, M.ttLoggedOutSecondary)) return { state: "logged_out", evidence: primary };
+  }
+  return null;
+}
+
+function classifyDialog(hay: string, nodes: readonly TreeNode[]): Partial {
+  const plan = has(hay, M.planConsent);
+  if (plan) return { state: "plan_consent", evidence: plan };
+  const consent = has(hay, M.consent);
+  if (consent) return { state: "consent_dialog", evidence: consent };
+  const link = has(hay, M.linkEmail);
+  if (link) return { state: "link_email_dialog", evidence: link };
+  const perm = has(hay, M.inAppPermission);
+  if (perm) return { state: "permission_dialog", evidence: perm };
+  const hasSwitch = nodes.some((n) => n.className.endsWith(".Switch") || n.className.endsWith("SwitchCompat"));
+  const sheet = has(hay, M.settingsSheet);
+  if (hasSwitch && sheet) return { state: "settings_sheet", evidence: sheet };
+  return null;
+}
+
+function classifyTikTok(hay: string, nodes: readonly TreeNode[]): Partial {
+  const title = nodes.find((n) => M.comments.test(n.text));
+  if (title) return { state: "comments_panel", evidence: title.text };
+  const feed = has(hay, M.ttFeedDesc);
+  if (feed) return { state: "feed_ok", evidence: feed };
+  const followers = has(hay, M.profile);
+  if (followers && has(hay, M.profileSecondary) && (findByTextContains(nodes, "follow").length > 0 || findByTextContains(nodes, "message").length > 0)) {
+    return { state: "profile", evidence: followers };
+  }
+  if (editTexts(nodes).length > 0 && has(hay, M.search) && findByDescContains(nodes, "search").length > 0) {
+    return { state: "search", evidence: "search field" };
+  }
+  const tab = has(hay, M.ttFeedTabs);
+  if (tab && has(hay, M.ttLoggedOutSecondary) === null) return { state: "feed_ok", evidence: tab };
+  return null;
+}
+
+function classifyTwitter(hay: string, nodes: readonly TreeNode[]): Partial {
+  const reply = has(hay, M.xPostDetail);
+  if (reply || nodes.some((n) => n.resourceId === "post-detail-reply-text-field")) {
+    return { state: "post_detail", evidence: reply ?? "post-detail-reply-text-field" };
+  }
+  const tab = has(hay, M.xFeed);
+  if (tab && has(hay, M.xFeedSecondary)) return { state: "feed_ok", evidence: tab };
+  if (editTexts(nodes).length > 0 && has(hay, M.search)) return { state: "search", evidence: "search field" };
+  return null;
+}
+
+/**
+ * A rendered sheet with no accessibility text: a handful of nodes, no content
+ * markers, and content descriptions that are unresolved resource references
+ * (`@2131893880`). Measured on TikTok's Family Pairing promo (WebView).
+ */
+export function isOpaqueOverlay(tree: CompactTree): boolean {
+  if (tree.byteLength > OPAQUE_MAX_BYTES) return false;
+  return tree.nodes.some((n) => OPAQUE_UNRESOLVED_DESC.test(n.contentDesc.trim()));
+}
+
+// ---------------------------------------------------------------------------
+// Safe affordances — the node a recipe may click for a dismissable state
+// ---------------------------------------------------------------------------
+
+const NOT_NOW = ["not now", "plus tard", "ahora no", "später", "not interested", "maybe later", "skip", "passer", "ignorer"];
+const DENY = ["don't allow", "don’t allow", "deny", "refuser", "no permitir", "nicht erlauben", "no thanks"];
+const FREE_OPTION = ["standard (with ads)", "pubs génériques", "generic ads", "less personalised", "less personalized", "anuncios genéricos"];
+
+function firstLabelled(nodes: readonly TreeNode[], labels: readonly string[]): TreeNode | null {
+  for (const n of nodes) {
+    const label = `${n.text} ${n.contentDesc}`.toLowerCase();
+    if (labels.some((l) => label.includes(l))) return n;
+  }
+  return null;
+}
+
+/**
+ * The node to click for a dismissable state, or null when the state has no
+ * safe click (BACK is then the only move). Never returns OK / Allow / Link /
+ * Log in / Update — those labels are not in any list here by design.
+ */
+export function findSafeAffordance(state: ScreenState, nodes: readonly TreeNode[]): TreeNode | null {
+  switch (SAFE_REACTION[state]) {
+    case "dismiss_not_now":
+      return firstLabelled(nodes, NOT_NOW);
+    case "deny_permission":
+      return firstLabelled(nodes, DENY);
+    case "choose_free_option":
+      return firstLabelled(nodes, FREE_OPTION);
+    default:
+      return null;
+  }
+}
