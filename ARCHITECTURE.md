@@ -982,6 +982,26 @@ CF-Access-Client-Secret: {service_token_secret}
    miroir exact du Mac, épinglé par fixture.
 ```
 
+### Maintenance d'un avatar (phase 1 — 9 septembre 2026)
+
+```
+1. Onglet Maintenance du panneau détail : interrupteur (managers/admins),
+   profil (nouveau / mature), J0, état « sur le device » par plateforme
+   (`OnDeviceBadge` — règle `actionableOnDeviceStatus`, miroir Swift),
+   « Probe now », liste des tâches avec journal de pas et preuves signées
+   (`ProofDialog` ← `signMaintenanceProof`, bucket privé, URL de 10 min).
+2. Onglet Personality : section « Effective brief » (compilation Aleria du
+   persona + objectifs des armées, contradictions listées) ; Overview ›
+   Army : cible « objectif de cluster » par armée (`ArmyBriefPopover`),
+   « Compile briefs ».
+3. Server Actions `actions/maintenance.ts` et `actions/briefs.ts` ↔ routes
+   REST `/api/avatars/[id]/maintenance/**`, `/api/maintenance/**`,
+   `/api/armies/[id]/brief/**` : mêmes cores (`lib/operator/maintenance.ts`,
+   `lib/operator/briefs.ts`).
+4. Vocabulaire : `src/lib/presentation/maintenance.ts` ↔
+   `MaintenancePresentation.swift`, fixture `maintenance-vocabulary.json`.
+```
+
 ### Streaming (contrôle manuel + audio)
 
 ```
