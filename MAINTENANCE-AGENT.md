@@ -418,6 +418,12 @@ Cibles (§5) : ≥ 3 sessions / avatar / semaine sans opérateur ; blocs / 100
 sessions ≤ témoins ; survie J30 ≥ 90 % ; zéro `dialog_unknown` non traité de
 plus de 48 h ; `stale_reads` = 0.
 
+**Journal du pilote** : 9/09 22h47 (Paris) — `main` déployé sur Render
+(workers Schedule et Maintain démarrés) ; `maintenance.global_enabled = true`,
+mode `observe`, cohorte = ES14 (Yassine Benomar, box-2) ; première sonde
+exécutée par le worker Render en 17 s (`logged_in`, conteneur arrêté après).
+Le planificateur remplit la journée d'ES14 à partir de 8 h locales.
+
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
 `failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant
