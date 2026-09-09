@@ -20,9 +20,13 @@ import { AttentionItemCard } from "./attention-item-card";
 import { cn } from "@/lib/utils";
 import { ATTENTION_SCOPE_LABEL } from "@/lib/presentation/attention";
 import type { AttentionQueue } from "@/hooks/use-attention-queue";
-import { ATTENTION_SCOPES, type AttentionQueueItem, type AttentionScope, type AvatarWithRelations } from "@/types";
-
-const SEVERITY_RANK = { info: 0, warning: 1, critical: 2 } as const;
+import {
+  ATTENTION_SCOPES,
+  ATTENTION_SEVERITY_RANK,
+  type AttentionQueueItem,
+  type AttentionScope,
+  type AvatarWithRelations,
+} from "@/types";
 
 /**
  * The attention queue of the workspace, in the server's order of urgency:
@@ -50,7 +54,7 @@ export function AttentionPanel({
   const worst = useMemo(() => {
     let top: AttentionQueueItem["severity"] | null = null;
     for (const item of queue.items) {
-      if (!top || SEVERITY_RANK[item.severity] > SEVERITY_RANK[top]) top = item.severity;
+      if (!top || ATTENTION_SEVERITY_RANK[item.severity] > ATTENTION_SEVERITY_RANK[top]) top = item.severity;
     }
     return top;
   }, [queue.items]);

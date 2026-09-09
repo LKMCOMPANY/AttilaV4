@@ -15,6 +15,8 @@ export type AttentionScope = (typeof ATTENTION_SCOPES)[number];
 
 export const ATTENTION_SEVERITIES = ["info", "warning", "critical"] as const;
 export type AttentionSeverity = (typeof ATTENTION_SEVERITIES)[number];
+/** Ordering of severities, for "the worst of" comparisons on either side. */
+export const ATTENTION_SEVERITY_RANK: Record<AttentionSeverity, number> = { info: 0, warning: 1, critical: 2 };
 
 export const ATTENTION_STATUSES = [
   "open",

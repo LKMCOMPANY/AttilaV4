@@ -5,22 +5,9 @@ import { formatDistanceToNow } from "date-fns";
 import { AppWindow, Keyboard, Loader2, Package } from "lucide-react";
 import { getDeviceAppVersions } from "@/app/actions/device-app-versions";
 import { SocialIcon } from "@/components/icons/social-icons";
+import { WATCHED_PACKAGES, appNameFor } from "@/lib/maintenance/app-versions.mjs";
 import { Section, InfoRow } from "./device-info";
 import type { DeviceAppVersion } from "@/types";
-
-/** Operator-facing app name for the packages we track (macOS `appName` parity). */
-function appName(pkg: string): string {
-  switch (pkg) {
-    case "com.zhiliaoapp.musically":
-      return "TikTok";
-    case "com.twitter.android":
-      return "X";
-    case "com.android.adbkeyboard":
-      return "ADBKeyboard";
-    default:
-      return pkg;
-  }
-}
 
 /** `version_name` when an online read gave one, else the build code alone. */
 function versionLabel(row: DeviceAppVersion): string {
@@ -33,9 +20,9 @@ const TikTokGlyph = ({ className }: { className?: string }) => <SocialIcon platf
 const XGlyph = ({ className }: { className?: string }) => <SocialIcon platform="twitter" className={className} />;
 
 function iconFor(pkg: string) {
-  if (pkg === "com.zhiliaoapp.musically") return TikTokGlyph;
-  if (pkg === "com.twitter.android") return XGlyph;
-  if (pkg === "com.android.adbkeyboard") return Keyboard;
+  if (pkg === WATCHED_PACKAGES.tiktok) return TikTokGlyph;
+  if (pkg === WATCHED_PACKAGES.twitter) return XGlyph;
+  if (pkg === WATCHED_PACKAGES.adbkeyboard) return Keyboard;
   return AppWindow;
 }
 
@@ -88,7 +75,7 @@ export function AppVersionsSection({ deviceId }: { deviceId: string }) {
         </p>
       )}
       {rows?.map((row) => (
-        <InfoRow key={row.package} icon={iconFor(row.package)} label={appName(row.package)} value={versionLabel(row)} />
+        <InfoRow key={row.package} icon={iconFor(row.package)} label={appNameFor(row.package)} value={versionLabel(row)} />
       ))}
       {latest !== null && rows && (
         <p className="pt-1.5 text-[10px] text-muted-foreground/70">

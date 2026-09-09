@@ -57,7 +57,7 @@ const liveCache = new Map<string, { at: number; occupancy: LiveOccupancy }>();
 const startsInFlight = new Map<string, number>();
 
 /** What the box reports right now (cached 5 s so a burst of claims reads once). */
-export async function readLiveOccupancy(tunnelHostname: string): Promise<LiveOccupancy | null> {
+async function readLiveOccupancy(tunnelHostname: string): Promise<LiveOccupancy | null> {
   const cached = liveCache.get(tunnelHostname);
   if (cached && Date.now() - cached.at < LIVE_CACHE_MS) return cached.occupancy;
   try {
@@ -78,7 +78,7 @@ export async function readLiveOccupancy(tunnelHostname: string): Promise<LiveOcc
 }
 
 /** Forget the cached count after a start/stop we issued ourselves. */
-export function invalidateLiveOccupancy(tunnelHostname: string): void {
+function invalidateLiveOccupancy(tunnelHostname: string): void {
   liveCache.delete(tunnelHostname);
 }
 

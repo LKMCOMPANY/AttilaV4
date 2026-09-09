@@ -89,7 +89,7 @@ function clean(value: string | undefined): string {
   return (value ?? "").replace(INVISIBLE_RE, "");
 }
 
-export function hashTreeText(text: string): string {
+function hashTreeText(text: string): string {
   return createHash("sha1").update(text).digest("hex");
 }
 

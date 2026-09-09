@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getAvatars } from "@/app/actions/avatars";
 import { accountDeviceScopeFilter } from "@/lib/devices/access";
 import { OperatorLayout } from "@/components/operator/operator-layout";
+import { isManager } from "@/lib/auth/permissions";
 
 export default async function OperatorPage({
   searchParams,
@@ -34,8 +35,7 @@ export default async function OperatorPage({
     .select("*", { count: "exact", head: true })
     .or(filter);
 
-  const canManage =
-    session.profile.role === "admin" || session.profile.role === "manager";
+  const canManage = isManager(session.profile.role);
 
   return (
     <OperatorLayout

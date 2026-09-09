@@ -14,8 +14,8 @@ import {
   ACCOUNT_HEALTH_META,
   isAlarmingKind,
   type AccountHealthKind,
-  type AccountHealthTone,
 } from "@/lib/constants/account-health";
+import { TONE_CLASS } from "./tone-class";
 import type { AvatarPlatformHealth } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -36,13 +36,6 @@ const ICON: Record<AccountHealthKind, typeof ShieldCheck> = {
   shadow_ban: ShieldQuestion,
   live: ShieldCheck,
   unchecked: ShieldQuestion,
-};
-
-const TONE_CLASS: Record<AccountHealthTone, { text: string; bg: string; dot: string }> = {
-  critical: { text: "text-destructive", bg: "bg-destructive/10", dot: "bg-destructive" },
-  watch: { text: "text-warning", bg: "bg-warning/10", dot: "bg-warning" },
-  ok: { text: "text-success", bg: "bg-success/10", dot: "bg-success" },
-  muted: { text: "text-muted-foreground", bg: "bg-muted/40", dot: "bg-muted-foreground/40" },
 };
 
 /** Full tooltip: the kind's explanation + platform context (followers / age). */

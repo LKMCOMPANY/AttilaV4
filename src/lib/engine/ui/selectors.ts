@@ -67,7 +67,7 @@ const TT_44_9_3 = 2024409030;
 const TT_45_0_3 = 2024500030;
 const TT_45_9_3 = 2024509030;
 
-export const SELECTOR_SEEDS: Record<SelectorKey, SelectorCandidate[]> = {
+const SELECTOR_SEEDS: Record<SelectorKey, SelectorCandidate[]> = {
   "tiktok.like_button": [
     { matcher: { by: "desc_contains", value: "Like video" }, priority: 10, language: "en", note: "44.8–45.9" },
     { matcher: { by: "desc_contains", value: "J'aime la vidéo" }, priority: 10, language: "fr" },

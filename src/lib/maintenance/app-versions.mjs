@@ -14,6 +14,28 @@ export const WATCHED_PACKAGES = {
   adbkeyboard: "com.android.adbkeyboard",
 };
 
+/** Display order of the watched packages (TikTok, X, ADBKeyboard). */
+export const WATCHED_PACKAGE_ORDER = [WATCHED_PACKAGES.tiktok, WATCHED_PACKAGES.twitter, WATCHED_PACKAGES.adbkeyboard];
+
+/**
+ * Operator-facing app name of a watched package; the raw package otherwise,
+ * so an unexpected row stays legible (macOS `DeviceAppVersion.appName` parity).
+ * @param {string} pkg
+ * @returns {string}
+ */
+export function appNameFor(pkg) {
+  switch (pkg) {
+    case WATCHED_PACKAGES.tiktok:
+      return "TikTok";
+    case WATCHED_PACKAGES.twitter:
+      return "X";
+    case WATCHED_PACKAGES.adbkeyboard:
+      return "ADBKeyboard";
+    default:
+      return pkg;
+  }
+}
+
 /**
  * First X build known to open without the "This app is out of date" wall
  * (12.20.5 and 12.21.1 opened; every build ≤ 11.97 hit the wall). Builds in

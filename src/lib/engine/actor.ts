@@ -77,7 +77,7 @@ function selectorForNode(node: TreeNode): V2Selector | null {
 }
 
 /** Tap the centre of a node's bounds — last resort for unaddressable nodes. */
-export async function tapNode(dev: DeviceRef, node: TreeNode): Promise<boolean> {
+async function tapNode(dev: DeviceRef, node: TreeNode): Promise<boolean> {
   const c = nodeCenter(node);
   if (!c) return false;
   await shell(dev.tunnelHostname, dev.dbId, `input tap ${c.x} ${c.y}`);
@@ -173,9 +173,4 @@ export async function typeIntoField(dev: DeviceRef, field: TreeNode, text: strin
   await clickNode(dev, field);
   await new Promise((r) => setTimeout(r, 800));
   await typeText(dev.tunnelHostname, dev.dbId, text);
-}
-
-/** Send the IME "search/go" action (code 3) — submits a search field. */
-export async function submitViaIme(dev: DeviceRef): Promise<void> {
-  await shell(dev.tunnelHostname, dev.dbId, "am broadcast -a ADB_EDITOR_CODE --ei code 3");
 }

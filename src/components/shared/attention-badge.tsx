@@ -25,23 +25,15 @@ import {
   ATTENTION_SEVERITY_META,
   ATTENTION_STATUS_META,
   attentionReasonMeta,
-  type AttentionTone,
 } from "@/lib/presentation/attention";
-import type { AttentionQueueItem, AttentionReason, AttentionSeverity, AttentionStatus } from "@/types";
+import { TONE_CLASS } from "./tone-class";
+import { ATTENTION_SEVERITY_RANK, type AttentionQueueItem, type AttentionReason, type AttentionSeverity, type AttentionStatus } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Attention queue — visual layer over the shared vocabulary
-// (`lib/presentation/attention.ts`). Tone → colour is the same mapping the
-// macOS client applies (`AttentionTone.tint`): critical = destructive, watch =
-// warning, info = info, muted = muted foreground.
+// (`lib/presentation/attention.ts`); colours from `tone-class.ts`, the same
+// mapping the macOS client applies (`AttentionTone.tint`).
 // ---------------------------------------------------------------------------
-
-const TONE_CLASS: Record<AttentionTone, { text: string; bg: string }> = {
-  critical: { text: "text-destructive", bg: "bg-destructive/10" },
-  watch: { text: "text-warning", bg: "bg-warning/10" },
-  info: { text: "text-info", bg: "bg-info/10" },
-  muted: { text: "text-muted-foreground", bg: "bg-muted/40" },
-};
 
 type Glyph = typeof AlertTriangle;
 
@@ -115,7 +107,7 @@ export function AttentionStatusBadge({ status, className }: { status: AttentionS
  */
 export function AttentionSignal({ items, className }: { items: AttentionQueueItem[]; className?: string }) {
   if (items.length === 0) return null;
-  const worst = items.reduce((top, item) => (SEVERITY_RANK[item.severity] > SEVERITY_RANK[top.severity] ? item : top));
+  const worst = items.reduce((top, item) => (ATTENTION_SEVERITY_RANK[item.severity] > ATTENTION_SEVERITY_RANK[top.severity] ? item : top));
   const meta = attentionReasonMeta(worst.reason);
   const tone = TONE_CLASS[meta.tone];
   const Icon = REASON_ICON[worst.reason] ?? HelpCircle;
@@ -130,4 +122,3 @@ export function AttentionSignal({ items, className }: { items: AttentionQueueIte
   );
 }
 
-const SEVERITY_RANK: Record<AttentionSeverity, number> = { info: 0, warning: 1, critical: 2 };

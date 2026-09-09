@@ -26,7 +26,7 @@ export function scoreCandidate(followers: number | null, keywordRank: number): n
 }
 
 /** The avatar's cluster keywords: every army's, deduplicated, longest first. */
-export async function clusterKeywords(supabase: AdminClient, avatarId: string): Promise<string[]> {
+async function clusterKeywords(supabase: AdminClient, avatarId: string): Promise<string[]> {
   const { data } = await supabase
     .from("avatar_armies")
     .select("army:armies(brief:army_briefs(cluster_keywords))")

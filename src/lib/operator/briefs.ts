@@ -4,6 +4,7 @@
  * and macOS REST routes share these.
  */
 
+import { isManager } from "@/lib/auth/permissions";
 import type { RequestSession } from "@/lib/auth/session";
 import { audit } from "@/lib/maintenance/audit";
 import { compileAvatarBrief } from "@/lib/maintenance/brief";
@@ -15,11 +16,6 @@ type Result<T> = T | { error: string };
 
 const MAX_OBJECTIVE_CHARS = 2_000;
 const MAX_KEYWORDS = 30;
-
-function canManage(ctx: RequestSession): boolean {
-  const role = ctx.session.profile.role;
-  return role === "admin" || role === "manager";
-}
 
 async function visibleArmy(ctx: RequestSession, armyId: string): Promise<{ id: string; account_id: string; name: string } | null> {
   const { data } = await ctx.supabase.from("armies").select("id, account_id, name").eq("id", armyId).maybeSingle();
@@ -38,7 +34,7 @@ export async function setArmyBriefCore(
   armyId: string,
   input: { objective: string; clusterKeywords: string[] },
 ): Promise<Result<{ brief: ArmyBrief }>> {
-  if (!canManage(ctx)) return { error: "Réservé aux administrateurs et managers" };
+  if (!isManager(ctx.session.profile.role)) return { error: "Réservé aux administrateurs et managers" };
   const army = await visibleArmy(ctx, armyId);
   if (!army) return { error: "Armée introuvable" };
   const objective = input.objective.trim().slice(0, MAX_OBJECTIVE_CHARS);
@@ -68,7 +64,7 @@ export async function compileArmyBriefCore(
   ctx: RequestSession,
   armyId: string,
 ): Promise<Result<{ compiled: number; failed: number }>> {
-  if (!canManage(ctx)) return { error: "Réservé aux administrateurs et managers" };
+  if (!isManager(ctx.session.profile.role)) return { error: "Réservé aux administrateurs et managers" };
   const army = await visibleArmy(ctx, armyId);
   if (!army) return { error: "Armée introuvable" };
   const { data: members } = await ctx.supabase

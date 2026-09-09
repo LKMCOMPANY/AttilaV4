@@ -46,8 +46,9 @@ import {
   waitForSystemReady,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
+import { WATCHED_PACKAGES } from "@/lib/maintenance/app-versions.mjs";
 
-const TIKTOK_PACKAGE = "com.zhiliaoapp.musically";
+const TIKTOK_PACKAGE = WATCHED_PACKAGES.tiktok;
 
 /** Pre-granted so no runtime-permission dialog steals focus mid-flow (best-effort). */
 const TIKTOK_PERMISSIONS = [

@@ -75,13 +75,6 @@ export function textStillInField(tree: CompactTree, text: string): boolean {
   return editTexts(tree.nodes).some((n) => textMatches(n.text, text));
 }
 
-/** Every input field on screen is empty (or only shows its hint). */
-export function fieldsEmpty(tree: CompactTree, hints: readonly string[] = []): boolean {
-  return editTexts(tree.nodes).every(
-    (n) => n.text.trim() === "" || hints.some((h) => n.text.trim().toLowerCase() === h.toLowerCase()),
-  );
-}
-
 // ---------------------------------------------------------------------------
 // TikTok like — "Like video. 941 likes" → "Video liked" (+ count, +selected)
 // ---------------------------------------------------------------------------
@@ -100,7 +93,7 @@ export function likeState(tree: CompactTree): LikeState {
 }
 
 /** The like count carried by the heart's description, when the platform puts one there. */
-export function likeCount(tree: CompactTree): ParsedCount | null {
+function likeCount(tree: CompactTree): ParsedCount | null {
   for (const marker of [...NOT_LIKED_DESC, ...LIKED_DESC]) {
     const node = findByDescContains(tree.nodes, marker)[0];
     if (node) return parseCount(node.contentDesc);

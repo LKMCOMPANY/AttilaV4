@@ -13,8 +13,7 @@
  * (loaded from .env.local automatically when present).
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { loadDotEnvLocal } from "./lib/dotenv.mjs";
 
 loadDotEnvLocal();
 
@@ -57,16 +56,6 @@ async function main() {
   }
 }
 
-function loadDotEnvLocal() {
-  const path = resolve(process.cwd(), ".env.local");
-  if (!existsSync(path)) return;
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    const eq = line.indexOf("=");
-    if (eq === -1 || line.trimStart().startsWith("#")) continue;
-    const key = line.slice(0, eq).trim();
-    if (!process.env[key]) process.env[key] = line.slice(eq + 1).trim();
-  }
-}
 
 main().catch((err) => {
   console.error("capacity-estimate failed:", err instanceof Error ? err.message : err);

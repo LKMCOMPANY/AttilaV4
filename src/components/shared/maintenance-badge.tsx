@@ -5,22 +5,14 @@ import {
   ON_DEVICE_STATUS_META,
   TASK_STATUS_META,
   actionableOnDeviceStatus,
-  type MaintenanceTone,
 } from "@/lib/presentation/maintenance";
+import { TONE_CLASS } from "./tone-class";
 import type { AvatarPlatformStateSummary, MaintenanceTaskStatus } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Maintenance — visual layer over `lib/presentation/maintenance.ts`. Tone →
-// colour is the same mapping the macOS client applies.
+// Maintenance — visual layer over `lib/presentation/maintenance.ts`; colours
+// from `tone-class.ts`, the same mapping the macOS client applies.
 // ---------------------------------------------------------------------------
-
-const TONE_CLASS: Record<MaintenanceTone, { text: string; bg: string }> = {
-  critical: { text: "text-destructive", bg: "bg-destructive/10" },
-  watch: { text: "text-warning", bg: "bg-warning/10" },
-  ok: { text: "text-success", bg: "bg-success/10" },
-  info: { text: "text-info", bg: "bg-info/10" },
-  muted: { text: "text-muted-foreground", bg: "bg-muted/40" },
-};
 
 /**
  * What the DEVICE last showed for this account — rendered only when the

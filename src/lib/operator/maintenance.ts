@@ -5,6 +5,7 @@
  * matters, role) has been checked. Every mutation is audited.
  */
 
+import { isManager } from "@/lib/auth/permissions";
 import type { RequestSession } from "@/lib/auth/session";
 import { audit } from "@/lib/maintenance/audit";
 import { buildMaintenanceReport, type MaintenanceReport } from "@/lib/maintenance/report";
@@ -49,11 +50,6 @@ const CANDIDATE_LIMIT = 60;
 async function visibleAvatar(ctx: RequestSession, avatarId: string): Promise<{ id: string; account_id: string; device_id: string | null } | null> {
   const { data } = await ctx.supabase.from("avatars").select("id, account_id, device_id").eq("id", avatarId).maybeSingle();
   return data ?? null;
-}
-
-function canManage(ctx: RequestSession): boolean {
-  const role = ctx.session.profile.role;
-  return role === "admin" || role === "manager";
 }
 
 /** States, recent tasks and the brief of one avatar (RLS-scoped reads). */
@@ -107,7 +103,7 @@ export async function setAvatarMaintenanceCore(
   avatarId: string,
   patch: MaintenanceSettingsPatch,
 ): Promise<Result<{ ok: true }>> {
-  if (!canManage(ctx)) return { error: "Réservé aux administrateurs et managers" };
+  if (!isManager(ctx.session.profile.role)) return { error: "Réservé aux administrateurs et managers" };
   const avatar = await visibleAvatar(ctx, avatarId);
   if (!avatar) return { error: "Avatar introuvable" };
 

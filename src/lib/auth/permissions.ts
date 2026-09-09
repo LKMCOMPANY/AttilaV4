@@ -6,19 +6,15 @@ const ROLE_HIERARCHY: Record<UserRole, number> = {
   operator: 10,
 };
 
-export function hasRole(userRole: UserRole, requiredRole: UserRole): boolean {
+function hasRole(userRole: UserRole, requiredRole: UserRole): boolean {
   return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[requiredRole];
 }
 
-export function isAdmin(role: UserRole): boolean {
-  return role === "admin";
-}
-
+/**
+ * Managers and admins own the account-level decisions: archiving avatars,
+ * writing army objectives, switching maintenance on, resolving an attention
+ * item without a probe. Operators take and do; they do not decide.
+ */
 export function isManager(role: UserRole): boolean {
   return hasRole(role, "manager");
-}
-
-export function getDashboardPath(role: UserRole): string {
-  if (role === "admin") return "/admin/accounts";
-  return "/dashboard";
 }

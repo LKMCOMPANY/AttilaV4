@@ -18,7 +18,7 @@ export interface DeviceRef {
 }
 
 /** The agent line whose tree goes stale after in-window changes (measured 9/09). */
-export const STALE_TREE_AGENT_LINE = "1.1.3";
+const STALE_TREE_AGENT_LINE = "1.1.3";
 
 export function treeGoesStaleAfterGestures(dev: DeviceRef): boolean {
   return dev.agentLine === STALE_TREE_AGENT_LINE;

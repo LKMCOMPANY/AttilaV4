@@ -41,8 +41,9 @@ import {
   waitForSystemReady,
 } from "./adb-helpers";
 import { encodeJobError, JobError } from "./errors";
+import { WATCHED_PACKAGES } from "@/lib/maintenance/app-versions.mjs";
 
-const X_PACKAGE = "com.twitter.android";
+const X_PACKAGE = WATCHED_PACKAGES.twitter;
 
 /** Pre-granted so no runtime-permission dialog steals focus mid-reply (best-effort). */
 const X_PERMISSIONS = [

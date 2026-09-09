@@ -6,6 +6,7 @@
  * visibility of the item has been checked.
  */
 
+import { isManager } from "@/lib/auth/permissions";
 import type { RequestSession } from "@/lib/auth/session";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { broadcastAccountEvent } from "@/lib/supabase/realtime";
@@ -59,8 +60,7 @@ export async function markAttentionDoneCore(ctx: RequestSession, id: string): Pr
 
 /** Admins and managers may close an item on their own authority (audited). */
 export async function resolveAttentionCore(ctx: RequestSession, id: string): Promise<{ ok: true } | { error: string }> {
-  const role = ctx.session.profile.role;
-  if (role !== "admin" && role !== "manager") return { error: "Réservé aux administrateurs et managers" };
+  if (!isManager(ctx.session.profile.role)) return { error: "Réservé aux administrateurs et managers" };
   const visible = await visibleItem(ctx, id);
   if (!visible) return { error: "Élément introuvable" };
   await resolveAttention(createAdminClient(), id, "operator", undefined, ctx.session.profile.id);

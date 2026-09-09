@@ -59,23 +59,26 @@ export function AttentionItemCard({
     }
   };
 
+  // The card is a plain box; the headline and title form the one clickable
+  // region (a real button, so no interactive element nests inside another),
+  // and the verbs stay siblings of it.
+  const openable = Boolean(onOpen);
+  const Headline = openable ? "button" : "div";
+
   return (
     <div
-      role={onOpen ? "button" : undefined}
-      tabIndex={onOpen ? 0 : undefined}
-      onClick={onOpen}
-      onKeyDown={(e) => {
-        if (onOpen && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          onOpen();
-        }
-      }}
       className={cn(
         "rounded-lg border p-2.5 text-left transition-colors",
         tone === "critical" ? "border-destructive/25 bg-destructive/4" : "border-border bg-card",
-        onOpen && "cursor-pointer hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
       )}
     >
+      <Headline
+        {...(openable ? { type: "button" as const, onClick: onOpen, title: "Open this avatar" } : {})}
+        className={cn(
+          "block w-full text-left",
+          openable && "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_p:first-of-type]:hover:underline",
+        )}
+      >
       <div className="flex flex-wrap items-center gap-1.5">
         <AttentionReasonBadge reason={item.reason} />
         <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -97,6 +100,7 @@ export function AttentionItemCard({
 
       <p className="mt-1.5 text-xs font-medium leading-snug">{item.title}</p>
       {item.detail && <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{item.detail}</p>}
+      </Headline>
 
       {hasEvidence && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px] text-muted-foreground">
@@ -123,7 +127,7 @@ export function AttentionItemCard({
         {target && <span className="truncate font-medium text-foreground/80">{target}</span>}
         <span>{formatDistanceToNow(new Date(item.opened_at), { addSuffix: true })}</span>
         <span>{ATTENTION_SOURCE_LABEL[item.source]}</span>
-        <span className="ml-auto flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+        <span className="ml-auto flex items-center gap-1">
           {item.status === "done_pending_reprobe" ? (
             <span className="inline-flex items-center gap-1">
               <Hourglass className="h-3 w-3" /> Verifying…

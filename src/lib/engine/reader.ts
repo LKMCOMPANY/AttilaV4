@@ -99,7 +99,7 @@ const KICK_COMMANDS: Record<TreeKick, string> = {
 /** Settle after a kick before reading: the shade needs a beat to collapse. */
 const KICK_SETTLE_MS = 1_000;
 
-export async function kickAccessibilityTree(dev: DeviceRef, kick: TreeKick = "statusbar"): Promise<void> {
+async function kickAccessibilityTree(dev: DeviceRef, kick: TreeKick = "statusbar"): Promise<void> {
   await shellSafe(dev.tunnelHostname, dev.dbId, KICK_COMMANDS[kick]);
   await sleep(KICK_SETTLE_MS);
 }

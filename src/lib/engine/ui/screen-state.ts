@@ -148,7 +148,7 @@ const LOADING_MAX_NODES = 12;
 // The comments sheet title carries the count before the word ("24 comments",
 // 45.0.3 EN) or after it ("Comentarios 9", 44.9.3 ES); sometimes bare.
 const COUNT_PART = "(?:[\\d.,\\s]*(?:mil|[km])?)?";
-export const COMMENTS_TITLE_RE = new RegExp(
+const COMMENTS_TITLE_RE = new RegExp(
   `^\\s*${COUNT_PART}\\s*(comments?|comentarios?|commentaires?|kommentare?)\\s*${COUNT_PART}\\s*$`,
   "i",
 );
@@ -284,7 +284,7 @@ function classifyTwitter(hay: string, nodes: readonly TreeNode[]): Partial {
  * markers, and content descriptions that are unresolved resource references
  * (`@2131893880`). Measured on TikTok's Family Pairing promo (WebView).
  */
-export function isOpaqueOverlay(tree: CompactTree): boolean {
+function isOpaqueOverlay(tree: CompactTree): boolean {
   if (tree.byteLength > OPAQUE_MAX_BYTES) return false;
   return tree.nodes.some((n) => OPAQUE_UNRESOLVED_DESC.test(n.contentDesc.trim()));
 }

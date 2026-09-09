@@ -27,6 +27,7 @@ import type {
   AttentionSource,
   SocialPlatform,
 } from "@/types";
+import { ATTENTION_SEVERITY_RANK } from "@/types";
 import { broadcastAccountEvent } from "@/lib/supabase/realtime";
 import { audit } from "./audit";
 
@@ -47,8 +48,6 @@ export interface OpenAttentionInput {
   source: AttentionSource;
   blockId?: string | null;
 }
-
-const SEVERITY_RANK: Record<AttentionSeverity, number> = { info: 0, warning: 1, critical: 2 };
 
 function targetKey(input: Pick<OpenAttentionInput, "scope" | "avatarId" | "platform" | "deviceId" | "boxId">): string {
   return [input.scope, input.avatarId ?? "", input.platform ?? "", input.deviceId ?? "", input.boxId ?? ""].join(":");
@@ -75,7 +74,7 @@ export async function openAttention(
   if (existing) {
     const reopened = existing.status === "done_pending_reprobe";
     const severity =
-      SEVERITY_RANK[input.severity] > SEVERITY_RANK[existing.severity as AttentionSeverity]
+      ATTENTION_SEVERITY_RANK[input.severity] > ATTENTION_SEVERITY_RANK[existing.severity as AttentionSeverity]
         ? input.severity
         : (existing.severity as AttentionSeverity);
     await supabase

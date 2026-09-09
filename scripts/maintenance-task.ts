@@ -14,19 +14,7 @@
  * row stays in `maintenance_tasks` with its journal and proofs, like any other.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
-function loadDotEnvLocal() {
-  const path = resolve(process.cwd(), ".env.local");
-  if (!existsSync(path)) return;
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    const eq = line.indexOf("=");
-    if (eq === -1 || line.trimStart().startsWith("#")) continue;
-    const key = line.slice(0, eq).trim();
-    if (!process.env[key]) process.env[key] = line.slice(eq + 1).trim();
-  }
-}
+import { loadDotEnvLocal } from "./lib/dotenv.mjs";
 
 async function main() {
   loadDotEnvLocal();
