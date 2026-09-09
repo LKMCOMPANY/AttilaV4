@@ -78,13 +78,30 @@ export async function readTree(dev: DeviceRef): Promise<TreeRead> {
 const KICK_FILE = "/sdcard/.attila_a11y_kick.xml";
 
 /**
- * Force the accessibility cache to refresh. `uiautomator dump` is the only
- * trigger proven on 1.1.3 (3/3, 3–12 s). It collapses TikTok's comment
- * composer, so callers never kick while a composer holds text — they verify
- * through a window transition instead (see `verifier`).
+ * How to force the accessibility cache to refresh on the 1.1.3 line. Every
+ * working trigger is a window-state event (the service only subscribes to
+ * `TYPE_WINDOW_STATE_CHANGED`). Measured on box-5, 9 September 2026:
+ *   - `statusbar`: expand then collapse the notification shade — 0.57–0.58 s,
+ *     refreshed 2/2, no visible side effect once collapsed. The default.
+ *   - `uiautomator`: `uiautomator dump` — 2.65 s, refreshed 3/3, but it
+ *     collapses TikTok's comment composer. The fallback when the shade did not
+ *     do it, and never while a composer holds text (`noKick`).
+ * (`input/keyevent [24,25]` also works in 0.37 s but leaves the volume overlay
+ * on screenshots for ~3 s and can drift the volume at the extremes — not used.)
  */
-export async function kickAccessibilityTree(dev: DeviceRef): Promise<void> {
-  await shellSafe(dev.tunnelHostname, dev.dbId, `uiautomator dump ${KICK_FILE} >/dev/null 2>&1; rm -f ${KICK_FILE}`);
+export type TreeKick = "statusbar" | "uiautomator";
+
+const KICK_COMMANDS: Record<TreeKick, string> = {
+  statusbar: "cmd statusbar expand-notifications; sleep 0.2; cmd statusbar collapse",
+  uiautomator: `uiautomator dump ${KICK_FILE} >/dev/null 2>&1; rm -f ${KICK_FILE}`,
+};
+
+/** Settle after a kick before reading: the shade needs a beat to collapse. */
+const KICK_SETTLE_MS = 1_000;
+
+export async function kickAccessibilityTree(dev: DeviceRef, kick: TreeKick = "statusbar"): Promise<void> {
+  await shellSafe(dev.tunnelHostname, dev.dbId, KICK_COMMANDS[kick]);
+  await sleep(KICK_SETTLE_MS);
 }
 
 export interface FreshReadOptions {
@@ -98,14 +115,17 @@ export interface FreshReadOptions {
   settleMs?: number;
 }
 
+type RefreshAttempt = "wait" | TreeKick;
+
 /**
  * Read after a gesture, refreshing when the tree did not move although it
  * should have. First a short wait and a re-read (enough on 1.1.1 most of the
  * time — but a sheet opening was still stale after 3 s on 44.8.3); if the
- * tree is still identical, the cache is kicked unless forbidden. On the 1.1.3
- * line the kick comes first, since waiting never helps there. With `noKick`
- * the caller gets the stale tree flagged as such and verifies through a
- * window transition.
+ * tree is still identical, the cache is kicked unless forbidden — the shade
+ * kick first, `uiautomator dump` only if the shade did not do it. On the
+ * 1.1.3 line the kicks come first, since waiting never helps there. With
+ * `noKick` the caller gets the stale tree flagged as such and verifies through
+ * a window transition.
  */
 export async function readTreeAfterGesture(
   dev: DeviceRef,
@@ -119,13 +139,15 @@ export async function readTreeAfterGesture(
 
   let durationMs = first.durationMs;
   let last = first;
-  const attempts: Array<"wait" | "kick"> = treeGoesStaleAfterGestures(dev) ? ["kick"] : ["wait", "kick"];
+  const attempts: RefreshAttempt[] = treeGoesStaleAfterGestures(dev)
+    ? ["statusbar", "uiautomator"]
+    : ["wait", "statusbar", "uiautomator"];
   for (const attempt of attempts) {
-    if (attempt === "kick") {
-      if (opts.noKick) break;
-      await kickAccessibilityTree(dev);
-    } else {
+    if (attempt === "wait") {
       await sleep(EMPTY_TREE_RETRY_MS);
+    } else {
+      if (opts.noKick) break;
+      await kickAccessibilityTree(dev, attempt);
     }
     last = await readTree(dev);
     durationMs += last.durationMs;

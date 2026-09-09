@@ -197,6 +197,48 @@ type `mobile` avec un paramètre pays cohérent avec le device.
 - **Délai d'indexation TikHub** : commentaire TikTok visible à ≈ 2 min ;
   reply X visible à 39 s.
 
+### 2.6 Campagne 0-A (9 septembre, soir) — ce que le plan a dû changer
+
+Quatre sessions en lecture/écriture contrôlée sur box-2 (agent 1.1.1) et
+box-5 (agent 1.1.3), plus un recensement hors ligne des versions sur 154
+conteneurs arrêtés (décodeur ABX de `packages.xml`). Tout conteneur démarré a
+été arrêté derrière nous.
+
+- **Le contrat du moteur tient sur deux versions et deux langues.** Like et
+  follow par sélecteur `content-desc` avec signal positif (`Like`→`Liked`,
+  `Follow`→`Following`) sur TikTok 44.8.3 EN (box-2) et 44.9.3 ES (box-2) ;
+  flux commentaire complet par sélecteurs — deep link, identité de la cible
+  vérifiée, panneau, saisie ADBKeyboard, envoi — avec relecture positive sur le
+  device en < 3 s et indexation TikHub à 3 min. Les ids de ressource des
+  composants du composer changent d'une version à l'autre : d'où la table
+  `app_ui_selectors` versionnée et des dictionnaires de `content-desc` par
+  locale (EN/FR/ES/DE/AR).
+- **Un deep link peut retomber sur le feed** (vidéo indisponible, compte
+  privé) : l'auteur affiché est comparé à celui de l'URL avant tout
+  commentaire, sinon `target_mismatch`.
+- **L'arbre est périmé sur la ligne 1.1.3** après tout changement dans la
+  fenêtre (défilement, saisie, like) : le service d'accessibilité de l'agent
+  n'écoute que `TYPE_WINDOW_STATE_CHANGED`. Deux « kicks » fiables et bon
+  marché : la barre de statut (`cmd statusbar expand-notifications` puis
+  `collapse`, 0,58 s, 2/2, sans effet visible) et `keyevent [24,25]` (0,37 s,
+  mais overlay de volume et dérive possible). `uiautomator dump` fonctionne
+  (3/3) mais coûte 2,65 s et referme le composer TikTok. Le lecteur applique la
+  barre de statut d'abord, `uiautomator dump` en secours, jamais quand un
+  composer contient du texte (vérification par transition de fenêtre).
+- **`aleria-vl` classe un écran en ≈ 6 s** à condition de laisser ≥ 1 200
+  tokens de sortie (coupure JSON à 600) ; l'analyse d'image reste un repli,
+  jamais le chemin nominal.
+- **Trois états d'écran ajoutés** à la taxonomie : `target_mismatch`,
+  `version_wall` (X ≤ 12.5 : « This app is out of date »), `empty_tree`
+  (lancement, heads-up). `set_hidden` retiré du plan (sans effet mesurable).
+- **Après `stop`, attendre ≥ 4 s avant `run`** (le conteneur répond encore
+  `running` pendant ~3 s) ; concurrence de démarrage bornée à deux par box.
+- **Recensement des versions** : X ≤ 12.5 sur la majorité des images (mur),
+  12.20+ sur box-3 ; ADBKeyboard présent partout où il a été vérifié.
+
+Résidu autorisé, à exécuter au début de la phase 1 : box-4 (l'arbre périmé
+vient-il de l'agent ou de l'image ?) et box-3 (relecture positive X 12.20+).
+
 ---
 
 ## 3. Décisions prises
@@ -298,6 +340,18 @@ runtime), LangGraph / Temporal (durabilité de bibliothèque, inutile en v1).
 
 Paliers de déploiement : observation seule → supervisé (chaque session visible
 et annulable, cohorte pilote) → autonome, avec un critère de passage explicite.
+
+**État au 9 septembre 2026, 21 h — phase 0 livrée** : `src/lib/box-api/` par
+souci, moteur `src/lib/engine/` (lecteur avec garde de fraîcheur, sélecteurs
+versionnés, classifieur, acteur, vérificateur), flux TikTok et X réécrits
+dessus, arbitre de slots live dans `execute`, worker Reconcile, worker santé
+étendu à toute la flotte, migration `20260909163649` (`attention_items` + vue,
+`avatar_actions` + backfill, `device_app_versions`, `app_ui_selectors`,
+`audit_log`, `runtime_settings`, bucket `maintenance-proofs`), audit hors
+ligne des versions (`scripts/audit-app-versions.mjs`), file d'attention dans
+les deux cockpits (web : panneau du roster ; macOS : module de desk) avec le
+vocabulaire partagé `src/lib/presentation/attention.ts` ↔
+`AttentionPresentation.swift`, et les builds d'apps dans l'onglet Device.
 
 ---
 
