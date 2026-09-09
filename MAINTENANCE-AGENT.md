@@ -366,6 +366,63 @@ runtime), LangGraph / Temporal (durabilité de bibliothèque, inutile en v1).
 Paliers de déploiement : observation seule → supervisé (chaque session visible
 et annulable, cohorte pilote) → autonome, avec un critère de passage explicite.
 
+### 5.1 Pilote de la phase 1 — protocole
+
+Prérequis : déployer `main` sur Render (les workers Schedule et Maintain
+démarrent avec `server.mjs` et répondent `idle` tant que
+`maintenance.global_enabled` est faux).
+
+**Interrupteurs** (admin, SQL sur `runtime_settings`) :
+
+```sql
+update runtime_settings set value = 'true'::jsonb where key = 'maintenance.global_enabled';
+update runtime_settings set value = '"observe"'::jsonb where key = 'maintenance.mode';     -- puis "supervised"
+update avatars set maintenance_enabled = true, maintenance_profile = 'mature' where id in (…10 avatars…);
+```
+
+**Cohorte** : 10 avatars TikTok maintenus (box-2 et box-4, deux locales,
+deux lignes d'agent) contre 10 témoins comparables laissés à la main.
+
+**Paliers** :
+1. *Observation* (7 jours) — mode `observe` : le planificateur remplit
+   `maintenance_tasks`, les sondes, `app_check` et `coherence` s'exécutent,
+   les sessions sont marquées `skipped / observe_mode`. On lit : la file
+   d'attention se remplit-elle de vrais problèmes ? les sondes lisent-elles
+   juste (comparer `avatar_platform_state` à un contrôle manuel sur 10 devices) ?
+2. *Supervisé* (jusqu'à J30) — mode `supervised` : les sessions passives
+   tournent sur la cohorte ; chaque session est visible (onglet Maintenance,
+   journal de pas, preuves) et annulable.
+
+**KPI hebdomadaires** (requêtes de référence) :
+
+```sql
+-- sessions par avatar et par semaine
+select avatar_id, count(*) from avatar_actions where actor = 'maintainer' and action = 'session'
+  and occurred_at > now() - interval '7 days' group by avatar_id;
+-- issues des tâches
+select kind, status, outcome, count(*) from maintenance_tasks
+  where created_at > now() - interval '7 days' group by 1, 2, 3 order by 4 desc;
+-- fraîcheur de l'arbre (ligne 1.1.3)
+select result->>'agent_line' as agent, sum((result->>'refreshed_reads')::int) as refreshed,
+       sum((result->>'stale_reads')::int) as stale, sum((result->>'scrolls')::int) as scrolls
+  from maintenance_tasks where kind = 'social_session' and status = 'done' group by 1;
+-- escalades
+select reason, severity, count(*) from attention_items where opened_at > now() - interval '7 days' group by 1, 2;
+-- blocs ouverts par 100 sessions (cohorte vs témoins)
+select a.maintenance_enabled, count(distinct b.id) as blocks
+  from avatar_platform_blocks b join avatars a on a.id = b.avatar_id
+  where b.first_detected_at > now() - interval '7 days' group by 1;
+```
+
+Cibles (§5) : ≥ 3 sessions / avatar / semaine sans opérateur ; blocs / 100
+sessions ≤ témoins ; survie J30 ≥ 90 % ; zéro `dialog_unknown` non traité de
+plus de 48 h ; `stale_reads` = 0.
+
+**Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
+suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
+`failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant
+plus d'une heure ; une preuve montrant un geste hors du feed.
+
 **État au 9 septembre 2026, 21 h — phase 0 livrée** : `src/lib/box-api/` par
 souci, moteur `src/lib/engine/` (lecteur avec garde de fraîcheur, sélecteurs
 versionnés, classifieur, acteur, vérificateur), flux TikTok et X réécrits
@@ -377,6 +434,16 @@ ligne des versions (`scripts/audit-app-versions.mjs`), file d'attention dans
 les deux cockpits (web : panneau du roster ; macOS : module de desk) avec le
 vocabulaire partagé `src/lib/presentation/attention.ts` ↔
 `AttentionPresentation.swift`, et les builds d'apps dans l'onglet Device.
+
+**État au 9 septembre 2026, 23 h — phase 1 livrée et validée sur box** :
+migration `20260909200000` (jumeau `avatar_platform_state`, `maintenance_tasks`
+avec bail et RPC de réclamation, profils et J0 sur `avatars`, briefs),
+planificateur pur testé, workers Schedule et Maintain, recettes (sonde,
+warmup, app_check, coherence, session passive), briefs compilés par Aleria,
+onglet Maintenance et brief effectif dans les deux cockpits, badge « sur le
+device » sur la règle unique `actionableOnDeviceStatus`. Quatre tâches réelles
+ont tourné par le chemin de production (box-2, box-3, box-4 — §2.6). Le pilote
+(§5.1) démarre au déploiement.
 
 ---
 
