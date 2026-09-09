@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reconcileAvatarBlocks } from "@/lib/account-state/blocks";
+import { openAttention, resolveAttentionForTarget } from "@/lib/maintenance/attention";
 import {
   isTikHubEnabled,
   getTwitterAccountHealth,
@@ -36,9 +37,11 @@ import type { AccountHealthStatus } from "@/types";
 const HEALTH_PLATFORMS = ["twitter", "tiktok"] as const;
 type HealthPlatform = (typeof HEALTH_PLATFORMS)[number];
 
-// Re-probe each account roughly every 6h: account status changes slowly and
-// each probe is a paid call.
-const STALE_MS = 6 * 60 * 60 * 1000;
+// Re-probe each account roughly every 8h: account status changes slowly and
+// each probe is a paid call. Fleet-wide (≈180 avatar×platform pairs, 9/2026)
+// that is ≈540 probes a day, well inside the 1500/day TikHub budget once the
+// deferred verify pass is added.
+const STALE_MS = 8 * 60 * 60 * 1000;
 // Accounts probed per cycle. With the worker cadence (a few minutes) this
 // comfortably covers a few-hundred-avatar fleet within the staleness window.
 const BATCH = 8;
@@ -95,19 +98,10 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
   const supabase = createAdminClient();
   const now = Date.now();
 
-  // Only probe accounts actually under automation. Health matters where a
-  // campaign runs; probing idle clients wastes paid TikHub calls and surfaces
-  // confusing labels on accounts nobody is operating.
-  const { data: activeCampaigns } = await supabase
-    .from("campaigns")
-    .select("account_id")
-    .eq("status", "active");
-
-  const automatedAccountIds = [
-    ...new Set((activeCampaigns ?? []).map((c) => c.account_id as string)),
-  ];
-  if (automatedAccountIds.length === 0) return result;
-
+  // Every active avatar with a handle, campaign or not: an avatar has to stay
+  // alive between campaigns, and a suspension found the day a campaign starts
+  // is a suspension found too late (until 9/2026 only avatars of accounts with
+  // an active campaign were probed — 2 of 15 accounts).
   const { data: avatars } = await supabase
     .from("avatars")
     .select(
@@ -115,7 +109,6 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
     )
     .eq("status", "active")
     .is("archived_at", null)
-    .in("account_id", automatedAccountIds)
     .or("twitter_enabled.eq.true,tiktok_enabled.eq.true");
 
   if (!avatars || avatars.length === 0) return result;
@@ -149,6 +142,7 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
     if (verdict === "active") result.active++;
     else if (verdict === "suspended") result.suspended++;
     else if (verdict === "notfound") result.notfound++;
+    await syncAttention(supabase, candidate, verdict);
   }
 
   // Guardrail reconcile on the just-probed avatars: open blocks for blocking
@@ -169,6 +163,52 @@ export async function refreshAccountHealth(): Promise<HealthPassResult> {
   }
 
   return result;
+}
+
+/**
+ * The attention queue follows the verdict: a suspended account is a decision
+ * for a human (critical), a vanished one a check of the handle (warning), and
+ * an account back to `active` resolves both — the probe, not the operator's
+ * word, closes the item.
+ */
+async function syncAttention(
+  supabase: ReturnType<typeof createAdminClient>,
+  candidate: Candidate,
+  verdict: AccountHealthStatus,
+): Promise<void> {
+  const target = {
+    accountId: candidate.accountId,
+    scope: "avatar_platform" as const,
+    avatarId: candidate.avatarId,
+    platform: candidate.platform,
+  };
+  try {
+    if (verdict === "suspended") {
+      await openAttention(supabase, {
+        ...target,
+        reason: "suspended_decision",
+        severity: "critical",
+        title: `Compte ${candidate.platform === "twitter" ? "X" : "TikTok"} suspendu — décision à prendre`,
+        detail: `@${candidate.handle} est signalé suspendu par la plateforme.`,
+        evidence: { tikhub_status: "suspended", handle: candidate.handle },
+        source: "health_worker",
+      });
+    } else if (verdict === "notfound") {
+      await openAttention(supabase, {
+        ...target,
+        reason: "account_missing",
+        severity: "warning",
+        title: `Compte ${candidate.platform === "twitter" ? "X" : "TikTok"} introuvable — pseudo à vérifier`,
+        detail: `@${candidate.handle} ne résout plus (supprimé, renommé ou faute de frappe).`,
+        evidence: { tikhub_status: "notfound", handle: candidate.handle },
+        source: "health_worker",
+      });
+    } else {
+      await resolveAttentionForTarget(supabase, target, "reprobe", ["suspended_decision", "account_missing", "handle_invalid"]);
+    }
+  } catch (err) {
+    console.error(`[AccountHealth] attention sync failed for ${candidate.avatarId}/${candidate.platform}: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 function buildCandidates(

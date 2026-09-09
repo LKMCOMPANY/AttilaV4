@@ -9,6 +9,9 @@ import {
 } from "@/lib/box-api";
 import { encodeJobError, isAutoRetryable, JobError, parseJobError } from "@/lib/automation/errors";
 import { openBlock, blockReasonFromErrorCategory } from "@/lib/account-state/blocks";
+import { assessBoxSlot, withStartSlot } from "@/lib/engine/box-slots";
+import { attentionFromJobError, openAttention } from "@/lib/maintenance/attention";
+import { recordAvatarAction } from "@/lib/maintenance/ledger";
 
 /**
  * Auto-retry budget for pre-compose failures (`app_not_ready`: app never
@@ -105,12 +108,11 @@ export async function POST(req: NextRequest) {
   }
 
   // -----------------------------------------------------------------------
-  // 3. Resolve device → box and check capacity.
-  //    The cap is the box's max_concurrent_containers MINUS the operator
-  //    reserve, counted against the REAL running containers (the same pool the
-  //    operator dashboard uses). Leaving `operator_reserve` slots free means a
-  //    human can always open a device even while campaigns run. Executing a job
-  //    on an already-running device is never gated — it adds no new container.
+  // 3. Resolve device → box and ask the slot arbiter.
+  //    The arbiter counts what the box reports LIVE (running + starting), not
+  //    `devices.state`, which drifts; it keeps the operator reserve free so a
+  //    human can always open a device, and bounds concurrent cold starts. A
+  //    job on an already-running device adds no container and is never gated.
   // -----------------------------------------------------------------------
   const { data: device } = await supabase
     .from("devices")
@@ -121,7 +123,7 @@ export async function POST(req: NextRequest) {
   const { data: box } = device
     ? await supabase
         .from("boxes")
-        .select("tunnel_hostname, max_concurrent_containers, operator_reserve")
+        .select("id, tunnel_hostname, max_concurrent_containers, operator_reserve")
         .eq("id", device.box_id)
         .single()
     : { data: null };
@@ -135,20 +137,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Device or box not found" }, { status: 404 });
   }
 
-  if (device.state !== "running") {
-    const automatorSlots =
-      (box.max_concurrent_containers ?? 3) - (box.operator_reserve ?? 1);
-
-    const { count: boxRunning } = await supabase
-      .from("devices")
-      .select("*", { count: "exact", head: true })
-      .eq("box_id", device.box_id)
-      .eq("state", "running");
-
-    if ((boxRunning ?? 0) >= automatorSlots) {
-      console.log(`[Execute] Box ${device.box_id} at capacity (${boxRunning}/${automatorSlots} automator slots)`);
-      return NextResponse.json({ action: "idle", message: "Box at capacity" });
-    }
+  const slot = await assessBoxSlot(supabase, box, device.db_id, "campaign");
+  if (!slot.granted) {
+    console.log(`[Execute] Box ${box.tunnel_hostname} refused a slot (${slot.reason})`, JSON.stringify(slot.live));
+    return NextResponse.json({ action: "idle", message: `Box slot refused: ${slot.reason}` });
   }
 
   // -----------------------------------------------------------------------
@@ -177,10 +169,13 @@ export async function POST(req: NextRequest) {
   }));
 
   // -----------------------------------------------------------------------
-  // 5. Ensure container is running AND Android has finished booting
+  // 5. Ensure container is running AND Android has finished booting — inside
+  //    the box's start slot so no more than two boots run at once per box.
   // -----------------------------------------------------------------------
   try {
-    const { wasStarted } = await ensureContainerReady(tunnelHostname, device.db_id);
+    const { wasStarted } = slot.reason === "already_running"
+      ? await ensureContainerReady(tunnelHostname, device.db_id)
+      : await withStartSlot(box, () => ensureContainerReady(tunnelHostname, device.db_id));
     if (wasStarted) {
       await supabase
         .from("devices")
@@ -260,6 +255,22 @@ export async function POST(req: NextRequest) {
       .eq("id", job.id);
     await supabase.rpc("increment_campaign_counter", { p_campaign_id: job.campaign_id, p_counter: "total_responses_sent" });
 
+    // One ledger row per real action: daily caps (Automator + maintainer) are
+    // computed against `avatar_actions`, in the device's local day.
+    if (job.avatar_id) {
+      await recordAvatarAction(supabase, {
+        accountId: job.account_id,
+        avatarId: job.avatar_id,
+        platform: job.platform,
+        action: job.platform === "twitter" ? "reply" : "comment",
+        actor: "automator",
+        deviceId: job.device_id,
+        refKind: "campaign_job",
+        refId: job.id,
+        target: job.post_url,
+      });
+    }
+
     // The independent TikHub confirmation is NOT done here: the platform needs
     // time to index a fresh post, and blocking the worker (and the container
     // teardown) on a 15s scrape per job would wreck throughput. A separate
@@ -306,7 +317,7 @@ export async function POST(req: NextRequest) {
     // deleted post).
     const blockReason = blockReasonFromErrorCategory(parsed?.category);
     if (blockReason && job.avatar_id) {
-      await openBlock(supabase, {
+      const blockId = await openBlock(supabase, {
         avatarId: job.avatar_id,
         platform: job.platform,
         reason: blockReason,
@@ -315,6 +326,25 @@ export async function POST(req: NextRequest) {
         jobId: job.id,
       });
       console.log(`[Execute] Avatar ${job.avatar_id} blocked on ${job.platform} (${blockReason})`);
+
+      // The block gates the selector; the attention item is what a human sees
+      // and works from, with the proof of the screen that stopped the job.
+      const attention = attentionFromJobError(parsed?.category, parsed?.message);
+      if (attention) {
+        await openAttention(supabase, {
+          accountId: job.account_id,
+          scope: "avatar_platform",
+          avatarId: job.avatar_id,
+          platform: job.platform,
+          reason: attention.reason,
+          severity: attention.severity,
+          title: attention.title,
+          detail: parsed?.message || result.error || null,
+          evidence: { job_id: job.id, error: result.error ?? null, proof_url: proofUrl ?? null },
+          source: "executor",
+          blockId,
+        }).catch((err) => console.error(`[Execute] attention item not opened: ${err instanceof Error ? err.message : err}`));
+      }
     }
   }
 

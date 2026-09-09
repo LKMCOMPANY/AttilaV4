@@ -13,10 +13,16 @@
 > - Les automations s'exécutent dans le **web service** via
 >   [src/app/api/pipeline/execute/route.ts](src/app/api/pipeline/execute/route.ts),
 >   orchestré par les **worker loops de [server.mjs](server.mjs)** (process,
->   execute, reap, verify) — pas par un gateway sur la box.
+>   execute, gorgone-sweep, reconcile, reap, verify, account-health) — pas
+>   par un gateway sur la box.
 > - Toute connexion box passe par `https://{tunnel_hostname}` + CF-Access via
->   [src/lib/box-api.ts](src/lib/box-api.ts) ; la box n'exécute que
->   `cloudflared` + `magicbox-proxy` (voir [infra/boxes](infra/boxes)).
+>   [src/lib/box-api/](src/lib/box-api/index.ts) (Container API v1, shell v1,
+>   Control API v2) ; la box n'exécute que `cloudflared` + `magicbox-proxy`
+>   (voir [infra/boxes](infra/boxes)).
+> - Les flux X et TikTok tournent sur le **moteur** [src/lib/engine](src/lib/engine)
+>   (arbre d'accessibilité v2, sélecteurs nommés, relecture positive) ; le
+>   même moteur portera la maintenance des avatars (voir
+>   [MAINTENANCE-AGENT.md](MAINTENANCE-AGENT.md)).
 > Les mentions de "gateway", "sync toutes les 30s" et
 > `src/infrastructure/magicbox/device-bridge.ts` ci-dessous sont périmées.
 
@@ -871,7 +877,13 @@ Organisation : `{account_id}/{timestamp}_{filename}`.
 | `campaigns` | Campagnes d'automation (rules, guidelines, capacity_params JSONB par réseau, stats) |
 | `campaign_posts` | Posts sources à traiter |
 | `campaign_jobs` | Jobs individuels (avatar, device, contenu, scheduled_at, status, result) |
-| `audit_log` | Trace de chaque action |
+| `avatar_platform_blocks` | Porte de l'Automator : un blocage actif par (avatar, plateforme) |
+| `attention_items` (+ vue `attention_queue_v`) | File unique des tâches humaines à trois portées (avatar×plateforme, device, box) avec priorité calculée côté serveur |
+| `avatar_actions` | Registre des actions réelles par avatar, plateforme et jour local (plafonds quotidiens) |
+| `device_app_versions` | Build de X / TikTok / ADBKeyboard par device (audit hors ligne, lecture v2 en ligne) |
+| `app_ui_selectors` | Sélecteurs d'interface versionnés par build d'application |
+| `runtime_settings` | Interrupteurs et budgets d'exploitation (mode maintenance, quotas TikHub/Aleria, rétentions) |
+| `audit_log` | Trace de chaque action (créée le 9/09/2026 ; absente auparavant malgré cette ligne) |
 
 ---
 

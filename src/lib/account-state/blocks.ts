@@ -50,7 +50,9 @@ export function blockReasonFromErrorCategory(
 /**
  * Open (or refresh) an active block for a (avatar, platform). Idempotent: the
  * partial unique index guarantees at most one active row, so a concurrent
- * double-open is caught and folded into a `last_detected_at` bump.
+ * double-open is caught and folded into a `last_detected_at` bump. Returns
+ * the active block's id (so an attention item can point at it), or null when
+ * the write failed.
  */
 export async function openBlock(
   supabase: AdminClient,
@@ -62,37 +64,44 @@ export async function openBlock(
     detail?: string | null;
     jobId?: string | null;
   },
-): Promise<void> {
+): Promise<string | null> {
   const { avatarId, platform, reason, source, detail = null, jobId = null } = params;
   const nowIso = new Date().toISOString();
 
-  const { error } = await supabase.from("avatar_platform_blocks").insert({
-    avatar_id: avatarId,
-    platform,
-    reason,
-    source,
-    detail,
-    job_id: jobId,
-    first_detected_at: nowIso,
-    last_detected_at: nowIso,
-  });
+  const { data, error } = await supabase
+    .from("avatar_platform_blocks")
+    .insert({
+      avatar_id: avatarId,
+      platform,
+      reason,
+      source,
+      detail,
+      job_id: jobId,
+      first_detected_at: nowIso,
+      last_detected_at: nowIso,
+    })
+    .select("id")
+    .single();
 
-  if (!error) return;
+  if (!error) return data?.id ?? null;
 
   // 23505 = an active block already exists (partial unique index) → refresh it.
   if (error.code === "23505") {
-    await supabase
+    const { data: refreshed } = await supabase
       .from("avatar_platform_blocks")
       .update({ last_detected_at: nowIso, detail, updated_at: nowIso })
       .eq("avatar_id", avatarId)
       .eq("platform", platform)
-      .is("resolved_at", null);
-    return;
+      .is("resolved_at", null)
+      .select("id")
+      .maybeSingle();
+    return refreshed?.id ?? null;
   }
 
   console.error(
     `[blocks] Failed to open block ${avatarId}/${platform}/${reason}: ${error.message}`,
   );
+  return null;
 }
 
 /**

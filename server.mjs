@@ -345,6 +345,7 @@ const SWEEP_INTERVAL_MS = parseInt(process.env.GORGONE_SWEEP_INTERVAL_MS || "600
 const REAP_INTERVAL_MS = parseInt(process.env.DEVICE_REAP_INTERVAL_MS || "120000", 10);
 const VERIFY_INTERVAL_MS = parseInt(process.env.PIPELINE_VERIFY_INTERVAL_MS || "60000", 10);
 const ACCOUNT_HEALTH_INTERVAL_MS = parseInt(process.env.ACCOUNT_HEALTH_INTERVAL_MS || "300000", 10);
+const RECONCILE_INTERVAL_MS = parseInt(process.env.DEVICE_RECONCILE_INTERVAL_MS || "180000", 10);
 const CRON_SECRET = process.env.CRON_SECRET;
 
 async function workerLoop(name, port, path, opts = {}) {
@@ -406,6 +407,14 @@ function startPipelineWorkers(port) {
     fixedIntervalMs: SWEEP_INTERVAL_MS,
   });
   console.log(`> Gorgone sweep worker: every ${SWEEP_INTERVAL_MS}ms`);
+
+  // Reconcile — corrects `boxes.status` and `devices.state` from what each box
+  // reports live (a container running while the database says stopped is
+  // invisible to the reaper otherwise). Starts and stops nothing itself.
+  workerLoop("Reconcile", port, "/api/devices/reconcile", {
+    fixedIntervalMs: RECONCILE_INTERVAL_MS,
+  });
+  console.log(`> Reconcile worker: every ${RECONCILE_INTERVAL_MS}ms`);
 
   // Device reaper — stops abandoned containers (running, no pending job, no
   // active stream) so boxes never accumulate idle containers and thrash.

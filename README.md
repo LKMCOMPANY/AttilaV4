@@ -92,6 +92,12 @@ node infra/boxes/scripts/check-drift.mjs
 # 451 devices inventoried without booting one. Fills adbkeyboard/tiktok/twitter.
 node scripts/audit-device-packages.mjs
 
+# Which BUILD of X / TikTok / ADBKeyboard each device carries, decoded from the
+# binary packages.xml of each stopped image → device_app_versions (450 devices
+# in ~3.5 min). X builds behind the "out of date" wall are counted.
+node scripts/audit-app-versions.mjs --dry-run
+node scripts/audit-app-versions.mjs --box box-2.attila.army
+
 # Does it actually boot? `state: running` does not mean Android came up.
 node scripts/audit-device-health.mjs --box box-1.attila.army
 node scripts/audit-device-health.mjs --box box-1.attila.army --recheck --concurrency 1
@@ -118,7 +124,8 @@ node scripts/tune-scrcpy-offline.mjs
 node scripts/tune-scrcpy.mjs --box box-5.attila.army
 node scripts/tune-scrcpy.mjs --box box-5.attila.army --revert
 
-# Manual single-device automation tests
+# Manual single-device automation tests (selector-based flows on the engine;
+# the container must be booted and the IME is not restored by the wrapper)
 npx tsx scripts/x-reply.ts      --box <host> --device <db_id> --tweet-url <url> --text "<reply>"
 npx tsx scripts/tiktok-reply.ts --box <host> --device <db_id> --video-url <url> --text "<reply>"
 ```

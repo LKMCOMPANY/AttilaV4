@@ -127,7 +127,17 @@ regress on them:
    failures open a block via `openBlock()` (`src/lib/account-state/blocks.ts`);
    the health worker reconciles TikHub/shadow-ban blocks; operators clear them
    with "Mark resolved" in the Overview panel. Never re-introduce tag-based
-   (`blocked_*`) or ad-hoc gating — one table, one gate.
+   (`blocked_*`) or ad-hoc gating — one table, one gate. What a HUMAN must do
+   about it lives in `attention_items` (`src/lib/maintenance/attention.ts`):
+   the block gates, the item is worked; an account item points at its block.
+9. **Container slots are decided by the live arbiter only**
+   (`src/lib/engine/box-slots.ts`): what the box reports (`running` +
+   `starting`), the operator reserve, campaign priority over maintenance, at
+   most two cold starts in flight per box. `devices.state` is a projection the
+   Reconcile worker corrects every three minutes — never a gate.
+10. **Every real action on a platform is one row of `avatar_actions`**
+   (`src/lib/maintenance/ledger.ts`), dated in the device's local day. Daily
+   caps are computed against it, never against `campaign_jobs` alone.
 
 ## Hard rules — measured on 9 September 2026 (see `MAINTENANCE-AGENT.md`)
 
@@ -245,7 +255,8 @@ API v2 as an MCP server too, at
 box, only the target differs, so one entry is enough for discovery.
 
 **The MCP is a development-time tool only.** Product code keeps calling the box
-REST API through `src/lib/box-api.ts`; never route runtime traffic through MCP.
+REST API through `src/lib/box-api/` (one module per concern, `control-v2.ts`
+for the in-guest agent); never route runtime traffic through MCP.
 Its real value is that it is a self-describing catalogue of what a box actually
 serves — that is how we found `/interface_logs/{recent,stats,detail}` (per-box
 API call log with success rates), `/v1/discover` and `/v1/swap_size/{gb}`, none
