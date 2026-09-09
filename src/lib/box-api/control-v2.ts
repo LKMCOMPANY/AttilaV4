@@ -95,7 +95,8 @@ export interface V2PackageInfo {
   app_name?: string;
   is_system?: boolean;
   enabled?: boolean;
-  launcher_activity?: string;
+  /** A string on some agent builds, an object on others — normalise before use. */
+  launcher_activity?: unknown;
 }
 
 const v2Path = (dbId: string, path: string) => `/android_api/v2/${dbId}/${path}`;

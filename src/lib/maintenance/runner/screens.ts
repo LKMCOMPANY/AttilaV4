@@ -21,6 +21,23 @@ export function appFor(platform: SocialPlatform): { app: SocialApp; packageName:
 }
 
 /**
+ * `package/info` reports the launcher activity as a string on some agent
+ * builds and as an object on others (measured 9/09/2026: a probe crashed on
+ * `.includes` of a non-string). Only a plain, non-empty string is trusted;
+ * anything else means "let `monkey` resolve the LAUNCHER category".
+ */
+export function launcherActivityOf(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["name", "activity", "class_name", "className"]) {
+      if (typeof record[key] === "string" && (record[key] as string).length > 0) return record[key] as string;
+    }
+  }
+  return null;
+}
+
+/**
  * Bring the app to its entry screen from a clean state. With a known launcher
  * activity the explicit intent is used; otherwise `monkey` resolves the
  * LAUNCHER category itself, which survives activity renames across builds.

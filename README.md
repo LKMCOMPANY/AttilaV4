@@ -103,6 +103,10 @@ node scripts/audit-app-versions.mjs --box box-2.attila.army
 # (`maintenance.mode`: observe → supervised → autonomous) decides whether
 # sessions gesture. Worker knobs: MAINTENANCE_TICK_CONCURRENCY (2),
 # MAINTENANCE_IDLE_MS (15000), MAINTENANCE_SCHEDULE_INTERVAL_MS (1800000).
+# One task on one avatar, through the production path, from a terminal
+# (the row, its journal and proofs stay in maintenance_tasks):
+npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind probe --platform tiktok
+npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind social_session --platform tiktok --minutes 3 --mode supervised
 
 # Does it actually boot? `state: running` does not mean Android came up.
 node scripts/audit-device-health.mjs --box box-1.attila.army

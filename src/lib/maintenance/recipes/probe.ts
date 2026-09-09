@@ -4,7 +4,7 @@ import { sleep } from "@/lib/engine/reader";
 import type { Classification } from "@/lib/engine/ui/screen-state";
 import type { OnDeviceStatus, SocialPlatform } from "@/types";
 import { openAttention, resolveAttentionForTarget } from "../attention";
-import { appFor, openApp, settleApp, statusFromScreen, MAIN_STATES } from "../runner/screens";
+import { appFor, launcherActivityOf, openApp, settleApp, statusFromScreen, MAIN_STATES } from "../runner/screens";
 import type { RecipeContext, RecipeResult } from "./context";
 
 const LAUNCH_SETTLE_MS = 2_500;
@@ -30,7 +30,11 @@ export async function runProbe(ctx: RecipeContext): Promise<RecipeResult> {
   const launcher = await ctx.journal.step("resolve_app", async () => {
     const info = await fetchPackageInfo(dev.tunnelHostname, dev.dbId, [target.packageName]).catch(() => []);
     const app = info.find((p) => p.package_name === target.packageName);
-    return { installed: Boolean(app), launcherActivity: app?.launcher_activity ?? null, detail: app ? `${app.version_name ?? app.version_code ?? "?"}` : "not installed" };
+    return {
+      installed: Boolean(app),
+      launcherActivity: launcherActivityOf(app?.launcher_activity),
+      detail: app ? `${app.version_name ?? app.version_code ?? "?"}` : "not installed",
+    };
   });
   if (!launcher.installed) {
     await writeState(ctx, platform, "app_missing", null);

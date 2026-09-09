@@ -136,7 +136,12 @@ export async function openDeviceSession(
     platform: task.platform,
     wasStarted,
     close: async () => {
-      if (originalIme) await restoreIme(host, device.db_id, originalIme).catch(() => undefined);
+      // Restore the IME only when a recipe actually swapped it: `ime set` of an
+      // IME the guest cannot select (Gboard on some images) just fails noisily.
+      if (originalIme) {
+        const current = await getCurrentIme(host, device.db_id).catch(() => null);
+        if (current && current !== originalIme) await restoreIme(host, device.db_id, originalIme).catch(() => undefined);
+      }
       if (usage?.id) {
         await supabase
           .from("avatar_usage_sessions")
