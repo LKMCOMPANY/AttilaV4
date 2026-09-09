@@ -49,6 +49,10 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
   let steps = 0;
   let stopped: string | null = null;
   let dialogs = 0;
+  // Freshness telemetry for the pilot: how often the tree needed a kick, and
+  // how often it stayed stale anyway (the 1.1.3 line, measured 9/09).
+  let refreshedReads = 0;
+  let staleReads = 0;
 
   let read: TreeRead = await readTreeAfterGesture(dev, { previousHash: "", expectChange: false });
   while (Date.now() < deadline && !stopped) {
@@ -61,7 +65,10 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
         const before = read.tree.hash;
         await scrollFeed(dev, read.tree, { random });
         scrolls++;
-        read = await readTreeAfterGesture(dev, { previousHash: before, expectChange: true, settleMs: 900 });
+        const fresh = await readTreeAfterGesture(dev, { previousHash: before, expectChange: true, settleMs: 900 });
+        if (fresh.refreshed) refreshedReads++;
+        if (fresh.stale) staleReads++;
+        read = fresh;
         const classification = classifyScreen(read.tree, target.app);
         seen.push(classification.state);
         if (MAIN_STATES.includes(classification.state)) continue;
@@ -108,7 +115,19 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
     // The probe's escalation already covers a stop at launch; a stop mid-feed
     // is rarer and goes to the queue with the last proof through the runner's
     // outcome (`stopped_on_*`), which the operator sees in the task journal.
-    return { outcome: `stopped_on_${stopped}`, result: { scrolls, dialogs, minutes, duration_ms: endedAt.getTime() - startedAt.getTime() } };
+    return { outcome: `stopped_on_${stopped}`, result: sessionResult() };
   }
-  return { outcome: "session_done", result: { scrolls, dialogs, minutes, duration_ms: endedAt.getTime() - startedAt.getTime() } };
+  return { outcome: "session_done", result: sessionResult() };
+
+  function sessionResult(): Record<string, unknown> {
+    return {
+      scrolls,
+      dialogs,
+      minutes,
+      duration_ms: endedAt.getTime() - startedAt.getTime(),
+      refreshed_reads: refreshedReads,
+      stale_reads: staleReads,
+      agent_line: dev.agentLine ?? null,
+    };
+  }
 }

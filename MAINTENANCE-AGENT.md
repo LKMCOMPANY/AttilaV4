@@ -236,8 +236,33 @@ conteneurs arrêtés (décodeur ABX de `packages.xml`). Tout conteneur démarré
 - **Recensement des versions** : X ≤ 12.5 sur la majorité des images (mur),
   12.20+ sur box-3 ; ADBKeyboard présent partout où il a été vérifié.
 
-Résidu autorisé, à exécuter au début de la phase 1 : box-4 (l'arbre périmé
-vient-il de l'agent ou de l'image ?) et box-3 (relecture positive X 12.20+).
+Résidu exécuté le soir même par le chemin de production (`scripts/maintenance-task.ts`,
+file `maintenance_tasks` → `claim_maintenance_task` → session device → recette) :
+
+- **box-3, FR35, X 12.21.1** : sonde en 27,6 s, `feed_ok` (« pour vous »),
+  jumeau écrit `logged_in`. Le classifieur lit X 12.20+ ; la relecture
+  positive d'une *réponse* sur cette version attend le premier job de
+  campagne réel (aucun tweet de test posté depuis un compte client).
+- **box-4, Alya Al Ameri, TikTok 45.0.3, agent 1.1.3, image 20260511** :
+  session passive d'une minute, 3 défilements, `refreshed_reads = 2`,
+  `stale_reads = 0` — l'arbre périmé se reproduit sur box-4 comme sur box-5
+  et le kick de la barre de statut le rattrape à chaque fois. Dans la flotte,
+  l'agent 1.1.3 n'existe que sur l'image 20260511 et l'agent 1.1.1 que sur
+  l'image 20260417 : la question « agent ou image ? » n'est pas séparable par
+  observation ; la garde de fraîcheur est indexée sur la ligne d'agent, ce qui
+  suffit opérationnellement.
+- **box-4, Tarek Mansour (US56), TikTok 45.2.3** : la sonde a trouvé l'écran
+  « welcome back » — `logged_out`, preuve, bloc `avatar_platform_blocks`
+  (`logged_out`, `on_device`) et item d'attention `needs_login` critique
+  reliés : l'escalade réelle fonctionne de bout en bout.
+- **box-2, ES14, TikTok 44.8.3 ES** : sonde en 28 s, sessions passives de 1
+  et 2 min (3 et 5 défilements, `feed_ok` en continu), ligne `session` dans
+  `avatar_actions`, conteneur arrêté après chaque tâche. Trois défauts
+  corrigés à cette occasion : `launcher_activity` non-chaîne sur certains
+  agents, IME restaurée à tort (Gboard non sélectionnable), index
+  d'idempotence du registre partiel que PostgREST ne pouvait pas nommer
+  (toutes les écritures `avatar_actions`, Automator compris, échouaient —
+  migration `20260909210000`).
 
 ---
 
