@@ -30,6 +30,8 @@ describe("parseCount", () => {
     expect(parseCount("Read or add comments. 13,816 comments")).toEqual({ value: 13816, approximate: false });
     expect(parseCount("Like video 2.2M likes")).toEqual({ value: 2_200_000, approximate: true });
     expect(parseCount("Like video. 93.7K likes")).toEqual({ value: 93_700, approximate: true });
+    expect(parseCount("Dar me gusta al vídeo. 786,8 mil me gusta")).toEqual({ value: 786_800, approximate: true });
+    expect(parseCount("Dar me gusta al vídeo. 108 me gusta")).toEqual({ value: 108, approximate: false });
     expect(parseCount("Video liked")).toBeNull();
   });
 

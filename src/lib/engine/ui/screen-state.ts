@@ -136,7 +136,6 @@ const M = {
   inAppPermission: ["give tiktok access to your facebook", "access your contacts", "find your friends", "sync your contacts"],
   settingsSheet: ["viewer history", "turned on", "activé", "activado"],
   playStore: ["update available", "mise à jour disponible", "actualización disponible", "mettre à jour", "update now"],
-  comments: /^\s*(?:[\d.,\s]*[km]?)?\s*(comments?|comentarios?|commentaires?|kommentare?)\s*$/i,
   profile: ["followers", "abonnés", "seguidores", "follower"],
   profileSecondary: ["following", "abonnements", "siguiendo", "likes", "j'aime", "me gusta"],
   search: ["search", "rechercher", "buscar", "suchen"],
@@ -145,6 +144,28 @@ const M = {
 const OPAQUE_MAX_BYTES = 6_000;
 const OPAQUE_UNRESOLVED_DESC = /^@\d{8,}$/;
 const LOADING_MAX_NODES = 12;
+
+// The comments sheet title carries the count before the word ("24 comments",
+// 45.0.3 EN) or after it ("Comentarios 9", 44.9.3 ES); sometimes bare.
+const COUNT_PART = "(?:[\\d.,\\s]*(?:mil|[km])?)?";
+export const COMMENTS_TITLE_RE = new RegExp(
+  `^\\s*${COUNT_PART}\\s*(comments?|comentarios?|commentaires?|kommentare?)\\s*${COUNT_PART}\\s*$`,
+  "i",
+);
+// The composer hint, the other proof that the sheet is up.
+const COMMENT_FIELD_HINTS = ["add comment", "añadir comentario", "ajouter un commentaire", "kommentar hinzufügen"];
+
+/** The comments sheet title node, when the sheet is open. */
+export function commentsTitleNode(nodes: readonly TreeNode[]): TreeNode | null {
+  return nodes.find((n) => COMMENTS_TITLE_RE.test(n.text)) ?? null;
+}
+
+function hasCommentComposer(nodes: readonly TreeNode[]): boolean {
+  return editTexts(nodes).some((n) => {
+    const hint = n.text.trim().toLowerCase();
+    return COMMENT_FIELD_HINTS.some((h) => hint.startsWith(h));
+  });
+}
 
 function has(hay: string, markers: readonly string[]): string | null {
   for (const m of markers) if (hay.includes(m)) return m;
@@ -230,8 +251,9 @@ function classifyDialog(hay: string, nodes: readonly TreeNode[]): Partial {
 }
 
 function classifyTikTok(hay: string, nodes: readonly TreeNode[]): Partial {
-  const title = nodes.find((n) => M.comments.test(n.text));
+  const title = commentsTitleNode(nodes);
   if (title) return { state: "comments_panel", evidence: title.text };
+  if (hasCommentComposer(nodes)) return { state: "comments_panel", evidence: "comment composer hint" };
   const feed = has(hay, M.ttFeedDesc);
   if (feed) return { state: "feed_ok", evidence: feed };
   const followers = has(hay, M.profile);

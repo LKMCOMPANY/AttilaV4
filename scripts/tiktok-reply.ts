@@ -8,13 +8,12 @@
  *     --video-url "https://www.tiktok.com/@foxandfriends/video/7628192741352017165" \
  *     --text "Great video!"
  *
- * Calibration mode:
- *   npx tsx scripts/tiktok-reply.ts --calibrate --box ... --device ...
- *
- * Core logic lives in src/lib/automation/tiktok-reply.ts
+ * Core logic lives in src/lib/automation/tiktok-reply.ts (selector-based, on
+ * the engine — there are no coordinates left to calibrate). The wrapper does
+ * NOT restore the IME; only the pipeline executor does.
  */
 
-import { postTikTokComment, setPointerLocation } from "../src/lib/automation/tiktok-reply";
+import { postTikTokComment } from "../src/lib/automation/tiktok-reply";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -29,17 +28,6 @@ async function main() {
 
   if (!process.env.CF_ACCESS_CLIENT_ID || !process.env.CF_ACCESS_CLIENT_SECRET) {
     throw new Error("Missing CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET env vars");
-  }
-
-  if (args.includes("--calibrate")) {
-    const boxHost = getArg("box");
-    const dbId = getArg("device");
-    const enable = !args.includes("--off");
-    await setPointerLocation(boxHost, dbId, enable);
-    console.log(enable
-      ? "Pointer location ON — tap buttons via streaming to see X/Y coordinates"
-      : "Pointer location OFF");
-    return;
   }
 
   const boxHost = getArg("box");

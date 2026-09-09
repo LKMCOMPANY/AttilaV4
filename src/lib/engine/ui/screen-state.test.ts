@@ -26,9 +26,21 @@ describe("classifyScreen — TikTok", () => {
     expect(classifyScreen(t, "tiktok")).toMatchObject({ state: "feed_ok", topPackage: TT });
   });
 
-  it("recognises the comments panel by its title", () => {
-    const t = tree(TT, ['android.widget.TextView text="13,816 comments"', 'android.widget.EditText text="Add comment..."']);
+  it("recognises the comments panel by its title, count before or after the word", () => {
+    const en = tree(TT, ['android.widget.TextView text="13,816 comments"', 'android.widget.Button content-desc="Like video. 1 likes"']);
+    expect(classifyScreen(en, "tiktok")).toMatchObject({ state: "comments_panel", evidence: "13,816 comments" });
+    const es = tree(TT, ['android.widget.TextView text="Comentarios 9"', 'android.widget.Button content-desc="Dar me gusta al vídeo. 108 me gusta"']);
+    expect(classifyScreen(es, "tiktok")).toMatchObject({ state: "comments_panel", evidence: "Comentarios 9" });
+  });
+
+  it("recognises the comments panel by the composer hint when the title is off screen", () => {
+    const t = tree(TT, ['android.widget.EditText text="Añadir comentario..."', 'android.widget.Button content-desc="Like video. 1 likes"']);
     expect(classifyScreen(t, "tiktok").state).toBe("comments_panel");
+  });
+
+  it("does not mistake a comment body for the title", () => {
+    const t = tree(TT, ['android.widget.TextView text="great comments section here"', 'android.widget.Button content-desc="Like video. 1 likes"']);
+    expect(classifyScreen(t, "tiktok").state).toBe("feed_ok");
   });
 
   it("recognises a profile", () => {

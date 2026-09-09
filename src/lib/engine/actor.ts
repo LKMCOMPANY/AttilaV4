@@ -163,12 +163,15 @@ export async function openDeepLink(dev: DeviceRef, url: string, packageName: str
 // ---------------------------------------------------------------------------
 
 /**
- * Put text in the focused field through the ADBKeyboard broadcast. The caller
- * has clicked the field first and restores the IME afterwards (executor /
- * device session own that lifecycle).
+ * Put text in a field through the ADBKeyboard broadcast. The IME swap steals
+ * focus, so the field is clicked again between the swap and the broadcast
+ * (the sequence that landed text on every build measured). The caller
+ * restores the IME afterwards (executor / device session own that lifecycle).
  */
-export async function typeIntoFocusedField(dev: DeviceRef, text: string): Promise<void> {
+export async function typeIntoField(dev: DeviceRef, field: TreeNode, text: string): Promise<void> {
   await activateAdbKeyboard(dev.tunnelHostname, dev.dbId);
+  await clickNode(dev, field);
+  await new Promise((r) => setTimeout(r, 800));
   await typeText(dev.tunnelHostname, dev.dbId, text);
 }
 

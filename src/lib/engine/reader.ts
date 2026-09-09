@@ -100,9 +100,12 @@ export interface FreshReadOptions {
 
 /**
  * Read after a gesture, refreshing when the tree did not move although it
- * should have. On 1.1.1 a second read after a short wait is enough; on 1.1.3
- * the cache needs a kick, unless forbidden — then the caller gets the stale
- * tree flagged as such and must verify through a window transition.
+ * should have. First a short wait and a re-read (enough on 1.1.1 most of the
+ * time — but a sheet opening was still stale after 3 s on 44.8.3); if the
+ * tree is still identical, the cache is kicked unless forbidden. On the 1.1.3
+ * line the kick comes first, since waiting never helps there. With `noKick`
+ * the caller gets the stale tree flagged as such and verifies through a
+ * window transition.
  */
 export async function readTreeAfterGesture(
   dev: DeviceRef,
@@ -114,16 +117,23 @@ export async function readTreeAfterGesture(
     return { ...first, stale: false };
   }
 
-  if (treeGoesStaleAfterGestures(dev)) {
-    if (opts.noKick) return { ...first, stale: true };
-    await kickAccessibilityTree(dev);
-  } else {
-    await sleep(EMPTY_TREE_RETRY_MS);
+  let durationMs = first.durationMs;
+  let last = first;
+  const attempts: Array<"wait" | "kick"> = treeGoesStaleAfterGestures(dev) ? ["kick"] : ["wait", "kick"];
+  for (const attempt of attempts) {
+    if (attempt === "kick") {
+      if (opts.noKick) break;
+      await kickAccessibilityTree(dev);
+    } else {
+      await sleep(EMPTY_TREE_RETRY_MS);
+    }
+    last = await readTree(dev);
+    durationMs += last.durationMs;
+    if (last.tree.hash !== opts.previousHash) {
+      return { ...last, refreshed: true, durationMs, stale: false };
+    }
   }
-
-  const second = await readTree(dev);
-  const stale = second.tree.hash === opts.previousHash;
-  return { ...second, refreshed: true, durationMs: first.durationMs + second.durationMs, stale };
+  return { ...last, refreshed: last !== first, durationMs, stale: true };
 }
 
 export function sleep(ms: number): Promise<void> {

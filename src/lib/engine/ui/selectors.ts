@@ -63,6 +63,7 @@ const TT = "com.zhiliaoapp.musically:id/";
 
 // versionCode = 20 2 MM mm pp 0 for TikTok (44.8.3 → 2024408030).
 const TT_44_8_3 = 2024408030;
+const TT_44_9_3 = 2024409030;
 const TT_45_0_3 = 2024500030;
 const TT_45_9_3 = 2024509030;
 
@@ -70,21 +71,26 @@ export const SELECTOR_SEEDS: Record<SelectorKey, SelectorCandidate[]> = {
   "tiktok.like_button": [
     { matcher: { by: "desc_contains", value: "Like video" }, priority: 10, language: "en", note: "44.8–45.9" },
     { matcher: { by: "desc_contains", value: "J'aime la vidéo" }, priority: 10, language: "fr" },
-    { matcher: { by: "desc_contains", value: "Me gusta el video" }, priority: 10, language: "es" },
+    { matcher: { by: "desc_contains", value: "Dar me gusta" }, priority: 10, language: "es", note: "Dar me gusta al vídeo. N me gusta" },
+    { matcher: { by: "resource_id", value: `${TT}fia` }, versionMin: TT_44_9_3, versionMax: TT_44_9_3, priority: 20 },
     { matcher: { by: "resource_id", value: `${TT}fn3` }, versionMin: TT_45_0_3, versionMax: TT_45_0_3, priority: 20 },
     { matcher: { by: "resource_id", value: `${TT}fsv` }, versionMin: TT_45_9_3, versionMax: TT_45_9_3, priority: 20 },
   ],
   "tiktok.comments_button": [
     { matcher: { by: "desc_contains", value: "comments" }, priority: 10, language: "en", note: "Read or add comments. N comments" },
     { matcher: { by: "desc_contains", value: "commentaires" }, priority: 10, language: "fr" },
-    { matcher: { by: "desc_contains", value: "comentarios" }, priority: 10, language: "es" },
+    { matcher: { by: "desc_contains", value: "comentarios" }, priority: 10, language: "es", note: "Leer o añadir comentarios. N comentarios" },
+    { matcher: { by: "resource_id", value: `${TT}e4q` }, versionMin: TT_44_9_3, versionMax: TT_44_9_3, priority: 20 },
+    { matcher: { by: "resource_id", value: `${TT}e8n` }, versionMin: TT_45_0_3, versionMax: TT_45_0_3, priority: 20 },
   ],
   "tiktok.comment_field": [
     { matcher: { by: "resource_id", value: `${TT}e02` }, versionMin: TT_44_8_3, versionMax: TT_44_8_3, priority: 10 },
+    { matcher: { by: "resource_id", value: `${TT}e07` }, versionMin: TT_44_9_3, versionMax: TT_44_9_3, priority: 10, note: "hint Añadir comentario…" },
     { matcher: { by: "edit_text" }, priority: 50 },
   ],
   "tiktok.send_button": [
     { matcher: { by: "resource_id", value: `${TT}cj9` }, versionMin: TT_44_8_3, versionMax: TT_44_8_3, priority: 10, note: "content-desc is an unresolved @213… string" },
+    { matcher: { by: "resource_id", value: `${TT}cjh` }, versionMin: TT_44_9_3, versionMax: TT_44_9_3, priority: 10, note: "desc @2131953943" },
   ],
   "tiktok.follow_button": [
     { matcher: { by: "text", value: "Follow" }, priority: 50, language: "en", note: "profile header; non-clickable TextView, click still lands" },

@@ -26,19 +26,23 @@ export interface ParsedCount {
   approximate: boolean;
 }
 
-const COUNT_RE = /(\d[\d.,\s]*)\s*([kKmM])?/;
+// Number, optional abbreviation: EN "93.7K" / "2.2M", ES/PT "786,8 mil" / "1,2 M",
+// FR "786,8 k" / "1,2 M". A decimal comma before an abbreviation is a decimal.
+const COUNT_RE = /(\d[\d.,\s]*)\s*(mil\b|[kKmM]\b)?/;
 
 /** Parse the leading number of a label. Null when there is none. */
 export function parseCount(label: string): ParsedCount | null {
   const m = COUNT_RE.exec(label.replace(/\u00a0/g, " "));
   if (!m) return null;
-  const digits = m[1].replace(/[\s,]/g, "");
   const suffix = m[2]?.toLowerCase();
+  const raw = m[1].replace(/\s/g, "");
+  // With an abbreviation, "," and "." are both decimal marks ("786,8 mil").
+  // Without one, "," groups thousands ("13,816") and "." makes it not a count.
+  const digits = suffix ? raw.replace(",", ".") : raw.replace(/,/g, "");
   const n = Number(digits);
   if (!Number.isFinite(n)) return null;
-  if (suffix === "k") return { value: Math.round(n * 1_000), approximate: true };
+  if (suffix === "k" || suffix === "mil") return { value: Math.round(n * 1_000), approximate: true };
   if (suffix === "m") return { value: Math.round(n * 1_000_000), approximate: true };
-  // "2.2" without suffix is not a count; "1,234" is.
   if (digits.includes(".")) return null;
   return { value: n, approximate: false };
 }
@@ -84,8 +88,10 @@ export function fieldsEmpty(tree: CompactTree, hints: readonly string[] = []): b
 
 export type LikeState = "liked" | "not_liked" | "unknown";
 
-const LIKED_DESC = ["video liked", "vidéo aimée", "video marcado como me gusta", "unlike"];
-const NOT_LIKED_DESC = ["like video", "j'aime la vidéo", "me gusta el video"];
+// EN measured on 45.0.3 / 45.9.3; ES "Dar me gusta al vídeo" measured on 44.9.3;
+// the ES/FR liked forms are best guesses to be confirmed on a device.
+const LIKED_DESC = ["video liked", "vidéo aimée", "quitar me gusta", "unlike"];
+const NOT_LIKED_DESC = ["like video", "j'aime la vidéo", "dar me gusta"];
 
 export function likeState(tree: CompactTree): LikeState {
   for (const marker of LIKED_DESC) if (findByDescContains(tree.nodes, marker).length > 0) return "liked";
@@ -93,10 +99,13 @@ export function likeState(tree: CompactTree): LikeState {
   return "unknown";
 }
 
-/** The like count shown next to the heart, when the platform shows one. */
+/** The like count carried by the heart's description, when the platform puts one there. */
 export function likeCount(tree: CompactTree): ParsedCount | null {
-  const like = [...findByDescContains(tree.nodes, "like video"), ...findByDescContains(tree.nodes, "video liked")][0];
-  return like ? parseCount(like.contentDesc) : null;
+  for (const marker of [...NOT_LIKED_DESC, ...LIKED_DESC]) {
+    const node = findByDescContains(tree.nodes, marker)[0];
+    if (node) return parseCount(node.contentDesc);
+  }
+  return null;
 }
 
 /**
