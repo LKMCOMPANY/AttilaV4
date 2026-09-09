@@ -284,6 +284,30 @@ export async function recordPackageAudit(
 }
 
 /**
+ * Persist observed app builds for a device (`device_app_versions`, one row per
+ * package). `rows` = [{ package, versionName, versionCode }]; `source` says
+ * whether they were read online (Control API v2) or offline (packages.xml).
+ */
+export async function recordAppVersions(deviceId, rows, source) {
+  if (rows.length === 0) return null;
+  const checkedAt = new Date().toISOString();
+  return supabaseFetch("device_app_versions?on_conflict=device_id,package", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify(
+      rows.map((r) => ({
+        device_id: deviceId,
+        package: r.package,
+        version_name: r.versionName ?? null,
+        version_code: r.versionCode ?? null,
+        checked_at: checkedAt,
+        source,
+      })),
+    ),
+  });
+}
+
+/**
  * Persist a boot verdict. `state='running'` from VMOS is not proof a device can
  * serve a job — this is, and the automator can filter on it.
  */
