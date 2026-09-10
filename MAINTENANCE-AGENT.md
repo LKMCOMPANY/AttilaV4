@@ -500,6 +500,18 @@ aussi contre elles (test de régression sur le cas ES10). Les 4 doublons encore
 45 s — budget de chargement porté à 60 s), US47 TikTok `logged_in` ; ES10 et
 US47 `coherence` justes, `app_check` ok.
 
+10/09 20h05 — **bilan de la première soirée de la cohorte box-1** (depuis
+17h36) : 16 sondes `logged_in` + 1 faux `unknown` corrigé, 8 `app_check` ok,
+8 `coherence` justes, 19 sessions `skipped / observe_mode` à l'heure prévue,
+4 doublons annulés ; 18 jumeaux `logged_in` sur 18 sondés (DE3, ES2, ES10,
+ES14, FR8, FR19, GB2, GB4, US36, US43, US44, US47), aucun conteneur laissé
+`running`, aucune erreur serveur (journaux Render `error` vides), une seule
+alerte ouverte par le mainteneur (le `needs_login` réel de US56). Le tick de
+redémarrage après `67e95be` n'a posé qu'une session légitime (US47 X, tranche
+du matin libérée par l'annulation d'un doublon). Restent ce soir : FR19 TikTok
+(21h52), US41 X (02h51) et US47 X (03h57), puis la planification de demain à
+minuit locale.
+
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
 `failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant
