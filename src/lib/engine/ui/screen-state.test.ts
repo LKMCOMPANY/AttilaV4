@@ -105,6 +105,34 @@ describe("classifyScreen — TikTok", () => {
     expect(classifyScreen(tree(TT, ['android.widget.FrameLayout resource-id="x"']), "tiktok").state).toBe("loading");
     expect(classifyScreen(parseCompactTree(""), "tiktok").state).toBe("empty_tree");
   });
+
+  // US43, 10 September 2026: an X heads-up notification over the TikTok splash.
+  it("ignores a System UI heads-up notification floating over a loading app", () => {
+    const systemUi = (i: number, attrs: string) =>
+      `  [${i}] ${attrs} package="com.android.systemui" enabled=true bounds=[20,40][1060,${60 + i * 40}]`;
+    const splash = Array.from({ length: 5 }, (_, i) => `  [${i + 10}] android.widget.FrameLayout package="${TT}" enabled=true bounds=[0,0][1080,2340]`);
+    const t = parseCompactTree(
+      [
+        "Screen 1080x2340 rotation=0",
+        systemUi(0, 'android.widget.TextView text="X"'),
+        systemUi(1, 'android.widget.TextView text="Adam Sandler has been…"'),
+        systemUi(2, 'android.widget.Button text="REPLY" clickable=true'),
+        systemUi(3, 'android.widget.Button text="REPOST" clickable=true'),
+        systemUi(4, 'android.widget.Button text="LIKE" clickable=true'),
+        ...Array.from({ length: 8 }, (_, i) => systemUi(5 + i, "android.widget.FrameLayout")),
+        ...splash,
+      ].join("\n"),
+    );
+    expect(t.nodes.length).toBeGreaterThan(12);
+    expect(classifyScreen(t, "tiktok")).toMatchObject({ state: "loading", topPackage: TT });
+  });
+
+  it("still reads a tree that is System UI only", () => {
+    const t = parseCompactTree(
+      ["Screen 1080x2340 rotation=0", '[0] android.widget.FrameLayout package="com.android.systemui" enabled=true bounds=[0,0][1080,2340]'].join("\n"),
+    );
+    expect(classifyScreen(t, "tiktok")).toMatchObject({ state: "loading", topPackage: "com.android.systemui" });
+  });
 });
 
 describe("classifyScreen — X", () => {

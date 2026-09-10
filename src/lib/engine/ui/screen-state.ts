@@ -98,6 +98,14 @@ const SYSTEM_PERMISSION_PACKAGES = [
   "com.google.android.permissioncontroller",
 ];
 const PLAY_STORE_PACKAGE = "com.android.vending";
+/**
+ * Windows that float over the app without being the screen: a heads-up
+ * notification, the status bar, a volume panel. Measured 10 September 2026 on
+ * box-1 (US43): an X notification ("REPLY REPOST LIKE") over the TikTok splash
+ * lifted a 6-node loading tree above the loading threshold and a probe called
+ * the feed `unknown`. Ignored whenever the app itself has nodes in the tree.
+ */
+const TRANSIENT_OVERLAY_PACKAGES = ["com.android.systemui"];
 
 // Marker lists are lower-case substrings; EN / FR / ES / DE as met on the fleet.
 const M = {
@@ -176,13 +184,19 @@ function decided(state: ScreenState, evidence: string, topPackage: string | null
   return { state, evidence, topPackage };
 }
 
+/** The tree minus System UI windows — unless System UI is all there is. */
+function withoutTransientOverlays(nodes: readonly TreeNode[]): readonly TreeNode[] {
+  const kept = nodes.filter((n) => !TRANSIENT_OVERLAY_PACKAGES.includes(n.packageName));
+  return kept.length > 0 ? kept : nodes;
+}
+
 /**
  * Classify the top window. Order matters: system windows and security states
  * are decided before any content marker, because a dialog hides the feed
  * underneath it (the tree then contains only the dialog).
  */
 export function classifyScreen(tree: CompactTree, app: SocialApp): Classification {
-  const { nodes } = tree;
+  const nodes = withoutTransientOverlays(tree.nodes);
   const packages = packagesOf(nodes);
   const top = packages[0] ?? null;
   if (nodes.length === 0) return decided("empty_tree", "no nodes", top);

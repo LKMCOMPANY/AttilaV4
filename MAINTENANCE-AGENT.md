@@ -424,6 +424,65 @@ mode `observe`, cohorte = ES14 (Yassine Benomar, box-2) ; première sonde
 exécutée par le worker Render en 17 s (`logged_in`, conteneur arrêté après).
 Le planificateur remplit la journée d'ES14 à partir de 8 h locales.
 
+10/09 16h30 — **première nuit relue** (logs Render, `maintenance_tasks`,
+`attention_items`). Ce qui a marché : la journée a été planifiée à minuit
+locale (00h24 Madrid) pour les deux plateformes d'ES14, puis pour Lina Haddad
+(box-1, agent 1.0.8, activée depuis l'onglet Maintenance) ; 6 sondes
+`logged_in`, 3 `coherence` justes (Madrid / New York), 4 sessions `skipped /
+observe_mode` à l'heure prévue, aucun conteneur laissé `running`, aucune erreur
+serveur ; la coupure des tunnels de 11h27 (502 sur box-1/2/3/5) a été absorbée
+par Reconcile. Trois défauts corrigés dans la journée (commit `224288d`,
+migration `20260910142443`) :
+1. les deux workers Maintain ont réclamé sonde, `app_check` et `coherence` du
+   même device à deux secondes d'intervalle — la réclamation exclut désormais
+   tout device qui porte déjà une tâche `running` ;
+2. la route hôte → agent v2 de box-1 a répondu « no route to host » et la sonde
+   a lu ce silence comme « X non installé » (fausse alerte `app_missing`) —
+   `readPackages()` interroge l'agent v2 puis le shell invité (`dumpsys
+   package`) et n'affirme « absent » que sur une réponse ; un device muet fait
+   échouer le pas ;
+3. un avatar à deux plateformes recevait `app_check` et `coherence` deux fois
+   par jour — les contrôles device sont planifiés une fois par avatar ; et
+   `app_check` ne juge plus le mur X sur le seul numéro de build : X 11.86 a
+   ouvert son fil sur box-2 ce matin alors que le recensement le disait muré.
+   La sonde, qui voit l'écran, ouvre et résout `app_outdated`.
+Les deux fausses alertes ont été résolues par `system` (audit_log). La file
+porte par ailleurs 21 alertes de santé de flotte (15 `account_missing`, 6
+`suspended_decision`, source TikHub) et le `needs_login` réel de US56 : à
+trier par un humain.
+
+10/09 17h40 — **cohorte élargie à box-1** (commit `64eea6e`). Le repli shell de
+`readPackages()` échouait encore sur box-1 : `dumpsys package X | grep -m2`
+fermait le tube après deux lignes, `dumpsys` mourait en « Broken pipe » et le
+shell invité rendait un échec (code 201) alors que les deux lignes étaient là ;
+`grep` lit désormais jusqu'à la fin et une sentinelle distingue « aucun
+résultat » (paquet absent) de « le shell n'a pas répondu ». Mesure sur DE3
+(Felix Hoffmann, box-1, agent **1.0.8**, image 20260307) par le chemin de
+production : sonde TikTok 44.8.3 `feed_ok` (« für dich ») en 37 s, sonde X
+11.96.0 `feed_ok` en 29 s, route v2 joignable — la ligne 1.0.8 lit l'arbre
+correctement ; le `unreadable` d'X sur US36 est un cas device, pas un cas
+d'agent. Sur demande de l'opérateur, `maintenance_enabled` passe à vrai (profil
+`mature`, J0 inchangé, mode toujours `observe`) pour les 11 avatars restants de
+l'armée **« army user » du compte Argus** — 12 avatars, tous sur box-1, 7 TikTok
++ 12 X (19 comptes) ; changement tracé dans `audit_log` (`maintenance.enable`, acteur
+`system`). Cohorte au 10/09 : 13 avatars (ES14 sur box-2, 12 sur box-1).
+
+10/09 18h10 — **premier tick planifié pour la cohorte** (18h07) : 57 tâches
+posées dans la journée locale de chaque persona (les US entre 19h41 et 22h11
+New York), un device à la fois. Premiers résultats : ES2, GB2 sondes
+`logged_in` (« leer o añadir comentarios », « for you »), `coherence` justes
+(Madrid, Londres, New York, proxy on), `app_check` ok par la route v2. Un faux
+`unknown` : sur US43, une notification heads-up d'X (« REPLY REPOST LIKE »,
+paquet `com.android.systemui`) flottait sur le splash TikTok 4 s après le
+lancement ; ses nœuds ont fait passer un arbre de chargement au-dessus du seuil
+`loading` et la sonde a ouvert `dialog_unknown` (preuve `03-settle.jpg`).
+Corrigé : le classifieur ignore les fenêtres System UI quand l'app a des nœuds
+(test sur l'arbre mesuré), et `settleApp` borne le chargement par le temps
+(45 s — TikTok 44.6 a mis 23 s sur ES2, l'ancien plafond de 8 tours en valait
+22) plutôt que par le nombre de tours, les fermetures de dialogues par le
+nombre (8), et n'accepte `unknown` qu'après deux lectures d'accord. L'alerte a
+été résolue par `system` (audit_log).
+
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
 `failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant

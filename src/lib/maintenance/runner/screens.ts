@@ -62,38 +62,54 @@ export interface SettleResult {
 /** States a session can proceed from. */
 export const MAIN_STATES: readonly ScreenState[] = ["feed_ok", "post_detail", "comments_panel", "profile", "search"];
 
-const SETTLE_MAX_ROUNDS = 8;
+/** Dialogs cleared in one settle before giving up (a sheet that comes back is not "settling"). */
+const SETTLE_MAX_DISMISSALS = 8;
 const SETTLE_REREAD_MS = 1_500;
+/**
+ * How long an app may keep loading before the screen is declared unreadable.
+ * Measured 10 September 2026 on box-1: TikTok 44.6 reached its feed after 23 s,
+ * a hair under the former 8-round cap (~22 s) that had already called X on
+ * US36 unreadable while it was still loading.
+ */
+const SETTLE_LOADING_MAX_MS = 45_000;
+/** Consecutive reads that must agree before an `unknown` screen is believed. */
+const UNKNOWN_CONFIRM_READS = 2;
 
 /**
  * Read, classify, and clear what can safely be cleared (a "Not now", a denied
  * permission, the free option of a plan sheet, BACK on a stray sheet) until the
  * app shows a main screen or a state nobody may touch (`stop`: logged out,
  * bouncer, version wall…). Never clicks OK / Allow / Log in / Update.
+ *
+ * Loading is bounded by time, dismissals by count, and `unknown` needs two
+ * reads in a row: right after a launch the first tree is often a screen in
+ * transition, not the screen the app ends on.
  */
 export async function settleApp(dev: DeviceRef, app: SocialApp): Promise<SettleResult> {
   const dismissed: ScreenState[] = [];
+  const startedAt = Date.now();
+  let unknownReads = 0;
   let read = await readTree(dev);
   let classification = classifyScreen(read.tree, app);
-  for (let round = 0; round < SETTLE_MAX_ROUNDS; round++) {
+  for (;;) {
     const reaction = SAFE_REACTION[classification.state];
-    if (reaction === "proceed" || reaction === "stop" || reaction === "vision") break;
-    if (reaction === "reread") {
-      await sleep(SETTLE_REREAD_MS);
-    } else if (reaction === "back") {
-      dismissed.push(classification.state);
-      await pressBack(dev);
-      await sleep(SETTLE_REREAD_MS);
+    if (reaction === "proceed" || reaction === "stop") break;
+    unknownReads = reaction === "vision" ? unknownReads + 1 : 0;
+    if (reaction === "vision") {
+      if (unknownReads >= UNKNOWN_CONFIRM_READS) break;
+    } else if (reaction === "reread") {
+      if (Date.now() - startedAt >= SETTLE_LOADING_MAX_MS) break;
     } else {
-      const affordance = findSafeAffordance(classification.state, read.tree.nodes);
+      if (dismissed.length >= SETTLE_MAX_DISMISSALS) break;
       dismissed.push(classification.state);
+      const affordance = reaction === "back" ? null : findSafeAffordance(classification.state, read.tree.nodes);
       if (affordance) {
         await clickNode(dev, affordance);
       } else {
         await pressBack(dev);
       }
-      await sleep(SETTLE_REREAD_MS);
     }
+    await sleep(SETTLE_REREAD_MS);
     read = await readTree(dev);
     classification = classifyScreen(read.tree, app);
   }
