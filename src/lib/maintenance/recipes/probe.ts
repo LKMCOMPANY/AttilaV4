@@ -1,10 +1,10 @@
-import { fetchPackageInfo } from "@/lib/box-api";
 import { closeBlock, openBlock } from "@/lib/account-state/blocks";
 import { sleep } from "@/lib/engine/reader";
 import { classifyScreen, type Classification } from "@/lib/engine/ui/screen-state";
 import type { OnDeviceStatus, SocialPlatform } from "@/types";
 import { openAttention, resolveAttentionForTarget } from "../attention";
-import { appFor, launcherActivityOf, openApp, settleApp, statusFromScreen, MAIN_STATES } from "../runner/screens";
+import { readPackages } from "../runner/packages";
+import { appFor, openApp, settleApp, statusFromScreen, MAIN_STATES } from "../runner/screens";
 import { runVisionAgent } from "../runner/vision-agent";
 import type { RecipeContext, RecipeResult } from "./context";
 
@@ -28,13 +28,14 @@ export async function runProbe(ctx: RecipeContext): Promise<RecipeResult> {
   }
 
   const { dev } = ctx.session;
+  // "Not installed" is asserted only by a reader that answered (v2, or the
+  // guest shell); a device that answers nothing fails the step instead.
   const launcher = await ctx.journal.step("resolve_app", async () => {
-    const info = await fetchPackageInfo(dev.tunnelHostname, dev.dbId, [target.packageName]).catch(() => []);
-    const app = info.find((p) => p.package_name === target.packageName);
+    const [app] = await readPackages(dev, [target.packageName]);
     return {
-      installed: Boolean(app),
-      launcherActivity: launcherActivityOf(app?.launcher_activity),
-      detail: app ? `${app.version_name ?? app.version_code ?? "?"}` : "not installed",
+      installed: app.installed,
+      launcherActivity: app.launcherActivity,
+      detail: app.installed ? `${app.versionName ?? app.versionCode ?? "?"} (${app.source})` : `not installed (${app.source})`,
     };
   });
   if (!launcher.installed) {
@@ -135,14 +136,14 @@ async function escalate(ctx: RecipeContext, platform: SocialPlatform, status: On
     case "logged_in": {
       await resolveAttentionForTarget(supabase, accountTarget, "reprobe", ACCOUNT_REASONS_CLEARED_BY_LOGIN);
       await closeBlock(supabase, { avatarId, platform, resolvedBy: "maintainer" });
-      if (platform === "twitter") {
-        await resolveAttentionForTarget(
-          supabase,
-          { accountId, scope: "device", deviceId: session.device.id },
-          "reprobe",
-          ["app_outdated"],
-        );
-      }
+      // The app opened and showed its feed: it is installed, and — for X —
+      // not behind the version wall, whatever the build number suggested.
+      await resolveAttentionForTarget(
+        supabase,
+        { accountId, scope: "device", deviceId: session.device.id },
+        "reprobe",
+        platform === "twitter" ? ["app_missing", "app_outdated"] : ["app_missing"],
+      );
       return;
     }
     case "logged_out": {

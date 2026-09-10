@@ -88,12 +88,15 @@ async function planAvatarPlatform(
   const dayStart = zonedInstant(tz, { ...today, hour: 0, minute: 0 });
   const dayEnd = new Date(dayStart.getTime() + 86_400_000);
 
+  // Today's rows are read for the whole avatar: sessions and probes are per
+  // platform, but app_check and coherence are about the DEVICE — planned
+  // once a day however many accounts the avatar operates (10 September: a
+  // two-platform avatar got both checks twice a day).
   const [{ data: todayRows }, { data: state }, { data: lastChecks }] = await Promise.all([
     supabase
       .from("maintenance_tasks")
       .select("platform, kind, status, finished_at")
       .eq("avatar_id", avatar.id)
-      .eq("platform", platform)
       .gte("scheduled_for", dayStart.toISOString())
       .lt("scheduled_for", dayEnd.toISOString())
       .neq("status", "cancelled"),
@@ -105,20 +108,21 @@ async function planAvatarPlatform(
       .maybeSingle(),
     supabase
       .from("maintenance_tasks")
-      .select("kind, finished_at")
+      .select("kind, platform, finished_at")
       .eq("avatar_id", avatar.id)
-      .eq("platform", platform)
       .in("status", ["done", "failed"])
       .in("kind", ["app_check", "coherence", "relogin"])
       .order("finished_at", { ascending: false })
       .limit(30),
   ]);
 
-  const rows = (todayRows ?? []) as TodayRow[];
+  const allRows = (todayRows ?? []) as TodayRow[];
+  const rows = allRows.filter((r) => r.platform === platform);
   const sessionsToday = rows.filter((r) => r.kind === "social_session" && r.status !== "failed").length;
   const probedToday = rows.some((r) => (r.kind === "probe" || r.kind === "warmup") && r.status !== "failed");
   const lastOf = (kind: MaintenanceTaskKind) => {
-    const hit = (lastChecks ?? []).find((r) => r.kind === kind && r.finished_at);
+    // Device-level checks count whatever platform ran them; a re-login is per account.
+    const hit = (lastChecks ?? []).find((r) => r.kind === kind && r.finished_at && (kind !== "relogin" || r.platform === platform));
     return hit ? new Date(hit.finished_at as string) : null;
   };
 
@@ -142,9 +146,13 @@ async function planAvatarPlatform(
     reloginCooldownHours: settings.reloginCooldownHours,
   });
 
-  // Weekly checks already on the books today (any status but failed) are not
-  // re-planned either — the planner cannot see them through its inputs.
-  const alreadyToday = new Set(rows.filter((r) => r.status !== "failed").map((r) => r.kind));
+  // Weekly checks already on the books today (any status but failed, any
+  // platform) are not re-planned either — the planner cannot see them through
+  // its inputs. Probes and re-logins stay per platform.
+  const deviceKinds = new Set<MaintenanceTaskKind>(["app_check", "coherence"]);
+  const alreadyToday = new Set(
+    allRows.filter((r) => r.status !== "failed" && (deviceKinds.has(r.kind) || r.platform === platform)).map((r) => r.kind),
+  );
   const fresh = plan.filter((t) => t.kind === "social_session" || !alreadyToday.has(t.kind));
   if (fresh.length === 0) return 0;
 
