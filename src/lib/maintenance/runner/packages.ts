@@ -67,12 +67,26 @@ export async function readPackages(dev: DeviceRef, packageNames: readonly string
   }
 }
 
+/** Printed after the filter: proof the shell ran to the end, whatever grep found. */
+const SHELL_SENTINEL = "__attila_pkg_done__";
+
+/**
+ * `dumpsys` must be read to EOF: a `grep -m2` that exits early closes the pipe,
+ * dumpsys dies of "Broken pipe" and the guest shell reports a failure although
+ * the two lines were there (measured 10 September 2026 on box-1). So grep reads
+ * everything, and a sentinel tells "no match" (package absent) apart from "the
+ * shell did not answer" — only the latter is an error.
+ */
 async function readOneViaShell(dev: DeviceRef, pkg: string): Promise<PackageFacts> {
-  const result = await shellSafe(dev.tunnelHostname, dev.dbId, `dumpsys package ${pkg} | grep -m2 -E 'versionCode=|versionName='`);
-  if (!result || result.code !== 200) {
+  const result = await shellSafe(
+    dev.tunnelHostname,
+    dev.dbId,
+    `dumpsys package ${pkg} 2>/dev/null | grep -E 'versionCode=|versionName='; echo ${SHELL_SENTINEL}`,
+  );
+  if (!result || !result.message.includes(SHELL_SENTINEL)) {
     throw new PackageReadError(dev.dbId, `neither the v2 agent nor the shell answered for ${pkg}`);
   }
-  const parsed = parseDumpsysPackage(result.message);
+  const parsed = parseDumpsysPackage(result.message.replace(SHELL_SENTINEL, ""));
   return {
     packageName: pkg,
     installed: parsed.found,
