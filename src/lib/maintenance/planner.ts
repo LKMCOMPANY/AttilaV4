@@ -24,7 +24,7 @@ interface TodayRow {
   platform: SocialPlatform | null;
   kind: MaintenanceTaskKind;
   status: string;
-  finished_at: string | null;
+  scheduled_for: string;
 }
 
 export interface PlanReport {
@@ -95,7 +95,7 @@ async function planAvatarPlatform(
   const [{ data: todayRows }, { data: state }, { data: lastChecks }] = await Promise.all([
     supabase
       .from("maintenance_tasks")
-      .select("platform, kind, status, finished_at")
+      .select("platform, kind, status, scheduled_for")
       .eq("avatar_id", avatar.id)
       .gte("scheduled_for", dayStart.toISOString())
       .lt("scheduled_for", dayEnd.toISOString())
@@ -118,7 +118,7 @@ async function planAvatarPlatform(
 
   const allRows = (todayRows ?? []) as TodayRow[];
   const rows = allRows.filter((r) => r.platform === platform);
-  const sessionsToday = rows.filter((r) => r.kind === "social_session" && r.status !== "failed").length;
+  const sessionsToday = rows.filter((r) => r.kind === "social_session" && r.status !== "failed").map((r) => new Date(r.scheduled_for));
   const probedToday = rows.some((r) => (r.kind === "probe" || r.kind === "warmup") && r.status !== "failed");
   const lastOf = (kind: MaintenanceTaskKind) => {
     // Device-level checks count whatever platform ran them; a re-login is per account.

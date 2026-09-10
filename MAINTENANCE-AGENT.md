@@ -481,7 +481,24 @@ Corrigé : le classifieur ignore les fenêtres System UI quand l'app a des nœud
 (45 s — TikTok 44.6 a mis 23 s sur ES2, l'ancien plafond de 8 tours en valait
 22) plutôt que par le nombre de tours, les fermetures de dialogues par le
 nombre (8), et n'accepte `unknown` qu'après deux lectures d'accord. L'alerte a
-été résolue par `system` (audit_log).
+été résolue par `system` (audit_log). Vérification à 18h25, correctif déployé
+(`4adf7a8`) : sonde TikTok US43 `logged_in` (« like video », settle 10 s) et
+sonde X US36 `logged_in` (« for you », settle 2,5 s) — le `unreadable` de la
+nuit sur US36 était un chargement à froid, pas un défaut de l'agent 1.0.8. À
+18h30 : 9 jumeaux `logged_in`, 0 alerte ouverte par le mainteneur, aucun
+conteneur `running` hors tâche, sessions `skipped / observe_mode` à l'heure.
+
+10/09 19h20 — **idempotence des sessions**. Le tick de redémarrage de 18h22 a
+posé une deuxième session à une minute de celle de 18h07 (ES10 18h45/18h46,
+FR19 18h48/18h49, DE3 22h38/22h39…) : le planificateur ne recevait que le
+NOMBRE de sessions déjà au programme et supposait qu'elles occupaient les
+premières tranches de la journée. Il reçoit désormais leurs heures : la tranche
+qu'elles occupent est prise, où qu'elle soit, et l'écart de 150 min se mesure
+aussi contre elles (test de régression sur le cas ES10). Les 4 doublons encore
+`scheduled` ont été annulés par `system` (audit_log) ; les autres avaient déjà
+été `skipped` sans geste. Sondes de la soirée : FR19 X, ES10 TikTok (settle
+45 s — budget de chargement porté à 60 s), US47 TikTok `logged_in` ; ES10 et
+US47 `coherence` justes, `app_check` ok.
 
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches

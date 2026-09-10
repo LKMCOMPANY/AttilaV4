@@ -27,7 +27,7 @@ function input(over: Partial<PlannerInput> = {}): PlannerInput {
     dayZero: null,
     budget: MATURE,
     activeHours: { start: 8, end: 23 },
-    sessionsToday: 0,
+    sessionsToday: [],
     probedToday: false,
     lastSessionAt: new Date("2026-09-08T15:00:00.000Z"),
     lastProbeAt: new Date("2026-09-08T08:00:00.000Z"),
@@ -121,7 +121,23 @@ describe("plan of the day", () => {
   });
 
   it("plans nothing more once the day is full and probed", () => {
-    expect(planDay(input({ sessionsToday: 2, probedToday: true }))).toEqual([]);
+    expect(planDay(input({ sessionsToday: [paris("10:30"), paris("17:15")], probedToday: true }))).toEqual([]);
+  });
+
+  // ES10, 10 September 2026: a second tick a quarter of an hour after the first
+  // planned a new session one minute next to the one already on the books.
+  it("does not plan a session into a slice that already holds one, nor within the gap of it", () => {
+    // 18:22 Paris, budget 2: the afternoon slice holds 18:45, the morning slice is past.
+    const booked = paris("18:45");
+    const second = planDay(input({ now: paris("18:22"), sessionsToday: [booked], probedToday: true }));
+    expect(second.filter((t) => t.kind === "social_session")).toEqual([]);
+
+    // 13:00 Paris with a morning session done at 10:00: exactly one afternoon session, far enough from it.
+    const afternoon = planDay(input({ now: paris("13:00"), sessionsToday: [paris("10:00")], probedToday: true }));
+    const sessions = afternoon.filter((t) => t.kind === "social_session");
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].scheduledFor.getTime() - paris("10:00").getTime()).toBeGreaterThanOrEqual(MIN_SESSION_GAP_MIN * 60_000);
+    expect(localParts(sessions[0].scheduledFor, "Europe/Paris").hour).toBeGreaterThanOrEqual(15);
   });
 
   it("keeps only the slots still ahead when planning late in the day", () => {
@@ -141,7 +157,7 @@ describe("plan of the day", () => {
       expect(localParts(task.scheduledFor, "Europe/Paris").hour).toBeGreaterThanOrEqual(8);
     }
     // 23:30 Paris with the day full: nothing at all.
-    expect(planDay(input({ now: new Date("2026-09-09T21:30:00.000Z"), sessionsToday: 2, probedToday: true }))).toEqual([]);
+    expect(planDay(input({ now: new Date("2026-09-09T21:30:00.000Z"), sessionsToday: [paris("10:30"), paris("17:15")], probedToday: true }))).toEqual([]);
   });
 
   it("a new account's first day opens with a warmup, no engagement", () => {
@@ -159,6 +175,12 @@ describe("plan of the day", () => {
     expect(plan.filter((t) => t.kind === "social_session")).toHaveLength(2);
   });
 });
+
+/** A wall-clock time on the test day (9 Sept 2026) in Paris. */
+function paris(hhmm: string): Date {
+  const [hour, minute] = hhmm.split(":").map(Number);
+  return zonedInstant("Europe/Paris", { year: 2026, month: 9, day: 9, hour, minute });
+}
 
 /** Day zero such that "now" (9 Sept 2026, Paris) is maturity day `day`. */
 function dayZeroFor(day: number): string {

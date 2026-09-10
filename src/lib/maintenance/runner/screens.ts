@@ -67,11 +67,11 @@ const SETTLE_MAX_DISMISSALS = 8;
 const SETTLE_REREAD_MS = 1_500;
 /**
  * How long an app may keep loading before the screen is declared unreadable.
- * Measured 10 September 2026 on box-1: TikTok 44.6 reached its feed after 23 s,
- * a hair under the former 8-round cap (~22 s) that had already called X on
- * US36 unreadable while it was still loading.
+ * Measured 10 September 2026 on box-1: TikTok reached its feed after 23 s on
+ * ES2 and 45 s on ES10 (cold container, proxy) — the former 8-round cap
+ * (~22 s) had already called X on US36 unreadable while it was still loading.
  */
-const SETTLE_LOADING_MAX_MS = 45_000;
+const SETTLE_LOADING_MAX_MS = 60_000;
 /** Consecutive reads that must agree before an `unknown` screen is believed. */
 const UNKNOWN_CONFIRM_READS = 2;
 

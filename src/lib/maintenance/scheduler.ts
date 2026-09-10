@@ -38,8 +38,15 @@ export interface PlannerInput {
   dayZero: string | null;
   budget: MaintenanceBudget;
   activeHours: ActiveHours;
-  /** Sessions already scheduled, running or done today (local day). */
-  sessionsToday: number;
+  /**
+   * Start times of the sessions already on today's books (scheduled, running,
+   * done or skipped — local day). The planner treats the slice each one sits in
+   * as taken, wherever in the day that is: on 10 September 2026 a count-based
+   * version assumed the booked sessions filled the EARLIEST slices and, on a
+   * second tick, placed a new session one minute next to the one it had
+   * planned a quarter of an hour before.
+   */
+  sessionsToday: readonly Date[];
   /** Whether a probe / warmup is already scheduled or done today. */
   probedToday: boolean;
   lastSessionAt: Date | null;
@@ -149,8 +156,11 @@ export function planDay(input: PlannerInput): PlannedTask[] {
   }
 
   // Session slots: the active window sliced evenly, one jittered time per
-  // slice, only the slices still ahead of us (or just behind, within grace).
-  const wanted = Math.max(0, sessionsForDay(input) - input.sessionsToday);
+  // slice, only the slices still free and still ahead of us (or just behind,
+  // within grace). What is already on the books today counts against the
+  // budget, occupies its slice and keeps its distance.
+  const booked = input.sessionsToday.map((d) => d.getTime());
+  const wanted = Math.max(0, sessionsForDay(input) - booked.length);
   const total = Math.max(0, sessionsForDay(input));
   const minutes = () => {
     const [lo, hi] = input.budget.session_minutes;
@@ -161,16 +171,17 @@ export function planDay(input: PlannerInput): PlannedTask[] {
     const windowStart = zonedInstant(tz, { ...local, hour: input.activeHours.start, minute: 0 });
     const windowEnd = zonedInstant(tz, { ...local, hour: input.activeHours.end, minute: 0 });
     const slice = (windowEnd.getTime() - windowStart.getTime()) / total;
+    const gapMs = MIN_SESSION_GAP_MIN * 60_000;
     for (let i = 0; i < total && slots.length < wanted; i++) {
-      // Skip the slices already consumed by today's sessions, keep the tail.
-      if (i < input.sessionsToday) continue;
-      const at = windowStart.getTime() + slice * i + rnd() * slice * 0.8 + slice * 0.1;
+      const sliceStart = windowStart.getTime() + slice * i;
+      if (booked.some((b) => b >= sliceStart && b < sliceStart + slice)) continue;
+      const at = sliceStart + rnd() * slice * 0.8 + slice * 0.1;
       const candidate = new Date(Math.round(at / 60_000) * 60_000);
       if (candidate.getTime() < now.getTime() - PAST_SLOT_GRACE_MIN * 60_000) continue;
       const startAt = candidate.getTime() < now.getTime() ? new Date(now.getTime() + (5 + rnd() * 20) * 60_000) : candidate;
       if (startAt.getTime() >= windowEnd.getTime()) continue;
-      const previous = slots[slots.length - 1];
-      if (previous && startAt.getTime() - previous.getTime() < MIN_SESSION_GAP_MIN * 60_000) continue;
+      const neighbours = [...booked, ...slots.map((s) => s.getTime())];
+      if (neighbours.some((n) => Math.abs(startAt.getTime() - n) < gapMs)) continue;
       slots.push(startAt);
     }
   }
