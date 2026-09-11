@@ -229,6 +229,31 @@ describe("classifyScreen — X", () => {
     expect(classifyScreen(sheet, "twitter").state).toBe("off_path");
   });
 
+  // US44 session, 11 September 2026: a BACK too many left X; the launcher was on top.
+  it("takes the home screen on top for the app gone, and a browser on top for a detour", () => {
+    const launcher = parseCompactTree(
+      [
+        "Screen 1080x2340 rotation=0",
+        '[0] android.widget.FrameLayout resource-id="com.android.mxLauncher3:id/launcher" package="com.android.mxLauncher3" enabled=true bounds=[0,0][1080,2340]',
+        '  [0] android.widget.TextView text="Chrome" content-desc="Chrome" package="com.android.mxLauncher3" clickable=true enabled=true bounds=[291,96][540,399]',
+        '  [1] android.widget.TextView text="X" content-desc="X" package="com.android.mxLauncher3" clickable=true enabled=true bounds=[42,399][291,702]',
+      ].join("\n"),
+    );
+    expect(classifyScreen(launcher, "twitter")).toMatchObject({ state: "app_gone" });
+    expect(SAFE_REACTION.app_gone).toBe("relaunch");
+
+    // ES2 session, same day: an ad link opened a web page in a custom tab.
+    const browser = parseCompactTree(
+      [
+        "Screen 1080x2340 rotation=0",
+        '[0] android.widget.FrameLayout resource-id="android:id/content" package="com.android.chrome" enabled=true bounds=[0,0][1080,2340]',
+        '  [0] android.view.View resource-id="com.android.chrome:id/compositor_view_holder" package="com.android.chrome" enabled=true bounds=[0,0][1080,2340]',
+        '  [1] android.widget.TextView text="Cheaper Inference | Save" package="com.android.chrome" enabled=true bounds=[0,0][10,10]',
+      ].join("\n"),
+    );
+    expect(classifyScreen(browser, "twitter")).toMatchObject({ state: "off_path" });
+  });
+
   // US47 session, 11 September 2026: an ad's Install opened the Play Store data-safety sheet.
   it("takes any Play Store window over the app for the Play Store sheet", () => {
     const t = parseCompactTree(

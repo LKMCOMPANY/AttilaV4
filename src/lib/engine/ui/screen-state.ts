@@ -38,6 +38,7 @@ export type ScreenState =
   | "settings_sheet"
   | "opaque_overlay"
   | "off_path"
+  | "app_gone"
   | "version_wall"
   | "playstore_sheet"
   | "payment_error"
@@ -59,6 +60,7 @@ export type SafeReaction =
   | "deny_permission"
   | "choose_free_option"
   | "reread"
+  | "relaunch"
   | "vision"
   | "stop";
 
@@ -77,6 +79,7 @@ export const SAFE_REACTION: Record<ScreenState, SafeReaction> = {
   settings_sheet: "back",
   opaque_overlay: "back",
   off_path: "back",
+  app_gone: "relaunch",
   version_wall: "stop",
   playstore_sheet: "back",
   payment_error: "back",
@@ -100,6 +103,11 @@ const SYSTEM_PERMISSION_PACKAGES = [
   "com.google.android.permissioncontroller",
 ];
 const PLAY_STORE_PACKAGE = "com.android.vending";
+/** The Android home screen on top: the app was left (one BACK too many — US44, 11/09/2026). */
+const LAUNCHER_PACKAGE_RE = /launcher/i;
+/** A browser over the app: Chrome (a custom tab an ad link opened — ES2, 11/09/2026), or its compositor inside a web view. */
+const BROWSER_PACKAGES = ["com.android.chrome", "com.google.android.webview"];
+const BROWSER_COMPOSITOR_ID = "compositor_view_holder";
 /**
  * Windows that float over the app without being the screen: a heads-up
  * notification, the status bar, a volume panel. Measured 10 September 2026 on
@@ -240,6 +248,10 @@ export function classifyScreen(tree: CompactTree, app: SocialApp): Classificatio
   // (US47, 11/09/2026).
   if (packages.includes(PLAY_STORE_PACKAGE)) {
     return decided("playstore_sheet", "com.android.vending window", top);
+  }
+  if (top && LAUNCHER_PACKAGE_RE.test(top)) return decided("app_gone", `home screen on top (${top})`, top);
+  if ((top && BROWSER_PACKAGES.includes(top)) || nodes.some((n) => n.resourceId.endsWith(BROWSER_COMPOSITOR_ID))) {
+    return decided("off_path", `browser on top (${top})`, top);
   }
 
   const security = classifySecurity(hay, app);

@@ -625,6 +625,17 @@ scaffold d'accueil avec une poignée de nœuds est le feed ; un état principal
 qui n'est pas le feed (post ouvert, profil, commentaires) est un détour : on
 regarde 2 à 6 s, BACK, on reprend. Les 5 alertes ont été résolues par `system`.
 
+11/09 16h59–17h19 — **deuxième tour** (ES2, FR19, GB4, US43, US44, 6 min) :
+**12 likes vérifiés** (GB4 4, US43 3, FR19 2, ES2 2, US44 1), FR19 / GB4 /
+US43 complètes sans détour, 0 dialogue, `stale_reads` 0 sauf US44 (2). Deux
+arrêts, décrits par les alertes : ES2 sur une **page web** ouverte par un lien
+de pub (`compositor_view_holder`, « Switch to dark theme ») ; US44 sur le
+**lanceur Android** (`launcher`, `drag_layer`) — un BACK de trop et X était
+quitté. Corrigé : un navigateur au-dessus de l'app est un détour (`off_path`,
+BACK) ; l'écran d'accueil sur le dessus est `app_gone` → l'app est relancée
+après confirmation sur deux lectures (la première lecture après un lancement à
+froid peut encore montrer le lanceur).
+
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
 `failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant

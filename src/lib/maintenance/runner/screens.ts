@@ -74,6 +74,13 @@ const SETTLE_REREAD_MS = 1_500;
 const SETTLE_LOADING_MAX_MS = 60_000;
 /** Consecutive reads that must agree before an `unknown` screen is believed. */
 const UNKNOWN_CONFIRM_READS = 2;
+/**
+ * Consecutive reads showing the home screen before the app is relaunched: the
+ * first read after a cold launch can still show the launcher for a moment.
+ */
+const APP_GONE_CONFIRM_READS = 2;
+/** Time given to a relaunched app before its screen is read. */
+const RELAUNCH_SETTLE_MS = 2_500;
 
 /**
  * Read, classify, and clear what can safely be cleared (a "Not now", a denied
@@ -83,22 +90,33 @@ const UNKNOWN_CONFIRM_READS = 2;
  *
  * Loading is bounded by time, dismissals by count, and `unknown` needs two
  * reads in a row: right after a launch the first tree is often a screen in
- * transition, not the screen the app ends on.
+ * transition, not the screen the app ends on. The home screen seen twice in a
+ * row means the app was left (a BACK too many): it is brought back.
  */
 export async function settleApp(dev: DeviceRef, app: SocialApp): Promise<SettleResult> {
   const dismissed: ScreenState[] = [];
   const startedAt = Date.now();
   let unknownReads = 0;
+  let appGoneReads = 0;
   let read = await readTree(dev);
   let classification = classifyScreen(read.tree, app);
   for (;;) {
     const reaction = SAFE_REACTION[classification.state];
     if (reaction === "proceed" || reaction === "stop") break;
     unknownReads = reaction === "vision" ? unknownReads + 1 : 0;
+    appGoneReads = reaction === "relaunch" ? appGoneReads + 1 : 0;
     if (reaction === "vision") {
       if (unknownReads >= UNKNOWN_CONFIRM_READS) break;
     } else if (reaction === "reread") {
       if (Date.now() - startedAt >= SETTLE_LOADING_MAX_MS) break;
+    } else if (reaction === "relaunch") {
+      if (dismissed.length >= SETTLE_MAX_DISMISSALS) break;
+      if (appGoneReads >= APP_GONE_CONFIRM_READS) {
+        dismissed.push(classification.state);
+        appGoneReads = 0;
+        await openApp(dev, app === "tiktok" ? WATCHED_PACKAGES.tiktok : WATCHED_PACKAGES.twitter, null);
+        await sleep(RELAUNCH_SETTLE_MS);
+      }
     } else {
       if (dismissed.length >= SETTLE_MAX_DISMISSALS) break;
       dismissed.push(classification.state);
