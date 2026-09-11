@@ -555,6 +555,14 @@ ni follow, ni reconnexion → `skipped / supervised_mode`), `autonomous` fait
 tout. Les armées de la cohorte n'ont pas de brief compilé : même en
 `autonomous` il n'y aurait aucun follow (zéro mot-clé de cluster).
 
+11/09 12h26 — **palier 2 : `maintenance.mode = supervised`** (audit_log,
+`9ecca41` + `f334160` en production depuis 12h24). Mesures de validation avant
+la bascule, par le chemin de production, 2 min chacune : TikTok DE3 4
+défilements, X ES2 (12.24) 6 défilements, X DE3 (11.96) 8 défilements — trois
+sessions complètes, `stale_reads` 0, conteneurs arrêtés ou gardés pour la tâche
+suivante. Cohorte : 13 avatars (21 comptes), 47 tâches encore au programme du
+jour dont 30 sessions passives de 6 à 12 min ; première à 13h47 (FR8 X).
+
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
 `failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant
