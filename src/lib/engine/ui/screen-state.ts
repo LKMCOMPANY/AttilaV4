@@ -163,6 +163,12 @@ const OPAQUE_MAX_BYTES = 6_000;
 const OPAQUE_UNRESOLVED_DESC = /^@\d{8,}$/;
 const LOADING_MAX_NODES = 12;
 
+// X hides its "For you / Following" header once the timeline scrolls; the
+// post rows are then the proof of the feed. Measured 11 September 2026 on
+// box-1: 11.96 (View ids) and 12.24 (Compose test tags used as resource ids).
+const X_HOME_IDS = ["scaffold_home_tabbed", "com.twitter.android:id/timeline_container"];
+const X_POST_ROW_IDS = ["timeline_post", "com.twitter.android:id/outer_layout_row_view_tweet"];
+
 // The comments sheet title carries the count before the word ("24 comments",
 // 45.0.3 EN) or after it ("Comentarios 9", 44.9.3 ES); sometimes bare.
 const COUNT_PART = "(?:[\\d.,\\s]*(?:mil|[km])?)?";
@@ -300,7 +306,12 @@ function classifyTwitter(hay: string, nodes: readonly TreeNode[]): Partial {
   const tab = has(hay, M.xFeed);
   if (tab && has(hay, M.xFeedSecondary)) return { state: "feed_ok", evidence: tab };
   if (editTexts(nodes).length > 0 && has(hay, M.search)) return { state: "search", evidence: "search field" };
+  if (hasResourceId(nodes, X_HOME_IDS) && hasResourceId(nodes, X_POST_ROW_IDS)) return { state: "feed_ok", evidence: "timeline posts" };
   return null;
+}
+
+function hasResourceId(nodes: readonly TreeNode[], ids: readonly string[]): boolean {
+  return nodes.some((n) => ids.includes(n.resourceId));
 }
 
 /**

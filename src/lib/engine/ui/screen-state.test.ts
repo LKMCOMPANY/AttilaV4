@@ -183,4 +183,28 @@ describe("classifyScreen — X", () => {
     const t = tree(X, ['android.widget.TextView text="For you"', 'android.widget.TextView text="Following"']);
     expect(classifyScreen(t, "twitter").state).toBe("feed_ok");
   });
+
+  // box-1, 11 September 2026: the header is off screen once the timeline scrolls.
+  it("recognises a scrolled timeline by its post rows, on 12.24 (Compose tags) and 11.96 (View ids)", () => {
+    const compose = tree(X, [
+      'android.view.View resource-id="scaffold_home_tabbed"',
+      'android.view.View resource-id="timeline_post"',
+      'android.widget.TextView text="@chiamakaafc"',
+      'android.view.View content-desc="Responder"',
+      'android.view.View content-desc="Me gusta"',
+    ]);
+    expect(classifyScreen(compose, "twitter")).toMatchObject({ state: "feed_ok", evidence: "timeline posts" });
+
+    const legacy = tree(X, [
+      'android.widget.FrameLayout resource-id="com.twitter.android:id/timeline_container"',
+      'androidx.recyclerview.widget.RecyclerView resource-id="android:id/list" content-desc="Timeline Liste"',
+      'android.widget.LinearLayout resource-id="com.twitter.android:id/outer_layout_row_view_tweet"',
+      'android.view.ViewGroup resource-id="com.twitter.android:id/tweet_inline_actions"',
+    ]);
+    expect(classifyScreen(legacy, "twitter").state).toBe("feed_ok");
+
+    // A post row alone (a profile's timeline, a search result) is not the home feed.
+    const elsewhere = tree(X, ['android.view.View resource-id="timeline_post"', 'android.widget.TextView text="@someone"']);
+    expect(classifyScreen(elsewhere, "twitter").state).not.toBe("feed_ok");
+  });
 });

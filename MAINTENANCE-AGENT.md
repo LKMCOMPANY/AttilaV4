@@ -539,6 +539,16 @@ et les deux arrêts ont appris quelque chose :
    jumeau (`app_outdated`, `logged_out`…) et passe par la même escalade que la
    sonde (bloc + item d'attention avec preuve) ; jusque-là il n'était visible
    que dans le journal de la tâche.
+3. Rejouées après correction (12h05) : TikTok DE3 session complète de 2 min
+   (4 défilements, 0 dialogue, `refreshed_reads` 3 — la ligne 1.0.8 aussi
+   sert un arbre périmé après un geste, le lecteur le rattrape) ; X DE3 s'est
+   arrêtée sur `unknown` après un défilement… sur un **feed parfaitement
+   normal** : X masque l'en-tête « Für dich / Folgen » dès qu'on défile, et
+   le classifieur ne connaissait le feed que par cet en-tête. Arbres mesurés
+   sur les deux générations d'X (DE3 11.96 : `timeline_container` +
+   `outer_layout_row_view_tweet` ; ES2 12.24 : `scaffold_home_tabbed` +
+   `timeline_post`) → le feed défilé est reconnu par ses lignes de posts,
+   indépendamment de la langue.
 Le palier est maintenant porté par le runner (`modes.ts`) : `observe` lit,
 `supervised` exécute les sessions passives sans rien faire au compte (ni like,
 ni follow, ni reconnexion → `skipped / supervised_mode`), `autonomous` fait
