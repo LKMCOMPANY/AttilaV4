@@ -208,6 +208,41 @@ describe("classifyScreen — X", () => {
     expect(classifyScreen(elsewhere, "twitter").state).not.toBe("feed_ok");
   });
 
+  // US43 / US44 sessions and FR8 scroll 24, 11 September 2026: a video card filling the viewport.
+  it("takes the home scaffold with a handful of nodes for the feed, not for a loading screen", () => {
+    const t = tree(X, ['android.view.View resource-id="scaffold_home_tabbed"', 'android.view.View resource-id="MainLanding"', 'android.view.View content-desc="Vidéo"']);
+    expect(classifyScreen(t, "twitter")).toMatchObject({ state: "feed_ok", evidence: "home scaffold, media card" });
+  });
+
+  // FR19 / ES2 / GB4 sessions, 11 September 2026: a press landed on a video and opened the immersive viewer.
+  it("recognises the immersive video viewer and the photo sheet as detours BACK returns from", () => {
+    const viewer = tree(X, [
+      'android.view.View resource-id="VideoTab"',
+      'android.widget.FrameLayout resource-id="com.twitter.android:id/exo_content_frame"',
+      'android.view.View content-desc="Retour"',
+      'android.view.View content-desc="Plus d\'options"',
+      'android.widget.TextView text="@NICYISHATS_Eric"',
+    ]);
+    expect(classifyScreen(viewer, "twitter")).toMatchObject({ state: "off_path", evidence: "VideoTab" });
+    expect(SAFE_REACTION.off_path).toBe("back");
+    const sheet = tree(X, ['android.widget.TextView text="Postear foto"', 'android.widget.TextView text="Copiar foto"', 'android.widget.TextView text="Guardar foto"', 'android.widget.TextView text="Compartir"']);
+    expect(classifyScreen(sheet, "twitter").state).toBe("off_path");
+  });
+
+  // US47 session, 11 September 2026: an ad's Install opened the Play Store data-safety sheet.
+  it("takes any Play Store window over the app for the Play Store sheet", () => {
+    const t = parseCompactTree(
+      [
+        "Screen 1080x2340 rotation=0",
+        '[0] android.widget.FrameLayout package="com.android.vending" enabled=true bounds=[0,600][1080,2340]',
+        '  [0] android.widget.Button content-desc="Close sheet" package="com.android.vending" clickable=true enabled=true bounds=[0,0][10,10]',
+        '  [1] android.widget.TextView text="This app may collect these data types" package="com.android.vending" enabled=true bounds=[0,0][10,10]',
+      ].join("\n"),
+    );
+    expect(classifyScreen(t, "twitter")).toMatchObject({ state: "playstore_sheet" });
+    expect(SAFE_REACTION.playstore_sheet).toBe("back");
+  });
+
   // FR8, 11 September 2026, scroll 13 of 25: a tall video post, its row root off screen, only the action bar left.
   it("recognises the feed from a post's action bar when the row root is off screen", () => {
     const t = tree(X, [

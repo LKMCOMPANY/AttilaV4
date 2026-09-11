@@ -37,6 +37,7 @@ export type ScreenState =
   | "system_permission"
   | "settings_sheet"
   | "opaque_overlay"
+  | "off_path"
   | "version_wall"
   | "playstore_sheet"
   | "payment_error"
@@ -75,6 +76,7 @@ export const SAFE_REACTION: Record<ScreenState, SafeReaction> = {
   system_permission: "deny_permission",
   settings_sheet: "back",
   opaque_overlay: "back",
+  off_path: "back",
   version_wall: "stop",
   playstore_sheet: "back",
   payment_error: "back",
@@ -155,7 +157,8 @@ const M = {
   linkEmail: ["link email", "lier un e-mail", "vincular correo"],
   inAppPermission: ["give tiktok access to your facebook", "access your contacts", "find your friends", "sync your contacts"],
   settingsSheet: ["viewer history", "turned on", "activé", "activado"],
-  playStore: ["update available", "mise à jour disponible", "actualización disponible", "mettre à jour", "update now"],
+  // X's photo action sheet (a press that landed on an image). Measured es-ES 11/09/2026.
+  photoSheet: ["copiar foto", "guardar foto", "postear foto", "copy photo", "save photo", "copier la photo", "enregistrer la photo"],
   profile: ["followers", "abonnés", "seguidores", "follower"],
   profileSecondary: ["following", "abonnements", "siguiendo", "likes", "j'aime", "me gusta"],
   search: ["search", "rechercher", "buscar", "suchen"],
@@ -171,6 +174,8 @@ const LOADING_MAX_NODES = 12;
 // A tall video post pushes its row's root off screen (FR8, scroll 13 of 25):
 // the action bar under it is then the only post signature left.
 const X_HOME_IDS = ["scaffold_home_tabbed", "com.twitter.android:id/timeline_container"];
+/** X's full-screen video viewer (Compose test tag). */
+const X_VIDEO_VIEWER_ID = "VideoTab";
 const X_POST_ROW_IDS = [
   "timeline_post",
   "com.twitter.android:id/outer_layout_row_view_tweet",
@@ -230,8 +235,11 @@ export function classifyScreen(tree: CompactTree, app: SocialApp): Classificatio
   if (packages.some((p) => SYSTEM_PERMISSION_PACKAGES.includes(p))) {
     return decided("system_permission", "permissioncontroller window", top);
   }
-  if (packages.includes(PLAY_STORE_PACKAGE) && has(hay, M.playStore)) {
-    return decided("playstore_sheet", "com.android.vending sheet", top);
+  // Any Play Store window over the app is a detour BACK returns from — the
+  // update sheet as much as the data-safety sheet an ad's "Install" opens
+  // (US47, 11/09/2026).
+  if (packages.includes(PLAY_STORE_PACKAGE)) {
+    return decided("playstore_sheet", "com.android.vending window", top);
   }
 
   const security = classifySecurity(hay, app);
@@ -298,6 +306,11 @@ function classifyDialog(hay: string, nodes: readonly TreeNode[]): Partial {
   const hasSwitch = nodes.some((n) => n.className.endsWith(".Switch") || n.className.endsWith("SwitchCompat"));
   const sheet = has(hay, M.settingsSheet);
   if (hasSwitch && sheet) return { state: "settings_sheet", evidence: sheet };
+  // Off the main path, one BACK away: X's immersive video viewer (a press
+  // that landed on a video — FR19, ES2, GB4, 11/09/2026) or its photo sheet.
+  if (nodes.some((n) => n.resourceId === X_VIDEO_VIEWER_ID)) return { state: "off_path", evidence: X_VIDEO_VIEWER_ID };
+  const photo = has(hay, M.photoSheet);
+  if (photo) return { state: "off_path", evidence: photo };
   return null;
 }
 
@@ -327,8 +340,13 @@ function classifyTwitter(hay: string, nodes: readonly TreeNode[]): Partial {
   const tab = has(hay, M.xFeed);
   if (tab && has(hay, M.xFeedSecondary)) return { state: "feed_ok", evidence: tab };
   if (editTexts(nodes).length > 0 && has(hay, M.search)) return { state: "search", evidence: "search field" };
-  if (hasResourceId(nodes, X_HOME_IDS) && (hasResourceId(nodes, X_POST_ROW_IDS) || has(hay, M.xPostActions))) {
-    return { state: "feed_ok", evidence: "timeline posts" };
+  if (hasResourceId(nodes, X_HOME_IDS)) {
+    if (hasResourceId(nodes, X_POST_ROW_IDS) || has(hay, M.xPostActions)) return { state: "feed_ok", evidence: "timeline posts" };
+    // A video card filling the viewport leaves the home scaffold and a handful
+    // of nodes (FR8 scroll 24/25; US43 and US44 sessions, 11/09/2026): still
+    // the feed, the next scroll shows the next post. More nodes than that with
+    // no marker is something over the feed, left to the settle.
+    if (nodes.length <= LOADING_MAX_NODES) return { state: "feed_ok", evidence: "home scaffold, media card" };
   }
   return null;
 }

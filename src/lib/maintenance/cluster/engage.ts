@@ -21,6 +21,13 @@ import { markCandidate, nextCandidate } from "./discover";
 /** X animates the heart for about a second; the tree may be read mid-flight once. */
 const X_LIKE_SETTLE_MS = 1_500;
 const X_LIKE_READS = 2;
+/**
+ * The list is still decelerating when the tree is read right after a swipe;
+ * a heart tapped at those coordinates lands on the card that slid under it
+ * (11/09/2026: posts, videos and one Play Store sheet opened mid-session).
+ * A pause and a fresh read before choosing the heart make the tap land.
+ */
+const X_LIST_REST_MS = 1_200;
 
 export interface EngagementBudget {
   likesLeft: number;
@@ -84,9 +91,12 @@ async function likeTikTokVideo(ctx: RecipeContext, read: TreeRead): Promise<bool
  */
 async function likeXPost(ctx: RecipeContext, read: TreeRead): Promise<boolean> {
   const { dev } = ctx.session;
-  const post = likeablePost(read.tree);
+  if (!likeablePost(read.tree)) return false;
+  await sleep(X_LIST_REST_MS);
+  const rested = await readTreeAfterGesture(dev, { previousHash: read.tree.hash, expectChange: false, settleMs: 300 });
+  const post = likeablePost(rested.tree);
   if (!post || !(await tapNode(dev, post.likeNode))) return false;
-  let previousHash = read.tree.hash;
+  let previousHash = rested.tree.hash;
   for (let attempt = 0; attempt < X_LIKE_READS; attempt++) {
     await sleep(X_LIKE_SETTLE_MS);
     const after = await readTreeAfterGesture(dev, { previousHash, expectChange: true, settleMs: 600 });

@@ -605,6 +605,26 @@ l'animation. La session like désormais sur X comme sur TikTok
 (`likeOnScreen`), et une session **demandée par un opérateur avec
 l'engagement** like en mode `supervised` : c'est son ordre.
 
+11/09 15h53–16h45 — **11 sessions X avec likes commandées** sur « army user »
+(ES10, ES2, FR19, FR8, GB2, GB4, US36, US41, US43, US44, US47 ; DE3 exclu,
+X 11.96 muré), toutes les 4 min, 8 à 12 min : **19 likes vérifiés** (ES10 4,
+US41 5, FR8 2, GB2 2, US36 2, ES2 1, FR19 1, GB4 1, US47 1, US43 0, US44 0),
+209 défilements, 0 dialogue, 0 erreur serveur, aucun conteneur laissé
+`running`. 4 sessions complètes, 7 arrêtées avant l'heure — et les écrans
+inconnus **se sont décrits eux-mêmes** dans les alertes, plus besoin de
+rejouer : visionneuse vidéo immersive d'X (`VideoTab`, FR19/ES2/GB4), feuille
+d'actions d'une photo (« Copiar foto… », ES10), feuille Play Store « données
+de sécurité » ouverte par le « Installer » d'une pub (US47), et une carte
+vidéo plein écran prise pour `loading` (US43/US44). Cause commune : un tap
+donné sur des coordonnées lues juste après le défilement, la liste encore en
+décélération, et qui atterrit sur la carte glissée dessous ; plusieurs sessions
+ont ainsi dérivé dans `post_detail` et y ont défilé. Corrigé : le tap du cœur
+attend 1,2 s et relit l'arbre au repos ; `off_path` (visionneuse, feuille
+photo) et toute fenêtre Play Store sont des détours fermés par BACK ; le
+scaffold d'accueil avec une poignée de nœuds est le feed ; un état principal
+qui n'est pas le feed (post ouvert, profil, commentaires) est un détour : on
+regarde 2 à 6 s, BACK, on reprend. Les 5 alertes ont été résolues par `system`.
+
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
 `failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant

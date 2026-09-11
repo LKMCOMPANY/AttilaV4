@@ -1,4 +1,4 @@
-import { scrollFeed } from "@/lib/engine/actor";
+import { pressBack, scrollFeed } from "@/lib/engine/actor";
 import { readTreeAfterGesture, sleep, type TreeRead } from "@/lib/engine/reader";
 import { classifyScreen, SAFE_REACTION, type Classification } from "@/lib/engine/ui/screen-state";
 import { discoverCandidates } from "../cluster/discover";
@@ -24,6 +24,9 @@ const PROOF_EVERY_STEPS = 3;
  * one odd card in the feed scrolls past it; two in a row is not the feed.
  */
 const MAX_UNKNOWN_STREAK = 2;
+/** Seconds spent on a post, a profile or a comments panel a gesture opened, before coming back. */
+const DETOUR_MIN_S = 2;
+const DETOUR_MAX_S = 6;
 
 /**
  * The session: open the app, let the probe say the account is in, then read
@@ -65,6 +68,7 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
   /** The screen that ended the session early, if any. */
   let stopped: Classification | null = null;
   let dialogs = 0;
+  let detours = 0;
   let likes = 0;
   let follows = 0;
 
@@ -113,6 +117,15 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
         seen.push(classification.state);
         if (MAIN_STATES.includes(classification.state)) {
           unknownStreak = 0;
+          if (classification.state !== "feed_ok") {
+            // A gesture opened a post, a profile or a comments panel (a
+            // press that landed on a card): a person looks, then comes back.
+            detours++;
+            await sleep(Math.round(jitter(random, DETOUR_MIN_S, DETOUR_MAX_S) * 1000));
+            await pressBack(dev);
+            read = await readTreeAfterGesture(dev, { previousHash: read.tree.hash, expectChange: true, settleMs: 900 });
+            continue;
+          }
           if (engaging && budget.likesLeft > 0 && random() < ctx.settings.likeProbability) {
             if (await likeOnScreen(ctx, read, platform)) {
               likes++;
@@ -145,7 +158,7 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
         seen,
         halt: null,
         screenState: seen[seen.length - 1],
-        detail: `${scrolls} scrolls so far, ${dialogs} dialog(s) cleared`,
+        detail: `${scrolls} scrolls so far, ${dialogs} dialog(s) cleared, ${detours} detour(s), ${likes} like(s)`,
         proof: steps % PROOF_EVERY_STEPS === 0,
       };
     });
@@ -180,6 +193,7 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
     return {
       scrolls,
       dialogs,
+      detours,
       minutes,
       duration_ms: endedAt.getTime() - startedAt.getTime(),
       refreshed_reads: refreshedReads,
