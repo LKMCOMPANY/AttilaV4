@@ -22,6 +22,7 @@ export const DEFAULT_MAX_NODES = 120;
 export const MAX_NODES_CEILING = 400;
 
 export interface ScreenNode {
+  /** Position in this list (1-based) — the handle a caller quotes back. */
   index: number;
   class: string;
   text: string | null;
@@ -93,14 +94,14 @@ function isEditable(node: TreeNode): boolean {
   return node.className.endsWith("EditText") || node.className.includes("EditText");
 }
 
-/** Keep the nodes a hand can use, in screen order, capped. */
+/** Keep the nodes a hand can use, in screen order, capped (0 = the state alone). */
 export function compactNodes(tree: CompactTree, maxNodes = DEFAULT_MAX_NODES): ScreenNode[] {
-  const cap = Math.min(Math.max(1, maxNodes), MAX_NODES_CEILING);
+  const cap = Math.min(Math.max(0, maxNodes), MAX_NODES_CEILING);
   const worthListing = tree.nodes.filter(
     (n) => n.clickable || n.focusable || n.scrollable || isEditable(n) || n.text.length > 0 || n.contentDesc.length > 0,
   );
-  return worthListing.slice(0, cap).map((n) => ({
-    index: n.index,
+  return worthListing.slice(0, cap).map((n, position) => ({
+    index: position + 1,
     class: n.className.split(".").pop() ?? n.className,
     text: n.text || null,
     content_desc: n.contentDesc || null,

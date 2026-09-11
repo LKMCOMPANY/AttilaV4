@@ -1,11 +1,13 @@
 import { z } from "zod";
 import type { RequestSession } from "@/lib/auth/session";
 import { actOnNode, fetchScreenshotJpeg, scrollBezier, shell, type V2Selector } from "@/lib/box-api";
-import { activateAdbKeyboard, androidDeepLink, getCurrentIme, restoreIme, typeText } from "@/lib/automation/adb-helpers";
+import { androidDeepLink, getCurrentIme, restoreIme } from "@/lib/automation/adb-helpers";
+import { typeIntoField } from "@/lib/engine/actor";
 import type { DeviceRef } from "@/lib/engine/device";
 import { readTree, readTreeAfterGesture, sleep, TreeUnreadableError } from "@/lib/engine/reader";
+import { editTexts, type CompactTree, type TreeNode } from "@/lib/engine/ui/compact-tree";
 import { SAFE_REACTION, type ScreenState } from "@/lib/engine/ui/screen-state";
-import { xpathString } from "@/lib/engine/ui/selectors";
+import { selectorForMatcher } from "@/lib/engine/ui/selectors";
 import { audit } from "@/lib/maintenance/audit";
 import { WATCHED_PACKAGES } from "@/lib/maintenance/app-versions.mjs";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -99,11 +101,11 @@ export function isHandsOff(state: ScreenState): boolean {
   return HANDS_OFF_STATES.includes(state) && SAFE_REACTION[state] === "stop";
 }
 
-/** The selector a tap names, in the engine's xpath dialect. */
+/** The selector a tap names, in the engine's own dialect (`selectors.ts`). */
 export function selectorFor(input: Extract<DeviceInput, { action: "tap" }>): V2Selector | null {
-  if (input.resource_id) return { xpath: `//*[@resource-id=${xpathString(input.resource_id)}]` };
-  if (input.text) return { xpath: `//*[@text=${xpathString(input.text)}]` };
-  if (input.content_desc) return { xpath: `//*[contains(@content-desc,${xpathString(input.content_desc)})]` };
+  if (input.resource_id) return selectorForMatcher({ by: "resource_id", value: input.resource_id });
+  if (input.text) return selectorForMatcher({ by: "text", value: input.text });
+  if (input.content_desc) return selectorForMatcher({ by: "desc_contains", value: input.content_desc });
   return null;
 }
 
@@ -133,7 +135,21 @@ const APP_PACKAGES = { tiktok: WATCHED_PACKAGES.tiktok, twitter: WATCHED_PACKAGE
 /** Gestures whose effect is inside the window: the tree may need a kick to move. */
 const IN_WINDOW_GESTURES: ReadonlySet<DeviceInput["action"]> = new Set(["tap", "type", "swipe"]);
 
-async function perform(dev: DeviceRef, input: DeviceInput): Promise<string> {
+/**
+ * The field a `type` lands in: the one named by the caller, else the focused
+ * EditText of the screen just read. The IME swap steals focus, so the field is
+ * clicked again between the swap and the broadcast — the sequence that landed
+ * text on every build measured (`engine/actor.ts` `typeIntoField`).
+ */
+export function typingField(tree: CompactTree, fieldResourceId?: string): TreeNode | null {
+  if (fieldResourceId) {
+    return tree.nodes.find((n) => n.resourceId === fieldResourceId) ?? null;
+  }
+  const fields = editTexts(tree.nodes);
+  return fields.find((n) => n.focused) ?? (fields.length === 1 ? fields[0] : null);
+}
+
+async function perform(dev: DeviceRef, input: DeviceInput, tree: CompactTree): Promise<string> {
   switch (input.action) {
     case "tap": {
       const selector = selectorFor(input);
@@ -152,17 +168,18 @@ async function perform(dev: DeviceRef, input: DeviceInput): Promise<string> {
       await shell(dev.tunnelHostname, dev.dbId, `input keyevent ${KEY_CODES[input.key]}`);
       return `press ${input.key}`;
     case "type": {
-      // ADBKeyboard only (AGENTS.md hard rule 3), IME restored whatever happens.
+      const field = typingField(tree, input.field_resource_id);
+      if (!field) {
+        throw new Error(
+          input.field_resource_id
+            ? "The field to type into is not on screen"
+            : "No focused text field on screen — tap a field first, or pass field_resource_id",
+        );
+      }
+      // ADBKeyboard only (AGENTS.md hard rule 3); the IME is restored whatever happens.
       const previousIme = await getCurrentIme(dev.tunnelHostname, dev.dbId);
       try {
-        await activateAdbKeyboard(dev.tunnelHostname, dev.dbId);
-        if (input.field_resource_id) {
-          const selector: V2Selector = { xpath: `//*[@resource-id=${xpathString(input.field_resource_id)}]` };
-          const clicked = await actOnNode(dev.tunnelHostname, dev.dbId, selector, "click", 1_500);
-          if (!clicked) throw new Error("The field to type into is not on screen");
-          await sleep(800);
-        }
-        await typeText(dev.tunnelHostname, dev.dbId, input.text);
+        await typeIntoField(dev, field, input.text);
       } finally {
         await restoreIme(dev.tunnelHostname, dev.dbId, previousIme);
       }
@@ -171,11 +188,9 @@ async function perform(dev: DeviceRef, input: DeviceInput): Promise<string> {
     case "open_url":
       await shell(dev.tunnelHostname, dev.dbId, androidDeepLink(input.url, input.app ? APP_PACKAGES[input.app] : undefined));
       return `open_url ${input.url}`;
-    case "swipe": {
-      const tree = await readTree(dev);
-      await scrollBezier(dev.tunnelHostname, dev.dbId, swipeGesture(input.direction, tree.tree.width, tree.tree.height));
+    case "swipe":
+      await scrollBezier(dev.tunnelHostname, dev.dbId, swipeGesture(input.direction, tree.width, tree.height));
       return `swipe ${input.direction}`;
-    }
   }
 }
 
@@ -201,7 +216,7 @@ export async function deviceInputCore(
       };
     }
 
-    const performed = await perform(dev, input);
+    const performed = await perform(dev, input, before.tree);
     await touchDevicePresence(ctx, dev.deviceId);
 
     // Read the screen after the gesture. An in-window gesture may leave the

@@ -207,6 +207,18 @@ function area(n: TreeNode): number {
  * selector is an exact, case- and apostrophe-sensitive comparison.
  */
 export function toV2Selector(matcher: NodeMatcher, node: TreeNode): V2Selector | null {
+  if (matcher.by === "edit_text") {
+    return node.resourceId ? selectorForMatcher({ by: "resource_id", value: node.resourceId }) : null;
+  }
+  return selectorForMatcher(matcher);
+}
+
+/**
+ * The agent selector of a matcher that names its node itself (id, text,
+ * description) — the one xpath dialect, shared with the operator's hands.
+ * `edit_text` needs the tree and goes through `toV2Selector`.
+ */
+export function selectorForMatcher(matcher: Exclude<NodeMatcher, { by: "edit_text" }>): V2Selector {
   switch (matcher.by) {
     case "desc_contains":
       return { xpath: `//*[contains(@content-desc,${xpathString(matcher.value)})]` };
@@ -214,8 +226,6 @@ export function toV2Selector(matcher: NodeMatcher, node: TreeNode): V2Selector |
       return { xpath: `//*[@text=${xpathString(matcher.value)}]` };
     case "resource_id":
       return { xpath: `//*[@resource-id=${xpathString(matcher.value)}]` };
-    case "edit_text":
-      return node.resourceId ? { xpath: `//*[@resource-id=${xpathString(node.resourceId)}]` } : null;
   }
 }
 

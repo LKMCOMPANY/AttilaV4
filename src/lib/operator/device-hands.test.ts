@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCompactTree } from "@/lib/engine/ui/compact-tree";
-import { deviceInputSchema, isHandsOff, selectorFor, swipeGesture } from "./device-input";
+import { deviceInputSchema, isHandsOff, selectorFor, swipeGesture, typingField } from "./device-input";
 import { classifyForOperator, compactNodes, socialAppOf } from "./device-screen";
 
 const TIKTOK_FEED = `Screen 1080x2340 rotation=0
@@ -45,8 +45,10 @@ describe("device-screen — the operator's eyes", () => {
     expect(like?.clickable).toBe(true);
     const field = compactNodes(tree).find((n) => n.editable);
     expect(field?.resource_id).toBe("com.zhiliaoapp.musically:id/e07");
-    // The bare layout node carries nothing a hand can use.
-    expect(compactNodes(tree).some((n) => n.index === 5)).toBe(false);
+    // The bare layouts carry nothing a hand can use: four worth listing (tab,
+    // like, comments, field), numbered 1…4 in list order.
+    expect(compactNodes(tree).map((n) => n.index)).toEqual([1, 2, 3, 4]);
+    expect(compactNodes(tree, 0)).toEqual([]);
   });
 });
 
@@ -65,6 +67,22 @@ describe("device-input — the operator's hands", () => {
     expect(selectorFor({ action: "tap", resource_id: "com.x:id/like" })).toEqual({ xpath: `//*[@resource-id="com.x:id/like"]` });
     expect(selectorFor({ action: "tap", content_desc: "Like video" })).toEqual({ xpath: `//*[contains(@content-desc,"Like video")]` });
     expect(selectorFor({ action: "tap", x: 1, y: 2 })).toBeNull();
+  });
+
+  it("types into the named field, else the focused one, else the only one", () => {
+    const tree = parseCompactTree(TIKTOK_FEED);
+    expect(typingField(tree, "com.zhiliaoapp.musically:id/e07")?.index).toBe(4);
+    expect(typingField(tree, "com.zhiliaoapp.musically:id/nope")).toBeNull();
+    // One EditText on screen, not focused: still the obvious target.
+    expect(typingField(tree)?.index).toBe(4);
+    const twoFields = parseCompactTree(`Screen 1080x2340 rotation=0
+[0] android.widget.EditText text="" package="com.x" bounds=[0,0][100,50]
+ [1] android.widget.EditText text="" focused=true package="com.x" bounds=[0,60][100,110]`);
+    expect(typingField(twoFields)?.index).toBe(1);
+    const noFocus = parseCompactTree(`Screen 1080x2340 rotation=0
+[0] android.widget.EditText text="" package="com.x" bounds=[0,0][100,50]
+ [1] android.widget.EditText text="" package="com.x" bounds=[0,60][100,110]`);
+    expect(typingField(noFocus)).toBeNull();
   });
 
   it("keeps hands off a security check only", () => {
