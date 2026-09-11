@@ -9,6 +9,7 @@ import { modeAllows, withheldOutcome } from "../modes";
 import { runAppCheck } from "../recipes/app-check";
 import { runCoherence } from "../recipes/coherence";
 import type { RecipeContext, RecipeResult } from "../recipes/context";
+import { runDirectedAction } from "../recipes/directed-action";
 import { runProbe } from "../recipes/probe";
 import { runRelogin } from "../recipes/relogin";
 import { runSocialSession } from "../recipes/social-session";
@@ -33,6 +34,7 @@ const RECIPES: Record<MaintenanceTaskKind, (ctx: RecipeContext) => Promise<Recip
   app_check: runAppCheck,
   social_session: (ctx) => runSocialSession(ctx),
   relogin: runRelogin,
+  directed_action: runDirectedAction,
 };
 
 export interface RunOutcome {

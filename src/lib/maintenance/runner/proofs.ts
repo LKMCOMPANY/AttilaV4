@@ -33,7 +33,21 @@ export async function captureProof(
     }
   }
   if (bytes.length === 0) return null;
+  return storeProof(supabase, key, bytes, contentType, extension);
+}
 
+/**
+ * Store bytes a flow already captured (the reply flows hand back their own
+ * source and proof screenshots) under the same path grammar as `captureProof`.
+ */
+export async function storeProof(
+  supabase: AdminClient,
+  key: { accountId: string; avatarId: string; taskId: string; index: number; name: string },
+  bytes: Buffer,
+  contentType = "image/jpeg",
+  extension = "jpg",
+): Promise<string | null> {
+  if (bytes.length === 0) return null;
   const safeName = key.name.replace(/[^a-z0-9_-]+/gi, "-").slice(0, 40);
   const path = `${key.accountId}/${key.avatarId}/${key.taskId}/${String(key.index).padStart(2, "0")}-${safeName}.${extension}`;
   const { error } = await supabase.storage.from(PROOFS_BUCKET).upload(path, bytes, { contentType, upsert: true });

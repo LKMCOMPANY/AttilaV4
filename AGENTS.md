@@ -261,13 +261,27 @@ API v2 as an MCP server too, at
 `.cursor/mcp.json` points at box-5 — the tool *surface* is identical on every
 box, only the target differs, so one entry is enough for discovery.
 
-**The MCP is a development-time tool only.** Product code keeps calling the box
-REST API through `src/lib/box-api/` (one module per concern, `control-v2.ts`
-for the in-guest agent); never route runtime traffic through MCP.
-Its real value is that it is a self-describing catalogue of what a box actually
-serves — that is how we found `/interface_logs/{recent,stats,detail}` (per-box
-API call log with success rates), `/v1/discover` and `/v1/swap_size/{gb}`, none
-of which appear in the published documentation.
+**The VMOS MCP servers are development-time tools only.** Product code keeps
+calling the box REST API through `src/lib/box-api/` (one module per concern,
+`control-v2.ts` for the in-guest agent); never route runtime traffic through
+them. Their real value is that they are a self-describing catalogue of what a
+box actually serves — that is how we found `/interface_logs/{recent,stats,detail}`
+(per-box API call log with success rates), `/v1/discover` and
+`/v1/swap_size/{gb}`, none of which appear in the published documentation.
+
+**The product MCP is the one the macOS app hosts** (11 September 2026, see
+`ARCHITECTURE.md` § "Cockpit MCP"): Cursor connects to `Attila.app` on
+loopback, and every tool rides this repo's `nativeRoute` surface under the
+signed-in user's JWT — the same cores as the UI, the same RLS, the same audit
+trail (`X-Attila-Client: mcp`). Three surfaces exist for it here and nowhere
+else: `/api/devices/[id]/screen` and `/api/devices/[id]/input` (the operator's
+eyes and hands, guard-rails in the core — ADBKeyboard-only typing, hands off a
+`bouncer`), and `/api/actions/directed` (a human's like/follow/comment,
+executed by the Maintain loop as a `directed_action` task with the engine's
+verification, ledger and proof). Two rules follow: a directed action is never a
+shortcut around the blocks gate or the daily budget (the recipe refuses and
+says why), and the Mac never drives a device for automation itself — it queues,
+the server acts.
 
 Two vendor facts worth remembering:
 

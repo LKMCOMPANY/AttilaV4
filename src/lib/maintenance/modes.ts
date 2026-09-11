@@ -17,7 +17,13 @@ import type { MaintenanceMode, MaintenanceTaskKind } from "@/types";
  * under the rules it started with.
  */
 
-const READ_ONLY_KINDS: readonly MaintenanceTaskKind[] = ["probe", "app_check", "coherence", "dismiss_dialogs", "warmup"];
+/**
+ * A directed action is a human's order, not the maintainer's initiative: the
+ * person who asked is the supervisor the ladder exists to provide, so every
+ * mode runs it. What the mode never relaxes still holds inside the recipe —
+ * the blocks gate, the day's budget, the positive verification.
+ */
+const READ_ONLY_KINDS: readonly MaintenanceTaskKind[] = ["probe", "app_check", "coherence", "dismiss_dialogs", "warmup", "directed_action"];
 const PASSIVE_KINDS: readonly MaintenanceTaskKind[] = [...READ_ONLY_KINDS, "social_session"];
 const ALL_KINDS: readonly MaintenanceTaskKind[] = [...PASSIVE_KINDS, "relogin"];
 

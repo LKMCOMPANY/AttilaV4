@@ -71,6 +71,8 @@ export interface PlannedTask {
 }
 
 export const PRIORITY = {
+  /** A human is waiting for it: ahead of everything the planner queued. */
+  directed_action: 140,
   warmup: 130,
   relogin: 125,
   probe: 120,

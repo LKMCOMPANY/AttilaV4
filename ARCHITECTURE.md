@@ -1004,6 +1004,43 @@ CF-Access-Client-Secret: {service_token_secret}
    `MaintenancePresentation.swift`, fixture `maintenance-vocabulary.json`.
 ```
 
+### Cockpit MCP (app macOS → Cursor — 11 septembre 2026)
+
+L'app macOS héberge un serveur MCP (SDK Swift officiel, Streamable HTTP sur
+`127.0.0.1`, token Bearer local) que Cursor branche ; ses outils appellent
+**les mêmes cores** que l'UI, sous le JWT de l'utilisateur connecté. Côté
+serveur, trois surfaces sont nées pour lui, toutes sur `nativeRoute` :
+
+```
+1. Les yeux — POST /api/devices/[id]/screen (lib/operator/device-screen.ts) :
+   l'arbre d'accessibilité lu par le lecteur du moteur (v2 + repli in-guest),
+   classé par `classifyScreen`, compacté aux nœuds actionnables (texte,
+   content-desc, resource-id, centre) ; capture JPEG en option. Le device doit
+   être `running`. Chaque lecture touche `devices.last_seen` (présence
+   opérateur, lue par l'arbitre de slots).
+2. Les mains — POST /api/devices/[id]/input (lib/operator/device-input.ts) :
+   UN geste par appel — tap (coordonnées ou sélecteur), press (back, home,
+   recents, enter, delete, volume), type (ADBKeyboard uniquement, IME
+   snapshot/restauré), open_url (deep link tiktok/twitter), swipe (bezier).
+   Garde-fous portés par l'outil : refus sur un écran de sécurité (`bouncer`)
+   sauf `override_reason` journalisé ; `audit_log` `operator.input.<geste>`
+   avec `detail.client` (`X-Attila-Client`: `macos` / `mcp`) ; l'écran relu
+   après le geste est renvoyé (règle de fraîcheur du lecteur).
+3. Les ordres — POST /api/actions/directed, GET /api/actions/directed/[id]
+   (lib/operator/directed-actions.ts, lib/maintenance/directed.ts) : like /
+   follow / comment sur une cible, par un avatar (maintenant) ou une army
+   (étalée sur `spread_hours`, dans les heures actives du device, jamais deux
+   avatars d'une même box à la même minute). Tâches `maintenance_tasks` de
+   kind `directed_action` (migration 20260911115604, priorité 140,
+   `created_by = operator`, `params.request_id` groupe le fan-out), exécutées
+   par la boucle Maintain via `recipes/directed-action.ts` : probe, cible
+   relue à l'écran (handle), geste par sélecteur, vérification positive,
+   ligne `avatar_actions` (actor `operator`), preuve. Refus lisibles :
+   `blocked`, `budget_exhausted`, `target_mismatch`, `not_verified`,
+   `probe_*`. Le mode (`observe`/`supervised`) n'écarte pas un ordre humain ;
+   les blocs et le budget du jour restent absolus.
+```
+
 ### Streaming (contrôle manuel + audio)
 
 ```

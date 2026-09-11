@@ -227,6 +227,8 @@ export const MAINTENANCE_TASK_KINDS = [
   "app_check",
   "social_session",
   "relogin",
+  /** A human's order — like, follow or comment on one target (`lib/maintenance/directed.ts`). */
+  "directed_action",
 ] as const;
 export type MaintenanceTaskKind = (typeof MAINTENANCE_TASK_KINDS)[number];
 

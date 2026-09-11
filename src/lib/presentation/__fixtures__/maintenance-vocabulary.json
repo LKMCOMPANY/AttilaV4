@@ -1,40 +1,109 @@
 {
   "$comment": "Shared presentation vocabulary of the maintenance layer (phase 1). `src/lib/presentation/maintenance.ts` and `MaintenancePresentation.swift` both reproduce this file exactly; each side tests against it. Tones: critical → danger, watch → warning, ok → success, info → info, muted → muted foreground.",
   "onDeviceStatuses": {
-    "unknown": { "label": "Not probed", "tone": "muted" },
-    "logged_in": { "label": "Logged in", "tone": "ok" },
-    "logged_out": { "label": "Logged out", "tone": "critical" },
-    "challenge": { "label": "Challenge", "tone": "critical" },
-    "suspended": { "label": "Suspended", "tone": "critical" },
-    "app_missing": { "label": "App missing", "tone": "watch" },
-    "app_outdated": { "label": "App out of date", "tone": "watch" },
-    "unreadable": { "label": "Unreadable", "tone": "watch" }
+    "unknown": {
+      "label": "Not probed",
+      "tone": "muted"
+    },
+    "logged_in": {
+      "label": "Logged in",
+      "tone": "ok"
+    },
+    "logged_out": {
+      "label": "Logged out",
+      "tone": "critical"
+    },
+    "challenge": {
+      "label": "Challenge",
+      "tone": "critical"
+    },
+    "suspended": {
+      "label": "Suspended",
+      "tone": "critical"
+    },
+    "app_missing": {
+      "label": "App missing",
+      "tone": "watch"
+    },
+    "app_outdated": {
+      "label": "App out of date",
+      "tone": "watch"
+    },
+    "unreadable": {
+      "label": "Unreadable",
+      "tone": "watch"
+    }
   },
   "taskKinds": {
-    "probe": { "label": "Probe" },
-    "warmup": { "label": "Warm-up" },
-    "dismiss_dialogs": { "label": "Clear dialogs" },
-    "coherence": { "label": "Coherence check" },
-    "app_check": { "label": "App check" },
-    "social_session": { "label": "Session" },
-    "relogin": { "label": "Re-login" }
+    "probe": {
+      "label": "Probe"
+    },
+    "warmup": {
+      "label": "Warm-up"
+    },
+    "dismiss_dialogs": {
+      "label": "Clear dialogs"
+    },
+    "coherence": {
+      "label": "Coherence check"
+    },
+    "app_check": {
+      "label": "App check"
+    },
+    "social_session": {
+      "label": "Session"
+    },
+    "relogin": {
+      "label": "Re-login"
+    },
+    "directed_action": {
+      "label": "Order"
+    }
   },
   "taskStatuses": {
-    "scheduled": { "label": "Scheduled", "tone": "muted" },
-    "running": { "label": "Running", "tone": "info" },
-    "done": { "label": "Done", "tone": "ok" },
-    "failed": { "label": "Failed", "tone": "critical" },
-    "skipped": { "label": "Skipped", "tone": "muted" },
-    "cancelled": { "label": "Cancelled", "tone": "muted" }
+    "scheduled": {
+      "label": "Scheduled",
+      "tone": "muted"
+    },
+    "running": {
+      "label": "Running",
+      "tone": "info"
+    },
+    "done": {
+      "label": "Done",
+      "tone": "ok"
+    },
+    "failed": {
+      "label": "Failed",
+      "tone": "critical"
+    },
+    "skipped": {
+      "label": "Skipped",
+      "tone": "muted"
+    },
+    "cancelled": {
+      "label": "Cancelled",
+      "tone": "muted"
+    }
   },
   "profiles": {
-    "new": { "label": "New account" },
-    "mature": { "label": "Mature account" }
+    "new": {
+      "label": "New account"
+    },
+    "mature": {
+      "label": "Mature account"
+    }
   },
   "modes": {
-    "observe": { "label": "Observe" },
-    "supervised": { "label": "Supervised" },
-    "autonomous": { "label": "Autonomous" }
+    "observe": {
+      "label": "Observe"
+    },
+    "supervised": {
+      "label": "Supervised"
+    },
+    "autonomous": {
+      "label": "Autonomous"
+    }
   },
   "onDeviceShelfLifeDays": 7
 }

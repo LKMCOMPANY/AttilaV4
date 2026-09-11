@@ -344,8 +344,14 @@ redéploiement. Ce qui est réessayé : les obstacles d'interface. Ce qui ne
 l'est jamais : les obstacles de sécurité du compte.
 
 Ce qui a été écarté, et pourquoi : MCP dans l'app macOS et agents Cursor comme
-runtime (Mac d'un opérateur, sandbox, secrets, aucune planification — banc
-d'essai seulement), agent IA embarqué VMOS (non configuré, boîte noire,
+**runtime** (Mac d'un opérateur, sandbox, secrets, aucune planification — banc
+d'essai seulement) — révisé le 11 septembre 2026 : l'app macOS héberge bien un
+serveur MCP, mais comme **cockpit** (`ARCHITECTURE.md` § « Cockpit MCP ») :
+ses outils appellent les cores REST sous le JWT de l'utilisateur, les « mains
+d'opérateur » (`/api/devices/[id]/screen|input`) portent leurs garde-fous côté
+serveur, et un ordre humain (`/api/actions/directed`) devient une tâche
+`directed_action` que la boucle Maintain exécute avec le moteur — la
+planification, les plafonds et les blocs restent ceux de cette étude ; agent IA embarqué VMOS (non configuré, boîte noire,
 `input/text`), frameworks GUI-agent (APK de service d'accessibilité à
 installer alors que VMOS fournit le sien), Cloudflare Agents / Durable Objects
 (seulement si la mémoire par agent et l'e-mail intégré justifient un second

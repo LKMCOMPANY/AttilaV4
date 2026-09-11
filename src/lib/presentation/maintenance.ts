@@ -40,6 +40,7 @@ export const TASK_KIND_LABEL: Record<MaintenanceTaskKind, string> = {
   app_check: "App check",
   social_session: "Session",
   relogin: "Re-login",
+  directed_action: "Order",
 };
 
 export const TASK_STATUS_META: Record<MaintenanceTaskStatus, MaintenanceMeta> = {
