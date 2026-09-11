@@ -100,8 +100,10 @@ node scripts/audit-app-versions.mjs --box box-2.attila.army
 
 # Avatar maintenance (phase 1). Switch it on per avatar (Maintenance tab) and
 # globally (`runtime_settings.maintenance.global_enabled`); the mode
-# (`maintenance.mode`: observe → supervised → autonomous) decides whether
-# sessions gesture. Worker knobs: MAINTENANCE_TICK_CONCURRENCY (2),
+# (`maintenance.mode`, enforced by src/lib/maintenance/modes.ts) decides what
+# runs: observe = probes and checks only; supervised = passive sessions too,
+# nothing done to the account; autonomous = likes, follows and re-login as
+# well. Worker knobs: MAINTENANCE_TICK_CONCURRENCY (2),
 # MAINTENANCE_IDLE_MS (15000), MAINTENANCE_SCHEDULE_INTERVAL_MS (1800000).
 # One task on one avatar, through the production path, from a terminal
 # (the row, its journal and proofs stay in maintenance_tasks):

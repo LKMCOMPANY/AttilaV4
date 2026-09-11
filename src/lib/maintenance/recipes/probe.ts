@@ -122,9 +122,10 @@ export async function writeState(
 /**
  * Turn the on-device status into the two records that matter: the Automator
  * gate (`avatar_platform_blocks`) and the human queue (`attention_items`), or
- * clear both when the account is back.
+ * clear both when the account is back. The probe calls it on the settled
+ * launch screen, the session on the screen that stopped it — one path.
  */
-async function escalate(ctx: RecipeContext, platform: SocialPlatform, status: OnDeviceStatus, classification: Classification) {
+export async function escalate(ctx: RecipeContext, platform: SocialPlatform, status: OnDeviceStatus, classification: Classification) {
   const { supabase, session } = ctx;
   const accountId = session.avatar.account_id;
   const avatarId = session.avatar.id;
@@ -193,7 +194,7 @@ async function escalate(ctx: RecipeContext, platform: SocialPlatform, status: On
         ...accountTarget,
         reason: "dialog_unknown",
         severity: "warning",
-        title: "Écran non reconnu au lancement",
+        title: "Écran non reconnu",
         detail: `Le classifieur n'a pas reconnu l'écran (${classification.evidence}). Regarder la preuve.`,
         evidence,
         source: "maintainer",

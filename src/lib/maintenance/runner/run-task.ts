@@ -5,6 +5,7 @@ import { broadcastAccountEvent } from "@/lib/supabase/realtime";
 import type { MaintenanceTask, MaintenanceTaskKind } from "@/types";
 import { openAttention } from "../attention";
 import { audit } from "../audit";
+import { modeAllows, withheldOutcome } from "../modes";
 import { runAppCheck } from "../recipes/app-check";
 import { runCoherence } from "../recipes/coherence";
 import type { RecipeContext, RecipeResult } from "../recipes/context";
@@ -17,9 +18,6 @@ import { openDeviceSession } from "./device-session";
 import { TaskCancelledError, TaskJournal } from "./journal";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
-
-/** Kinds that only read (launch, classify, list packages): allowed in `observe` mode. */
-const OBSERVE_SAFE_KINDS: readonly MaintenanceTaskKind[] = ["probe", "app_check", "coherence", "dismiss_dialogs", "warmup"];
 
 /** Put a task back in the queue this many minutes later when its box has no slot. */
 const DEFER_MIN_MINUTES = 8;
@@ -44,11 +42,11 @@ export interface RunOutcome {
 }
 
 /**
- * Run one claimed task to its end state. The mode gates gestures (`observe`
- * never opens a session for a `social_session`); the slot arbiter can defer
- * the task; a cancellation from a cockpit stops it at the next step; every
- * other failure is typed into `error_category` and, when it is the device's
- * fault, escalated to the attention queue.
+ * Run one claimed task to its end state. The mode gates what runs (`modes.ts`:
+ * `observe` withholds sessions, `supervised` withholds re-logins); the slot
+ * arbiter can defer the task; a cancellation from a cockpit stops it at the
+ * next step; every other failure is typed into `error_category` and, when it
+ * is the device's fault, escalated to the attention queue.
  */
 export async function runMaintenanceTask(
   supabase: AdminClient,
@@ -58,9 +56,9 @@ export async function runMaintenanceTask(
 ): Promise<RunOutcome> {
   const journal = new TaskJournal(supabase, task, workerId, settings.leaseSeconds);
 
-  if (settings.mode === "observe" && !OBSERVE_SAFE_KINDS.includes(task.kind)) {
-    await journal.skip(task.kind, "observe mode — planned, not executed");
-    return finish(supabase, task, "skipped", "observe_mode", { steps: journal.entries });
+  if (!modeAllows(settings.mode, task.kind)) {
+    await journal.skip(task.kind, `${settings.mode} mode — planned, not executed`);
+    return finish(supabase, task, "skipped", withheldOutcome(settings.mode), { steps: journal.entries });
   }
 
   const opened = await openDeviceSession(supabase, task);

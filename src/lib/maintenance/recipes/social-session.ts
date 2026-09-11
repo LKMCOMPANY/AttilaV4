@@ -1,12 +1,13 @@
 import { scrollFeed } from "@/lib/engine/actor";
 import { readTreeAfterGesture, sleep, type TreeRead } from "@/lib/engine/reader";
-import { classifyScreen, SAFE_REACTION } from "@/lib/engine/ui/screen-state";
+import { classifyScreen, SAFE_REACTION, type Classification } from "@/lib/engine/ui/screen-state";
 import { discoverCandidates } from "../cluster/discover";
 import { followNextCandidate, likeCurrentVideo, remainingBudget, type EngagementBudget } from "../cluster/engage";
 import { recordAvatarAction } from "../ledger";
-import { appFor, MAIN_STATES, settleApp } from "../runner/screens";
+import { engagementAllowedIn } from "../modes";
+import { appFor, MAIN_STATES, settleApp, statusFromScreen } from "../runner/screens";
 import { jitter, type RecipeContext, type RecipeResult } from "./context";
-import { runProbe, writeState } from "./probe";
+import { escalate, runProbe, writeState } from "./probe";
 
 /** Seconds spent on one video/post before moving on: a human's range. */
 const DWELL_MIN_S = 4;
@@ -25,11 +26,12 @@ const PROOF_EVERY_STEPS = 3;
  * one comes up, stop at once on any state a human must see.
  *
  * Passive by default (phase 1). With `params.allow_engagement` (the planner
- * sets it once the account is mature) and outside `observe` mode, the phase 3
- * gestures ride the same loop: a like now and then on a video the feed shows,
- * one follow of a discovered cluster creator early in the session — each
- * verified from the tree and counted against the day's budget. The
- * discovery itself (TikHub search on the armies' keywords) runs first.
+ * sets it once the account is mature) and a mode that grants engagement
+ * (`autonomous`, see `modes.ts`), the phase 3 gestures ride the same loop: a
+ * like now and then on a video the feed shows, one follow of a discovered
+ * cluster creator early in the session — each verified from the tree and
+ * counted against the day's budget. The discovery itself (TikHub search on
+ * the armies' keywords) runs first.
  *
  * Every session is one `session` row in the ledger and moves the twin's
  * `last_session_at`; the planner's ramp-up reads that.
@@ -54,12 +56,13 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
   const startedAt = new Date();
   let scrolls = 0;
   let steps = 0;
-  let stopped: string | null = null;
+  /** The screen that ended the session early, if any. */
+  let stopped: Classification | null = null;
   let dialogs = 0;
   let likes = 0;
   let follows = 0;
 
-  const engaging = ctx.task.params.allow_engagement === true && ctx.settings.mode !== "observe";
+  const engaging = ctx.task.params.allow_engagement === true && engagementAllowedIn(ctx.settings.mode);
   let budget: EngagementBudget = { likesLeft: 0, followsLeft: 0 };
   if (engaging) {
     budget = await ctx.journal.step("discover_cluster", async () => {
@@ -87,6 +90,7 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
   while (Date.now() < deadline && !stopped) {
     const batch = await ctx.journal.step("watch_feed", async () => {
       const seen: string[] = [];
+      const halt = (at: Classification) => ({ seen, halt: at, screenState: at.state, detail: `stopped on ${at.evidence}`, proof: true });
       for (let i = 0; i < SCROLLS_PER_STEP && Date.now() < deadline; i++) {
         const long = random() < LONG_PAUSE_PROBABILITY;
         const dwellS = long ? jitter(random, LONG_PAUSE_MIN_S, LONG_PAUSE_MAX_S) : jitter(random, DWELL_MIN_S, DWELL_MAX_S);
@@ -109,28 +113,28 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
           }
           continue;
         }
-        const reaction = SAFE_REACTION[classification.state];
-        if (reaction === "stop" || reaction === "vision") {
-          stopped = classification.state;
-          return { seen, screenState: classification.state, detail: `stopped on ${classification.evidence}`, proof: true };
-        }
-        // A dialog in the middle of the feed: clear it the safe way and go on.
+        // A security state stops the session on the spot (11/09/2026: X 11.96
+        // raised its version wall on DE3 after the first scroll).
+        if (SAFE_REACTION[classification.state] === "stop") return halt(classification);
+        // Anything else in the middle of the feed — a sheet (the TikTok Shop
+        // consent, same day), a loading screen, an unfamiliar tree — goes
+        // through the same settle as a launch: cleared the safe way, waited
+        // out, or confirmed before it is believed. The feed back means go on.
         const settled = await settleApp(dev, target.app);
         dialogs += settled.dismissed.length;
         read = settled.read;
-        if (!MAIN_STATES.includes(settled.classification.state)) {
-          stopped = settled.classification.state;
-          return { seen, screenState: settled.classification.state, detail: `stopped on ${settled.classification.evidence}`, proof: true };
-        }
+        if (!MAIN_STATES.includes(settled.classification.state)) return halt(settled.classification);
       }
       steps++;
       return {
         seen,
+        halt: null,
         screenState: seen[seen.length - 1],
         detail: `${scrolls} scrolls so far, ${dialogs} dialog(s) cleared`,
         proof: steps % PROOF_EVERY_STEPS === 0,
       };
     });
+    stopped = batch.halt;
     if (batch.seen.length === 0) break;
   }
 
@@ -146,13 +150,14 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
     refId: ctx.task.id,
     occurredAt: startedAt,
   });
-  await writeState(ctx, platform, stopped ? "unknown" : "logged_in", null, { lastSessionAt: endedAt });
-
+  // The screen that stopped the session is worth exactly what a launch screen
+  // is worth: the twin records it and the same escalation opens the block and
+  // the item (a wall mid-feed is still a wall).
+  const status = stopped ? statusFromScreen(stopped.state) : "logged_in";
+  await writeState(ctx, platform, status, stopped, { lastSessionAt: endedAt });
   if (stopped) {
-    // The probe's escalation already covers a stop at launch; a stop mid-feed
-    // is rarer and goes to the queue with the last proof through the runner's
-    // outcome (`stopped_on_*`), which the operator sees in the task journal.
-    return { outcome: `stopped_on_${stopped}`, result: sessionResult() };
+    await escalate(ctx, platform, status, stopped);
+    return { outcome: `stopped_on_${stopped.state}`, result: sessionResult() };
   }
   return { outcome: "session_done", result: sessionResult() };
 

@@ -31,9 +31,11 @@
 >   coherence, social_session passive) dans une session device (arbitre de
 >   slots, priorité campagne, IME restaurée, journal de pas avec preuves dans
 >   le bucket privé `maintenance-proofs`). `runtime_settings.maintenance.mode`
->   (observe / supervised / autonomous) et `maintenance.global_enabled`
->   gouvernent ce qui s'exécute ; `avatars.maintenance_enabled` choisit la
->   cohorte.
+>   et `maintenance.global_enabled` gouvernent ce qui s'exécute, règle unique
+>   dans `modes.ts` : `observe` = sondes et contrôles seulement, `supervised` =
+>   sessions passives en plus (rien n'est fait AU compte), `autonomous` =
+>   likes, follows et reconnexion aussi ; `avatars.maintenance_enabled` choisit
+>   la cohorte.
 > Les mentions de "gateway", "sync toutes les 30s" et
 > `src/infrastructure/magicbox/device-bridge.ts` ci-dessous sont périmées.
 

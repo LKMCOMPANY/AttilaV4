@@ -138,7 +138,17 @@ const M = {
   ttLoggedOutSecondary: ["log in", "add another account", "sign up", "se connecter", "iniciar sesión"],
   ttFeedDesc: ["like video", "read or add comments", "lire ou ajouter des commentaires", "leer o añadir comentarios"],
   ttFeedTabs: ["for you", "pour toi", "para ti", "für dich"],
-  consent: ["choisir comment afficher les publicités", "choose your ads experience", "ads experience", "pubs personnalisées", "personalised ads", "personalized ads"],
+  consent: [
+    "choisir comment afficher les publicités",
+    "choose your ads experience",
+    "ads experience",
+    "pubs personnalisées",
+    "personalised ads",
+    "personalized ads",
+    // TikTok Shop personalisation sheet, DE (measured 11/09/2026 on DE3, mid-feed).
+    "mehr auf dich zuschneiden",
+    "personalisierter tiktok shop",
+  ],
   planConsent: ["pick your plan", "standard (with ads)", "ad-free", "choose your plan"],
   linkEmail: ["link email", "lier un e-mail", "vincular correo"],
   inAppPermission: ["give tiktok access to your facebook", "access your contacts", "find your friends", "sync your contacts"],

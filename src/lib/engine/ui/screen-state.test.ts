@@ -81,6 +81,22 @@ describe("classifyScreen — TikTok", () => {
     expect(findSafeAffordance(c.state, t.nodes)?.text).toBe("Standard (with ads)");
   });
 
+  // DE3, 11 September 2026: the TikTok Shop personalisation sheet popped over the feed after one scroll.
+  it("recognises the German TikTok Shop consent sheet and leaves BACK as the only move", () => {
+    const t = tree(TT, [
+      'android.widget.TextView text="Für dich"',
+      'android.widget.TextView text="TikTok Shop mehr auf dich zuschneiden"',
+      'android.widget.TextView text="Stärker personalisierter TikTok Shop"',
+      'android.widget.Button text="Auswählen" clickable=true',
+      'android.widget.TextView text="Allgemeiner TikTok Shop"',
+      'android.widget.Button text="Auswählen" clickable=true',
+    ]);
+    const c = classifyScreen(t, "tiktok");
+    expect(c.state).toBe("consent_dialog");
+    expect(SAFE_REACTION[c.state]).toBe("choose_free_option");
+    expect(findSafeAffordance(c.state, t.nodes)).toBeNull();
+  });
+
   it("recognises the link-email dialog and its Not now", () => {
     const t = tree(TT, ['android.widget.TextView text="Link email"', 'android.widget.Button text="OK"', 'android.widget.Button text="Not now"']);
     const c = classifyScreen(t, "tiktok");

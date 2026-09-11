@@ -383,15 +383,23 @@ update avatars set maintenance_enabled = true, maintenance_profile = 'mature' wh
 **Cohorte** : 10 avatars TikTok maintenus (box-2 et box-4, deux locales,
 deux lignes d'agent) contre 10 témoins comparables laissés à la main.
 
-**Paliers** :
+**Paliers** — la règle est portée par le runner (`src/lib/maintenance/modes.ts`),
+pas par une consigne : le planificateur planifie tout, le runner exécute ce que
+le mode accorde et marque le reste `skipped / <mode>_mode`.
 1. *Observation* (7 jours) — mode `observe` : le planificateur remplit
    `maintenance_tasks`, les sondes, `app_check` et `coherence` s'exécutent,
-   les sessions sont marquées `skipped / observe_mode`. On lit : la file
-   d'attention se remplit-elle de vrais problèmes ? les sondes lisent-elles
-   juste (comparer `avatar_platform_state` à un contrôle manuel sur 10 devices) ?
-2. *Supervisé* (jusqu'à J30) — mode `supervised` : les sessions passives
-   tournent sur la cohorte ; chaque session est visible (onglet Maintenance,
-   journal de pas, preuves) et annulable.
+   les sessions et reconnexions sont marquées `skipped / observe_mode`. On
+   lit : la file d'attention se remplit-elle de vrais problèmes ? les sondes
+   lisent-elles juste (comparer `avatar_platform_state` à un contrôle manuel
+   sur 10 devices) ?
+2. *Supervisé* (jusqu'à J30) — mode `supervised` : les sessions **passives**
+   tournent sur la cohorte (ouvrir, regarder, défiler, fermer un dialogue par
+   le chemin sûr) ; **rien n'est fait au compte** — ni like, ni follow, ni
+   reconnexion (`skipped / supervised_mode`). Chaque session est visible
+   (onglet Maintenance, journal de pas, preuves) et annulable.
+3. *Autonome* — mode `autonomous` : l'engagement dans la session (likes et
+   follows dans le budget du jour, une fois le compte mature) et la
+   reconnexion déterministe (code e-mail, une tentative par 24 h).
 
 **KPI hebdomadaires** (requêtes de référence) :
 
@@ -512,6 +520,31 @@ du matin libérée par l'annulation d'un doublon). Restent ce soir : FR19 TikTok
 (21h52), US41 X (02h51) et US47 X (03h57), puis la planification de demain à
 minuit locale.
 
+11/09 11h50 — **avant le passage en `supervised`, deux vraies sessions
+passives de 2 min sur DE3** (box-1, agent 1.0.8) par le chemin de production
+(`--mode supervised`). Le geste de défilement v2 (`scroll_bezier`) fonctionne
+sur la ligne 1.0.8. Les deux sessions se sont arrêtées après un défilement,
+et les deux arrêts ont appris quelque chose :
+1. TikTok 44.8.3 : la feuille de consentement **TikTok Shop** en allemand
+   (« TikTok Shop mehr auf dich zuschneiden », deux « Auswählen ») a surgi sur
+   le feed ; le classifieur ne la connaissait pas → `unknown` → arrêt. Ajoutée
+   aux marqueurs `consent_dialog` (BACK, aucune option cliquée), et la boucle
+   de session envoie désormais tout ce qui n'est ni le feed ni un état de
+   sécurité dans le même `settleApp` que le lancement (dialogue fermé par le
+   chemin sûr, chargement attendu, `unknown` confirmé) au lieu de s'arrêter à
+   la première lecture ;
+2. X 11.96.0 : le **mur de version** (« ist veraltet ») s'est levé après le
+   premier défilement alors que la sonde avait vu le feed — la session est le
+   juge autant que la sonde. Un arrêt en cours de session écrit désormais le
+   jumeau (`app_outdated`, `logged_out`…) et passe par la même escalade que la
+   sonde (bloc + item d'attention avec preuve) ; jusque-là il n'était visible
+   que dans le journal de la tâche.
+Le palier est maintenant porté par le runner (`modes.ts`) : `observe` lit,
+`supervised` exécute les sessions passives sans rien faire au compte (ni like,
+ni follow, ni reconnexion → `skipped / supervised_mode`), `autonomous` fait
+tout. Les armées de la cohorte n'ont pas de brief compilé : même en
+`autonomous` il n'y aurait aucun follow (zéro mot-clé de cluster).
+
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches
 `failed / unknown` sur 24 h ; un conteneur laissé `running` sans tâche pendant
@@ -556,8 +589,8 @@ pas suivant, le flux est sous les yeux de l'opérateur).
 **Phase 3, même soir (socle)** : `cluster_candidates` (migration
 `20260909230000`) alimentée par la découverte TikHub (`fetch_search_user` sur
 les mots-clés de cluster des armées, 3 recherches / avatar / jour, score par
-taille avec plafond) ; la session mature (`allow_engagement`, hors mode
-`observe`) suit un créateur du cluster en début de session (deep link profil,
+taille avec plafond) ; la session mature (`allow_engagement`, en mode
+`autonomous`) suit un créateur du cluster en début de session (deep link profil,
 Follow par sélecteur, vérification par l'en-tête) et aime une vidéo du feed
 avec une probabilité de 0,15, dans les budgets `likes_per_day` /
 `follows_per_day` du profil, chaque geste vérifié dans l'arbre et inscrit au
