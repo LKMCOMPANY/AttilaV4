@@ -207,4 +207,20 @@ describe("classifyScreen — X", () => {
     const elsewhere = tree(X, ['android.view.View resource-id="timeline_post"', 'android.widget.TextView text="@someone"']);
     expect(classifyScreen(elsewhere, "twitter").state).not.toBe("feed_ok");
   });
+
+  // FR8, 11 September 2026, scroll 13 of 25: a tall video post, its row root off screen, only the action bar left.
+  it("recognises the feed from a post's action bar when the row root is off screen", () => {
+    const t = tree(X, [
+      'android.view.View resource-id="scaffold_home_tabbed"',
+      'android.widget.FrameLayout resource-id="com.twitter.android:id/exo_content_frame"',
+      'android.view.View content-desc="Vidéo"',
+      'android.view.View content-desc="Répondre"',
+      'android.widget.TextView text="44"',
+      'android.view.View content-desc="Reposter"',
+      'android.widget.TextView text="210"',
+      'android.view.View content-desc="J\'aime"',
+      'android.view.View content-desc="Impressions"',
+    ]);
+    expect(classifyScreen(t, "twitter")).toMatchObject({ state: "feed_ok", evidence: "timeline posts" });
+  });
 });

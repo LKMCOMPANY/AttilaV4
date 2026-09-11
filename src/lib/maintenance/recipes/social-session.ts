@@ -19,6 +19,11 @@ const LONG_PAUSE_MAX_S = 60;
 /** Journal cadence: a step every N scrolls, a proof every M steps. */
 const SCROLLS_PER_STEP = 6;
 const PROOF_EVERY_STEPS = 3;
+/**
+ * Unfamiliar screens in a row before the session gives up. A person who meets
+ * one odd card in the feed scrolls past it; two in a row is not the feed.
+ */
+const MAX_UNKNOWN_STREAK = 2;
 
 /**
  * The session: open the app, let the probe say the account is in, then read
@@ -85,6 +90,7 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
   // how often it stayed stale anyway (the 1.1.3 line, measured 9/09).
   let refreshedReads = 0;
   let staleReads = 0;
+  let unknownStreak = 0;
 
   let read: TreeRead = await readTreeAfterGesture(dev, { previousHash: "", expectChange: false });
   while (Date.now() < deadline && !stopped) {
@@ -105,6 +111,7 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
         const classification = classifyScreen(read.tree, target.app);
         seen.push(classification.state);
         if (MAIN_STATES.includes(classification.state)) {
+          unknownStreak = 0;
           if (engaging && platform === "tiktok" && budget.likesLeft > 0 && random() < ctx.settings.likeProbability) {
             if (await likeCurrentVideo(ctx, read)) {
               likes++;
@@ -123,7 +130,14 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
         const settled = await settleApp(dev, target.app);
         dialogs += settled.dismissed.length;
         read = settled.read;
-        if (!MAIN_STATES.includes(settled.classification.state)) return halt(settled.classification);
+        if (MAIN_STATES.includes(settled.classification.state)) {
+          unknownStreak = 0;
+          continue;
+        }
+        if (SAFE_REACTION[settled.classification.state] === "stop") return halt(settled.classification);
+        // Confirmed unfamiliar, not a security state: one odd card in the feed
+        // is scrolled past like a person would; the next one ends the session.
+        if (++unknownStreak >= MAX_UNKNOWN_STREAK) return halt(settled.classification);
       }
       steps++;
       return {

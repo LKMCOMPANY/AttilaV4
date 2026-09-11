@@ -134,6 +134,8 @@ const M = {
   xFeed: ["for you", "pour vous", "para ti", "für dich"],
   xFeedSecondary: ["following", "abonnements", "siguiendo", "home", "accueil", "inicio", "startseite"],
   xPostDetail: ["post your reply", "postez votre réponse", "publica tu respuesta", "antwort posten"],
+  // A post's action bar: "Repost" reads the same in EN, FR (Reposter), ES (Repostear) and DE (Reposten).
+  xPostActions: ["repost"],
   ttLoggedOut: ["welcome back", "log in to tiktok", "connecte-toi à tiktok", "inicia sesión en tiktok", "sign up for tiktok"],
   ttLoggedOutSecondary: ["log in", "add another account", "sign up", "se connecter", "iniciar sesión"],
   ttFeedDesc: ["like video", "read or add comments", "lire ou ajouter des commentaires", "leer o añadir comentarios"],
@@ -166,8 +168,14 @@ const LOADING_MAX_NODES = 12;
 // X hides its "For you / Following" header once the timeline scrolls; the
 // post rows are then the proof of the feed. Measured 11 September 2026 on
 // box-1: 11.96 (View ids) and 12.24 (Compose test tags used as resource ids).
+// A tall video post pushes its row's root off screen (FR8, scroll 13 of 25):
+// the action bar under it is then the only post signature left.
 const X_HOME_IDS = ["scaffold_home_tabbed", "com.twitter.android:id/timeline_container"];
-const X_POST_ROW_IDS = ["timeline_post", "com.twitter.android:id/outer_layout_row_view_tweet"];
+const X_POST_ROW_IDS = [
+  "timeline_post",
+  "com.twitter.android:id/outer_layout_row_view_tweet",
+  "com.twitter.android:id/tweet_inline_actions",
+];
 
 // The comments sheet title carries the count before the word ("24 comments",
 // 45.0.3 EN) or after it ("Comentarios 9", 44.9.3 ES); sometimes bare.
@@ -237,7 +245,20 @@ export function classifyScreen(tree: CompactTree, app: SocialApp): Classificatio
 
   if (isOpaqueOverlay(tree)) return decided("opaque_overlay", "collapsed tree with unresolved resource strings", top);
   if (nodes.length <= LOADING_MAX_NODES) return decided("loading", `${nodes.length} nodes, no markers`, top);
-  return decided("unknown", "no marker matched", top);
+  return decided("unknown", unknownEvidence(nodes), top);
+}
+
+const UNKNOWN_EVIDENCE_MAX = 240;
+
+/**
+ * What an unrecognised tree looked like — its ids and first strings — so the
+ * step journal and the attention item explain themselves without a replay
+ * (11/09/2026: two "no marker matched" stops needed a device to diagnose).
+ */
+function unknownEvidence(nodes: readonly TreeNode[]): string {
+  const ids = [...new Set(nodes.map((n) => n.resourceId).filter(Boolean))].map((id) => id.replace(/^.*:id\//, "")).slice(0, 8);
+  const strings = nodes.map((n) => n.text || n.contentDesc).filter(Boolean).slice(0, 6).map((s) => `"${s.slice(0, 24)}"`);
+  return `no marker matched — ${nodes.length} nodes; ids ${ids.join(",") || "none"}; text ${strings.join(" ") || "none"}`.slice(0, UNKNOWN_EVIDENCE_MAX);
 }
 
 type Partial = { state: ScreenState; evidence: string } | null;
@@ -306,7 +327,9 @@ function classifyTwitter(hay: string, nodes: readonly TreeNode[]): Partial {
   const tab = has(hay, M.xFeed);
   if (tab && has(hay, M.xFeedSecondary)) return { state: "feed_ok", evidence: tab };
   if (editTexts(nodes).length > 0 && has(hay, M.search)) return { state: "search", evidence: "search field" };
-  if (hasResourceId(nodes, X_HOME_IDS) && hasResourceId(nodes, X_POST_ROW_IDS)) return { state: "feed_ok", evidence: "timeline posts" };
+  if (hasResourceId(nodes, X_HOME_IDS) && (hasResourceId(nodes, X_POST_ROW_IDS) || has(hay, M.xPostActions))) {
+    return { state: "feed_ok", evidence: "timeline posts" };
+  }
   return null;
 }
 
