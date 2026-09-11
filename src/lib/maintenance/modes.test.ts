@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { MAINTENANCE_MODES, MAINTENANCE_TASK_KINDS } from "@/types";
-import { MODE_GRANTS, engagementAllowedIn, modeAllows, withheldOutcome } from "./modes";
+import { MODE_GRANTS, engagementAllowedIn, engagementGranted, modeAllows, withheldOutcome } from "./modes";
 
 describe("maintenance modes", () => {
   it("observe only reads: probes and checks run, sessions and re-logins are withheld", () => {
@@ -27,6 +27,15 @@ describe("maintenance modes", () => {
     const [observe, supervised, autonomous] = MAINTENANCE_MODES.map((m) => MODE_GRANTS[m].kinds);
     for (const kind of observe) expect(supervised).toContain(kind);
     for (const kind of supervised) expect(autonomous).toContain(kind);
+  });
+
+  it("a human's order may engage in any mode; the maintainer's own sessions only in autonomous", () => {
+    expect(engagementGranted("supervised", "scheduler")).toBe(false);
+    expect(engagementGranted("observe", "scheduler")).toBe(false);
+    expect(engagementGranted("autonomous", "scheduler")).toBe(true);
+    expect(engagementGranted("supervised", "operator")).toBe(true);
+    expect(engagementGranted("observe", "operator")).toBe(true);
+    expect(engagementGranted("supervised", "attention_reprobe")).toBe(false);
   });
 
   it("names the withheld outcome after the mode", () => {

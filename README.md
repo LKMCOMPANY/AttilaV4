@@ -102,8 +102,10 @@ node scripts/audit-app-versions.mjs --box box-2.attila.army
 # globally (`runtime_settings.maintenance.global_enabled`); the mode
 # (`maintenance.mode`, enforced by src/lib/maintenance/modes.ts) decides what
 # runs: observe = probes and checks only; supervised = passive sessions too,
-# nothing done to the account; autonomous = likes, follows and re-login as
-# well. Worker knobs: MAINTENANCE_TICK_CONCURRENCY (2),
+# nothing done to the account on the maintainer's initiative; autonomous =
+# likes, follows and re-login as well. A human's order (a directed action, a
+# session queued by an operator with --engage) runs in any mode, within the
+# blocks gate and the day's budget. Worker knobs: MAINTENANCE_TICK_CONCURRENCY (2),
 # MAINTENANCE_IDLE_MS (15000), MAINTENANCE_SCHEDULE_INTERVAL_MS (1800000).
 # One task on one avatar, through the production path, from a terminal
 # (the row, its journal and proofs stay in maintenance_tasks):

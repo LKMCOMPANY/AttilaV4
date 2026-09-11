@@ -407,6 +407,12 @@ le mode accorde et marque le reste `skipped / <mode>_mode`.
    follows dans le budget du jour, une fois le compte mature) et la
    reconnexion déterministe (code e-mail, une tentative par 24 h).
 
+Un **ordre humain** n'est pas l'initiative du mainteneur : un `directed_action`
+s'exécute dans tous les modes, et une session qu'un opérateur a demandée avec
+l'engagement (`params.allow_engagement`, `created_by = operator`) peut liker —
+la personne qui demande est le superviseur que le palier veut garantir. Ce
+qu'aucun ordre ne lève : le bloc `avatar_platform_blocks` et le budget du jour.
+
 **KPI hebdomadaires** (requêtes de référence) :
 
 ```sql
@@ -568,6 +574,36 @@ défilements, X ES2 (12.24) 6 défilements, X DE3 (11.96) 8 défilements — tro
 sessions complètes, `stale_reads` 0, conteneurs arrêtés ou gardés pour la tâche
 suivante. Cohorte : 13 avatars (21 comptes), 47 tâches encore au programme du
 jour dont 30 sessions passives de 6 à 12 min ; première à 13h47 (FR8 X).
+
+11/09 13h47–15h10 — **premières sessions supervisées** : FR8 X 17
+défilements puis arrêt `unknown` sur un feed normal (post vidéo haut, aucun
+marqueur à l'écran) → reproduit sur le device (défilement 13/25), corrigé
+`2418369` (la barre d'actions vaut ligne de post ; une carte inconnue est
+dépassée, la deuxième arrête ; un écran inconnu se décrit dans le journal) ;
+GB4 TikTok 7 min / 19 défilements, DE3 TikTok 6 min / 19 défilements (feuille
+Shop fermée par BACK, permission système refusée), GB2 X 9 min / 27
+défilements — trois sessions complètes, `stale_reads` 0. Le cockpit MCP de
+l'app macOS (exécution parallèle, `1820455` web + `94b6c9c` mac) vérifié de
+bout en bout depuis Cursor : `whoami`, lecture des tâches, `device_control
+start`, `device_screen`, `device_input tap` (TikTok ouvert, `feed_ok`,
+capture), `press home`, `stop` ; deux lignes `operator.input.*` avec
+`client: mcp` dans `audit_log`.
+
+11/09 15h15–15h45 — **le like X, mesuré avant d'être écrit** (demande de
+l'opérateur : défiler et liker sur X, army « army user » d'Argus). Le
+mainteneur ne likait que sur TikTok. Sur X 12.24 (Compose), le cœur est une
+`View` non cliquable décrite dans la langue du device (« Like », « J'aime »,
+« Me gusta ») ; un clic d'accessibilité par sélecteur atterrit sur la ligne du
+post et l'ouvre (ES2 → `post_detail`), le **tap au centre du nœud** like. Les
+trois formes « liké » mesurées : « Undo Like » (GB2, 195 → 196), « Annuler le
+J'aime » (FR8, 14 → 15), « Deshacer Me gusta » (ES2, 1K). Écrit dans
+`engine/ui/x-feed.ts` (pur, testé sur les arbres mesurés) : les posts à
+l'écran, le badge « Ad » qui écarte les posts sponsorisés, le choix du cœur
+entier à l'écran le plus proche du milieu, la vérification au même endroit
+(libellé liké, +1 sur un compte exact) avec une seconde lecture pour
+l'animation. La session like désormais sur X comme sur TikTok
+(`likeOnScreen`), et une session **demandée par un opérateur avec
+l'engagement** like en mode `supervised` : c'est son ordre.
 
 **Critères d'arrêt immédiat** (retour à `observe`) : un compte de la cohorte
 suspendu ou verrouillé sans cause externe identifiée ; plus de 2 tâches

@@ -1,4 +1,4 @@
-import type { MaintenanceMode, MaintenanceTaskKind } from "@/types";
+import type { MaintenanceMode, MaintenanceTaskCreator, MaintenanceTaskKind } from "@/types";
 
 /**
  * The deployment ladder of the maintainer, as a rule the runner enforces —
@@ -8,13 +8,16 @@ import type { MaintenanceMode, MaintenanceTaskKind } from "@/types";
  *                 planned so the queue shows what WOULD run, then skipped.
  *   supervised  — the passive session runs (open, dwell, scroll, clear a
  *                 dialog the safe way) under a human's eye. Nothing is done TO
- *                 the account: no like, no follow, no re-login.
+ *                 the account on the maintainer's initiative: no like, no
+ *                 follow, no re-login.
  *   autonomous  — everything the recipes know: engagement inside the session
  *                 within the day's budget, the deterministic re-login.
  *
- * The planner ignores the mode on purpose; the mode is read when a task is
- * claimed, so a switch takes effect within one beat and a running task ends
- * under the rules it started with.
+ * A human's order is not the maintainer's initiative: a directed action runs
+ * in every mode, and a session an operator queued with engagement on may like
+ * (`engagementGranted`). The planner ignores the mode on purpose; the mode is
+ * read when a task is claimed, so a switch takes effect within one beat and a
+ * running task ends under the rules it started with.
  */
 
 /**
@@ -46,6 +49,17 @@ export function modeAllows(mode: MaintenanceMode, kind: MaintenanceTaskKind): bo
 
 export function engagementAllowedIn(mode: MaintenanceMode): boolean {
   return MODE_GRANTS[mode].engagement;
+}
+
+/**
+ * Whether a session may like or follow. The mode grants it to the
+ * maintainer's own initiative; a session a human queued with engagement on is
+ * that human's order, and the person who asked is the supervisor the ladder
+ * exists to provide — the same doctrine as a directed action. What no order
+ * relaxes: the blocks gate and the day's budget, checked inside the recipe.
+ */
+export function engagementGranted(mode: MaintenanceMode, createdBy: MaintenanceTaskCreator): boolean {
+  return engagementAllowedIn(mode) || createdBy === "operator";
 }
 
 /** The outcome written on a task the mode withheld, e.g. `observe_mode`. */

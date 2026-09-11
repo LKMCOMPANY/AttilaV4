@@ -1,7 +1,9 @@
-import { clickTarget, openDeepLink, pressBack } from "@/lib/engine/actor";
+import { clickTarget, openDeepLink, pressBack, tapNode } from "@/lib/engine/actor";
 import { readTreeAfterGesture, sleep, type TreeRead } from "@/lib/engine/reader";
 import { classifyScreen } from "@/lib/engine/ui/screen-state";
+import { likeablePost, xLikeVerified } from "@/lib/engine/ui/x-feed";
 import { followVerified, likeState, likeVerified } from "@/lib/engine/verifier";
+import type { SocialPlatform } from "@/types";
 import { dailyCounts, recordAvatarAction } from "../ledger";
 import type { RecipeContext } from "../recipes/context";
 import { WATCHED_PACKAGES } from "../app-versions.mjs";
@@ -9,12 +11,16 @@ import { markCandidate, nextCandidate } from "./discover";
 
 /**
  * The gestures of a maturing account (phase 3), taken inside the passive
- * session and never outside it: a like on a video the feed happened to show,
- * a follow of a creator the discovery ranked. Each one is verified from the
- * tree (the heart flips, the header changes), written to the ledger, and
- * counted against the day's budget. A gesture that cannot be verified is not
- * counted as done — and is not retried in the same session.
+ * session and never outside it: a like on a video or a post the feed happened
+ * to show, a follow of a creator the discovery ranked. Each one is verified
+ * from the tree (the heart flips, the header changes), written to the ledger,
+ * and counted against the day's budget. A gesture that cannot be verified is
+ * not counted as done — and is not retried in the same session.
  */
+
+/** X animates the heart for about a second; the tree may be read mid-flight once. */
+const X_LIKE_SETTLE_MS = 1_500;
+const X_LIKE_READS = 2;
 
 export interface EngagementBudget {
   likesLeft: number;
@@ -36,23 +42,21 @@ async function profileOf(ctx: RecipeContext): Promise<"new" | "mature"> {
 }
 
 /**
- * Like the video on screen when the heart is visibly not lit. Returns true
- * only when the tree confirms the flip.
+ * Like what the feed shows — the TikTok video on screen, or the X post a
+ * person would pick (not promoted, heart fully visible, nearest the middle).
+ * Returns true only when a fresh tree confirms the flip; the ledger row is
+ * written then and only then.
  */
-export async function likeCurrentVideo(ctx: RecipeContext, read: TreeRead): Promise<boolean> {
-  const { dev } = ctx.session;
-  if (likeState(read.tree) !== "not_liked") return false;
-  const click = await clickTarget(dev, read.tree, "tiktok.like_button", { locale: dev.locale });
-  if (!click.clicked) return false;
-  const after = await readTreeAfterGesture(dev, { previousHash: read.tree.hash, expectChange: true, settleMs: 1_200 });
-  if (!likeVerified(read.tree, after.tree)) return false;
+export async function likeOnScreen(ctx: RecipeContext, read: TreeRead, platform: SocialPlatform): Promise<boolean> {
+  const liked = platform === "tiktok" ? await likeTikTokVideo(ctx, read) : platform === "twitter" ? await likeXPost(ctx, read) : false;
+  if (!liked) return false;
   // Several likes happen in one task: the ledger's idempotency key is per
   // (kind, ref, action), so gestures are written without a ref and counted
   // by the task's result instead.
   await recordAvatarAction(ctx.supabase, {
     accountId: ctx.session.avatar.account_id,
     avatarId: ctx.session.avatar.id,
-    platform: "tiktok",
+    platform,
     action: "like",
     actor: "maintainer",
     timezone: ctx.session.device.timezone,
@@ -61,6 +65,35 @@ export async function likeCurrentVideo(ctx: RecipeContext, read: TreeRead): Prom
     target: null,
   });
   return true;
+}
+
+/** The heart of the video on screen, by selector, when it is visibly not lit. */
+async function likeTikTokVideo(ctx: RecipeContext, read: TreeRead): Promise<boolean> {
+  const { dev } = ctx.session;
+  if (likeState(read.tree) !== "not_liked") return false;
+  const click = await clickTarget(dev, read.tree, "tiktok.like_button", { locale: dev.locale });
+  if (!click.clicked) return false;
+  const after = await readTreeAfterGesture(dev, { previousHash: read.tree.hash, expectChange: true, settleMs: 1_200 });
+  return likeVerified(read.tree, after.tree);
+}
+
+/**
+ * The heart of one post of the timeline, tapped at its centre (an
+ * accessibility click on these Compose Views opens the post instead), then
+ * read back — twice if need be, the first read can catch the animation.
+ */
+async function likeXPost(ctx: RecipeContext, read: TreeRead): Promise<boolean> {
+  const { dev } = ctx.session;
+  const post = likeablePost(read.tree);
+  if (!post || !(await tapNode(dev, post.likeNode))) return false;
+  let previousHash = read.tree.hash;
+  for (let attempt = 0; attempt < X_LIKE_READS; attempt++) {
+    await sleep(X_LIKE_SETTLE_MS);
+    const after = await readTreeAfterGesture(dev, { previousHash, expectChange: true, settleMs: 600 });
+    if (xLikeVerified(post, after.tree)) return true;
+    previousHash = after.tree.hash;
+  }
+  return false;
 }
 
 /**

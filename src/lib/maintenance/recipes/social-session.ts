@@ -2,9 +2,9 @@ import { scrollFeed } from "@/lib/engine/actor";
 import { readTreeAfterGesture, sleep, type TreeRead } from "@/lib/engine/reader";
 import { classifyScreen, SAFE_REACTION, type Classification } from "@/lib/engine/ui/screen-state";
 import { discoverCandidates } from "../cluster/discover";
-import { followNextCandidate, likeCurrentVideo, remainingBudget, type EngagementBudget } from "../cluster/engage";
+import { followNextCandidate, likeOnScreen, remainingBudget, type EngagementBudget } from "../cluster/engage";
 import { recordAvatarAction } from "../ledger";
-import { engagementAllowedIn } from "../modes";
+import { engagementGranted } from "../modes";
 import { appFor, MAIN_STATES, settleApp, statusFromScreen } from "../runner/screens";
 import { jitter, type RecipeContext, type RecipeResult } from "./context";
 import { escalate, runProbe, writeState } from "./probe";
@@ -31,12 +31,13 @@ const MAX_UNKNOWN_STREAK = 2;
  * one comes up, stop at once on any state a human must see.
  *
  * Passive by default (phase 1). With `params.allow_engagement` (the planner
- * sets it once the account is mature) and a mode that grants engagement
- * (`autonomous`, see `modes.ts`), the phase 3 gestures ride the same loop: a
- * like now and then on a video the feed shows, one follow of a discovered
- * cluster creator early in the session — each verified from the tree and
- * counted against the day's budget. The discovery itself (TikHub search on
- * the armies' keywords) runs first.
+ * sets it once the account is mature; an operator sets it on a session they
+ * order) and the grant of `modes.ts` (`autonomous`, or a human's order), the
+ * phase 3 gestures ride the same loop: a like now and then on a video or a
+ * post the feed shows, one follow of a discovered cluster creator early in the
+ * session (TikTok) — each verified from the tree and counted against the
+ * day's budget. The discovery itself (TikHub search on the armies' keywords)
+ * runs first.
  *
  * Every session is one `session` row in the ledger and moves the twin's
  * `last_session_at`; the planner's ramp-up reads that.
@@ -67,7 +68,7 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
   let likes = 0;
   let follows = 0;
 
-  const engaging = ctx.task.params.allow_engagement === true && engagementAllowedIn(ctx.settings.mode);
+  const engaging = ctx.task.params.allow_engagement === true && engagementGranted(ctx.settings.mode, ctx.task.created_by);
   let budget: EngagementBudget = { likesLeft: 0, followsLeft: 0 };
   if (engaging) {
     budget = await ctx.journal.step("discover_cluster", async () => {
@@ -112,8 +113,8 @@ export async function runSocialSession(ctx: RecipeContext, random: () => number 
         seen.push(classification.state);
         if (MAIN_STATES.includes(classification.state)) {
           unknownStreak = 0;
-          if (engaging && platform === "tiktok" && budget.likesLeft > 0 && random() < ctx.settings.likeProbability) {
-            if (await likeCurrentVideo(ctx, read)) {
+          if (engaging && budget.likesLeft > 0 && random() < ctx.settings.likeProbability) {
+            if (await likeOnScreen(ctx, read, platform)) {
               likes++;
               budget.likesLeft--;
             }

@@ -1,9 +1,11 @@
 /**
  * The engine's hands. Every gesture goes through a named target resolved in
  * the tree just read (`selectors`), never through a hard-coded coordinate;
- * the one exception is `tapNode`, for nodes the agent cannot address by
- * selector (no resource id, no text, no description), which taps the node's
- * own centre read from the same tree.
+ * the one exception is `tapNode`, which taps a node's own centre read from
+ * the same tree — for nodes the agent cannot address by selector (no resource
+ * id, no text, no description) and for nodes an accessibility click misroutes
+ * (X 12.2x's action bar is made of non-clickable Compose Views: the click
+ * lands on the post row and opens it — measured 11 September 2026 on ES2).
  *
  * Typing is ADBKeyboard only (AGENTS.md hard rule 3); this module exposes no
  * other way to put text in a field.
@@ -76,8 +78,8 @@ function selectorForNode(node: TreeNode): V2Selector | null {
   return null;
 }
 
-/** Tap the centre of a node's bounds — last resort for unaddressable nodes. */
-async function tapNode(dev: DeviceRef, node: TreeNode): Promise<boolean> {
+/** Tap the centre of a node's bounds (see the module note on when this is the right hand). */
+export async function tapNode(dev: DeviceRef, node: TreeNode): Promise<boolean> {
   const c = nodeCenter(node);
   if (!c) return false;
   await shell(dev.tunnelHostname, dev.dbId, `input tap ${c.x} ${c.y}`);

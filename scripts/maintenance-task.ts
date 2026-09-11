@@ -6,12 +6,15 @@
  * Usage:
  *   npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind probe --platform tiktok
  *   npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind social_session --platform tiktok --minutes 3
+ *   npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind social_session --platform twitter --minutes 5 --engage
  *   npx tsx scripts/maintenance-task.ts --avatar <uuid> --kind app_check
  *
  * Env: .env.local is read when present (Supabase service role, CF Access).
  * Honours `runtime_settings.maintenance.mode` — pass `--mode supervised` to
- * override it for this run only (the database value is untouched). The task
- * row stays in `maintenance_tasks` with its journal and proofs, like any other.
+ * override it for this run only (the database value is untouched). `--engage`
+ * orders the likes of a session (a human's order engages in any mode, within
+ * the day's budget and the blocks gate). The task row stays in
+ * `maintenance_tasks` with its journal and proofs, like any other.
  */
 
 import { loadDotEnvLocal } from "./lib/dotenv.mjs";
@@ -38,6 +41,7 @@ async function main() {
   const platform = arg("platform", "") || null;
   const minutes = Number(arg("minutes", "3"));
   const modeOverride = arg("mode", "");
+  const engage = args.includes("--engage");
 
   const supabase = createAdminClient();
   const { data: avatar, error } = await supabase
@@ -54,7 +58,7 @@ async function main() {
   console.log("=== MAINTENANCE TASK ===");
   console.log(`Avatar:   ${avatar.first_name} ${avatar.last_name} (${avatar.id})`);
   console.log(`Kind:     ${kind}${platform ? ` on ${platform}` : ""}`);
-  console.log(`Mode:     ${settings.mode}${modeOverride ? " (overridden for this run)" : ""}`);
+  console.log(`Mode:     ${settings.mode}${modeOverride ? " (overridden for this run)" : ""}${engage ? " · engagement ordered" : ""}`);
 
   const { data: inserted, error: insertError } = await supabase
     .from("maintenance_tasks")
@@ -66,7 +70,7 @@ async function main() {
       kind,
       priority: PRIORITY.warmup + 20,
       scheduled_for: new Date().toISOString(),
-      params: { minutes, requested_by: "scripts/maintenance-task.ts" },
+      params: { minutes, requested_by: "scripts/maintenance-task.ts", ...(engage ? { allow_engagement: true } : {}) },
       created_by: "operator",
     })
     .select("id")
