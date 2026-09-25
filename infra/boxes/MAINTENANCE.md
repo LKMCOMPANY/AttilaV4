@@ -216,7 +216,16 @@ first try, box-1 going to a clean 96/96 stopped. So:
   every one of these six carried an avatar and four had job history.
   `model_backup` is no safety net either; it also requires `stopped`/`exited`.
 - **Poll `stop` on a long horizon instead** — minutes are not enough, hours are.
-  A patient retry loop clears the state without losing anything.
+  A patient retry loop clears the state without losing anything. Since 25
+  September 2026 production does this by itself: the reconcile marks a
+  `starting` container `running` in the database, the reaper (15-minute idle
+  window, `stopContainer` ignores the `code 2` refusal) tries to stop it and
+  flips the row to `stopped`, the next reconcile flips it back — an 18-minute
+  cycle that takes the container down on the first pass after it reaches
+  `running`. No operator action is needed; the cost is the host load meanwhile.
+- **Do not boot a device recorded `dead`.** That is how the six of 26
+  September were created (a full sweep re-probed them): `audit-device-health.mjs`
+  now skips known-dead devices unless `--recheck`.
 - Meanwhile the host pays for it, so a box carrying several of these is worth
   watching: the containers are not idle, they are looping on a boot that never
   completes.
