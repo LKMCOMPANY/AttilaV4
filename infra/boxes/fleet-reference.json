@@ -1,47 +1,123 @@
 {
-  "$comment": "Golden targets for the VMOS Edge fleet. check-drift.mjs compares every live box against these values. The proxy version is NOT recorded here: it is read from infra/magicbox-proxy/package.json (the code IS the source of truth).",
-  "captured_at": "2026-08-31",
-  "captured_from": "GET /v1/get_hardware_cfg on every live box. Prefer it over /v1/systeminfo: it reports `model`, `version` (CBS) and `kernel_version` on ALL boxes, whereas /v1/systeminfo leaves cbs/kernel blank on the 1.1.4.x CBS line (box-2/3/4).",
+  "$comment": "Golden targets for the VMOS Edge fleet. check-drift.mjs compares every live box against these values. The proxy version is NOT recorded here: it is read from infra/magicbox-proxy/package.json (the code IS the source of truth). Three sources, in this order of authority: the vendor's online reference says what exists; a box's MCP catalogue says what the box believes it serves; only a REST probe on the box says what answers on that CBS line.",
+  "captured_at": "2026-09-25",
+  "captured_from": "GET /v1/get_hardware_cfg on box-1..4 over the LAN (LAN-first) and https://help.vmosedge.com (image-release-history, firmware-download, ai-reference-container.txt dated 2026-09-11). Prefer get_hardware_cfg over /v1/systeminfo: it reports `model`, `version` (CBS), `kernel_version`, `device_id` and `hwaddr` on ALL boxes, whereas /v1/systeminfo leaves cbs/kernel blank on the 1.1.4.x CBS line (box-2/3/4).",
 
   "android_image": {
-    "$comment": "Model-independent — the Android image runs on any host model. New devices MUST be created on it so they are born fleet-aligned: pass it to MagicBox-Industrial as --image-repository <golden> (it defaults to VMOS's ancient built-in image otherwise). This file is the single source of truth for the value; do not re-hardcode it in the provisioning repo.",
-    "golden": "vcloud_android13_edge_20260626203150",
-    "present_on_boxes": [5],
-    "distribution": "No export endpoint exists in the Container API (only POST /v1/import_image, an upload). Moving it to another box means `docker save` on box-5 and `docker load` on the target, over SSH — roughly 3.4 GB per box. Do not attempt it without a justification stronger than uniformity."
+    "$comment": "Model-independent — the Android image runs on any host model. `golden` is the last image the vendor published WITHOUT a model restriction (17 July 2026; from 24 July every release is L20-only, then K30-only). It is a CANDIDATE: no device runs it yet, and `upgrade_image` recreates the container, so it is validated on ONE parked device first (Phase 2 canary, separate decision) before it becomes the provisioning default. New devices are created on it so they are born fleet-aligned: pass it to MagicBox-Industrial as --image-repository <golden>. This file is the single source of truth for the value; do not re-hardcode it in the provisioning repo.",
+    "golden": "vcloud_android13_edge_20260717112129",
+    "golden_validated": false,
+    "golden_released": "2026-07-17",
+    "previous_golden": "vcloud_android13_edge_20260626203150",
+    "present_on_boxes": [],
+    "in_fleet": {
+      "vcloud_android13_edge_20260307170335": [1],
+      "vcloud_android13_edge_20260417164945": [2, 3],
+      "vcloud_android13_edge_20260511192039": [4],
+      "vcloud_android13_edge_20260626203150": [5]
+    },
+    "distribution": "POST /v1/import_image (multipart upload of the vendor .tar.gz, NDJSON progress) over the LAN — 3.4 GB per box, minutes on the LAN against hours through the tunnel. No export endpoint exists."
   },
 
   "vendor_by_model": {
-    "$comment": "The fleet spans TWO hardware models that do NOT share a kernel: box-1..4 are `L1`, box-5 is `E1.01`. Converging an L1 onto the E1.01 kernel through POST /v1/update_kernel would flash firmware from the wrong family. Each model therefore carries its own baseline, set to the highest version actually observed on that model — which is why the L1 target is a composite: box-1 leads on CBS (1.1.6.12.1) while box-2/3/4 lead on kernel (2.0.30_marsbox). No single L1 box is yet on target.",
+    "$comment": "The fleet spans TWO hardware families that do NOT share a kernel: box-1..4 are `L1` (Rockchip RK3588S, firmware files named *marsbox*), box-5 is `K1` hardware although its API reports `model = E1.01` (its kernel is 2.0.57_k1, firmware files named *k1*). Keys are the API `model` strings because that is what check-drift matches on. Pushing one family's firmware to the other is how you brick a box: read `model` from /v1/get_hardware_cfg before anything. L1 targets = the LAST versions the vendor published for L1 (every later release is L20/K30-only).",
     "L1": {
-      "cbs_version": "1.1.6.12.1",
-      "kernel_version": "2.0.30_marsbox",
-      "observed_on_boxes": [1, 2, 3, 4]
+      "hardware": "L1 (Rockchip RK3588S, MARSBOX)",
+      "cbs_version": "1.1.7.17.1",
+      "cbs_url": "https://vmos-edge.xiaosuanyun.com/download/vmos-edge-cbs/1.1.7.17.1/cbs_go_edge_1.1.7.17.1.cbs",
+      "cbs_size_bytes": 211228000,
+      "cbs_released": "2026-07-17",
+      "cbs_notes": "Fixed cloud devices getting stuck during startup; fixed partial failures of concurrent batch backup restoration; local multimedia upload with gallery broadcast.",
+      "cbs_fallback": "1.1.7.2.1",
+      "cbs_fallback_url": "https://vmos-edge.xiaosuanyun.com/download/vmos-edge-cbs/1.1.7.2.1/cbs_go_edge_1.1.7.2.1.cbs",
+      "cbs_fallback_size_bytes": 211039680,
+      "cbs_fallback_notes": "Embedded in the last L1 firmware image update_2.0.61_marsbox_20260703.img — proven on L1 by the vendor.",
+      "kernel_version": "2.0.57_marsbox",
+      "kernel_url": "https://vmos-edge.xiaosuanyun.com/download/fireware/Kerner_Version/boot-2.0.57-marsbox.img",
+      "kernel_size_bytes": 61023232,
+      "kernel_released": "2026-06-05",
+      "kernel_constraint": "Vendor release note of 5 June 2026: CBS >= 1.1.6.5 requires kernel >= 2.0.57. box-1 violates it today (CBS 1.1.6.12.1 on kernel 1.0.86_marsbox / Linux 5.10). No kernel-only image exists to go back to 2.0.30: the kernel step is one-way (the only way back is a full firmware flash, which erases data).",
+      "full_firmware_latest": "update_2.0.61_marsbox_20260703.img (kernel 2.0.61, CBS 1.1.7.2.1) — full flash, ERASES ALL DATA, never used on a populated box",
+      "observed_on_boxes": [1, 2, 3, 4],
+      "observed_2026_09_25": { "box-1": { "cbs": "1.1.6.12.1", "kernel": "1.0.86_marsbox" }, "box-2": { "cbs": "1.1.4.30.1", "kernel": "2.0.30_marsbox" }, "box-3": { "cbs": "1.1.4.30.1", "kernel": "2.0.30_marsbox" }, "box-4": { "cbs": "1.1.4.30.1", "kernel": "2.0.30_marsbox" } }
     },
     "E1.01": {
+      "hardware": "K1 (the API model string is misleading; firmware files are named *k1*)",
       "cbs_version": "1.1.6.29.1",
       "kernel_version": "2.0.57_k1",
-      "observed_on_boxes": [5]
+      "observed_on_boxes": [5],
+      "$comment": "box-5 is out of scope for the September 2026 session (tunnel down since 21 Sep, absent from the LAN). Baseline = highest version observed on it; the vendor's K1 line went to kernel 2.0.61 / CBS 1.1.7.2.1 (update_2.0.61_k1_20260703.img) — revisit when the box is back."
     }
   },
 
   "vendor_upgrade_path": {
-    "$comment": "The vendor layer IS upgradable through the official API — an earlier revision of this file wrongly claimed it was not shippable and pointed at a scripts/deploy-vendor.sh that never existed.",
-    "cbs": "POST /v1/update_cbs (multipart, file named cbs_go_edge_<version>, optional .cbs suffix)",
-    "kernel": "POST /v1/update_kernel (multipart, .img — the host reboots afterwards)",
-    "constraint": "Match the hardware model. Read `model` from /v1/get_hardware_cfg before pushing anything."
+    "$comment": "The vendor layer IS upgradable through the official API. Order per box: freeze (0 containers running, no job or task due), pre-flight probes, disk_migration/prepare, update_kernel (host reboots ~3 min, wait for /v1/heartbeat), verify kernel_version, update_cbs, verify version + list_names unchanged, two serial boots with boot_ms, /stream-ready, v2 base/version_info, /proxy-test, scd_config; stop everything; record in FLEET-ALIGNMENT.md.",
+    "cbs": "POST /v1/update_cbs (multipart, file named cbs_go_edge_<version>, optional .cbs suffix); rollback = cbs_go.backup next to the binary (and /root/upgrades/cbs/*/cbs_go.pre-upgrade on box-1)",
+    "kernel": "POST /v1/update_kernel (multipart, .img — the host reboots afterwards); NO rollback image for L1 2.0.30",
+    "safety_net": "POST /disk_migration/v1/prepare before the kernel flash — the SSD then restores on another L1 via /storage/import + /disk_migration/v1/restore. Probe GET /disk_migration/v1/status first: availability per CBS line is not established.",
+    "constraint": "Match the hardware model. Read `model` from /v1/get_hardware_cfg before pushing anything. One box at a time, canary box-2 first, box-1 only with a written vendor confirmation of the kernel-only path from 1.0.86."
   },
 
   "host_disk": {
-    "$comment": "Disk headroom is a production gate, not a nicety. box-1 reached 98% on /container_nswc_lv in June 2026: guest ext4 writes began failing with EIO (superblock: ext4_check_bdev_write_error, 13 Jun 2026), 44 of its 96 containers took the filesystem error flag, and its job success rate sat at 31% against 70% on a healthy box. Container data.img files are sparse and grow-only — the loop devices are not mounted with discard — so allocation never shrinks on its own.",
+    "$comment": "Disk headroom is a production gate, not a nicety. box-1 reached 98% on /container_nswc_lv in June 2026: guest ext4 writes began failing with EIO (superblock: ext4_check_bdev_write_error, 13 Jun 2026), 44 of its 96 containers took the filesystem error flag, and its job success rate sat at 31% against 70% on a healthy box. Container data.img files are sparse and grow-only — the loop devices are not mounted with discard — so allocation never shrinks on its own. The eMMC root (26 GB) is watched too: box-1 sat at 77% on 25 Sep 2026 from unused images and unrotated logs.",
     "warn_percent": 75,
     "critical_percent": 85,
-    "reclaim": "Offline maintenance pass: e2fsck -fy, purge /tombstones + /anr + /local/tmp/scd.log, then mount -o loop,discard and fstrim. Recovered 129 GB across 95 containers on box-1 (98% → 69%) with identity and app data untouched."
+    "reclaim": "SSD: offline maintenance pass (e2fsck -fy, purge /tombstones + /anr + /local/tmp/scd.log, mount -o loop,discard, fstrim) — 129 GB recovered on box-1 in August 2026. eMMC: GET /v1/prune_images (unused Android images, 3–6 GB), journald/rsyslog/mihomo bounded by deploy.sh (files/journald.conf.d, files/logrotate.d)."
   },
 
-  "cloudflared_version": "2026.6.1",
+  "host_hygiene": {
+    "$comment": "What deploy.sh converges on every box and check-drift verifies over SSH. Host OS (Debian 11) is vendor firmware: no apt upgrade, only the logrotate package is installed by us.",
+    "hostname_pattern": "box-N",
+    "timezone": "Europe/Paris",
+    "locale": "en_US.UTF-8",
+    "resolvers": ["1.1.1.1", "8.8.8.8"],
+    "swappiness": 10,
+    "journald_max": "300M",
+    "no_files": ["/etc/magicbox-proxy.env"],
+    "managed_files": [
+      "/etc/sysctl.d/90-attila.conf",
+      "/etc/systemd/journald.conf.d/attila.conf",
+      "/etc/logrotate.d/rsyslog",
+      "/etc/logrotate.d/attila-mihomo",
+      "/etc/NetworkManager/conf.d/90-attila-dns.conf",
+      "/etc/resolv.conf",
+      "/etc/systemd/system/cloudflared.service",
+      "/etc/systemd/system/magicbox-proxy.service",
+      "/etc/systemd/system/attila-sysctl.service",
+      "/etc/systemd/system/attila-sysctl.timer",
+      "/etc/cloudflared/config.yml"
+    ],
+    "swappiness_note": "Android guests run privileged and their init.rc writes /proc/sys/vm/swappiness=100; on kernel 5.10 (box-1) the write reaches the host, on 6.1 it does not (measured 25 Sep 2026). attila-sysctl.timer re-asserts 10 every minute until every host is on 6.1.",
+    "authorized_key": "files/authorized_keys.d/attila-fleet.pub",
+    "root_password_locked": false,
+    "root_password_locked_note": "Gated: --lock-root-password installs files/sshd_config.d/60-attila.conf after a key login is verified. The vendor's cbs_debug user keeps its password."
+  },
+
+  "runtime": {
+    "$comment": "Our layer on the host, pinned and shipped by deploy.sh (canary box-2 → 1 → 3 → 4). Checksums verified on 2026-09-25 from nodejs.org SHASUMS256.txt and a downloaded GitHub release asset.",
+    "node": {
+      "version": "24.21.0",
+      "lts": "Krypton",
+      "released": "2026-09-07",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz",
+      "sha256": "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2",
+      "install_prefix": "/opt/node-v24.21.0-linux-arm64",
+      "symlink": "/opt/node",
+      "note": "The nodesource Node 20.20.2 under /usr/bin (EOL 30 April 2026) is left in place and used by nothing once the unit points at /opt/node."
+    },
+    "cloudflared": {
+      "version": "2026.9.3",
+      "released": "2026-09-24",
+      "url": "https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/cloudflared-linux-arm64.deb",
+      "sha256": "bcce0111878f13d26e66b1d2ea7f270c8bde4bd549e32ce74d32474521583ca3",
+      "install": "dpkg -i, restarted DETACHED (systemd-run --on-active=2s) when the deploy rides the tunnel"
+    }
+  },
+
+  "cloudflared_version": "2026.9.3",
 
   "reference_capacity": {
-    "$comment": "Fleet policy (2026-07-07): max_concurrent_containers = 10 on every box — the VMOS host ceiling (AGENTS.md). Proven on box-5 at 16 GB RAM; box-2/3/4 have the same 16 GB and box-1 has 32 GB, so 10 is safe fleet-wide. operator_reserve stays 1 (the automator uses max-1). check-drift flags divergence from this value.",
+    "$comment": "Fleet policy (2026-07-07): max_concurrent_containers = 10 on every box — the VMOS host ceiling (AGENTS.md). Proven on box-5 at 16 GB RAM; box-2/3/4 have the same 16 GB and box-1 has 32 GB, so 10 is safe fleet-wide. operator_reserve stays 1 (the automator uses max-1). check-drift flags divergence from this value. Measured 9 Sep 2026: the API accepts an 11th run — the ceiling is enforced by our arbiter only.",
     "max_concurrent_containers": 10
   },
 

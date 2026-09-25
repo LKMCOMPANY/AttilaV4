@@ -6,14 +6,53 @@ backend (`cbs_go`, `:18182`) and the per-container scrcpy streams, and exposes:
 
 | Route | Purpose |
 |---|---|
-| `GET /healthz` | Box health + running container count |
+| `GET /healthz` | Box health, container count, **resolved API host** (see below) |
 | `WS  /stream/{db_id}/{video\|touch\|audio}` | Live device streams |
-| `GET /stream-ready/{db_id}` | **Stream readiness probe** — TCP-connects the scrcpy video port; `{ ready: boolean }` |
+| `GET /stream-ready/{db_id}` | **Stream readiness probe** — real WebSocket handshake on the scrcpy port + in-guest agent; `{ ready, reason }` |
 | `GET /proxy-test/{db_id}` | **Real proxy connectivity test** (see below) |
 | `* ` (everything else) | Reverse-proxied to `cbs_go` (`/android_api/*`, `/container_api/*`, …) |
 
 It listens on `127.0.0.1:8080`; `cloudflared` publishes it as
 `https://box-N.attila.army` (protected by Cloudflare Access).
+
+## Where `cbs_go` is (1.3.0)
+
+`cbs_go` binds `:18182` on the box's **LAN address only** — never on
+`127.0.0.1` — and the boxes are on DHCP. Until 1.2.0 that address was written
+to `/etc/magicbox-proxy.env` by the deployer; when box-4's lease moved
+(`.16` → `.237`, 25 September 2026) every request failed with `EHOSTUNREACH`
+and the box read `offline` for four days.
+
+Since 1.3.0 the address is **resolved** (`src/api-host.js`): the IPv4 of the
+interface carrying the default route in `/proc/net/route` — which is what
+`/v1/net_info` reports as `host_ip`, and the only one of the host's several
+non-internal IPv4s (`docker0`, the `mac0` macvlan alias) that `cbs_go` uses.
+It is re-resolved after any connect error a moved address would explain
+(`EHOSTUNREACH`, `ECONNREFUSED`, `ENETUNREACH`, `ETIMEDOUT`) and every 15 s,
+and every change is logged. The proxy never falls back to `127.0.0.1`: with no
+default route it answers `503 api_unresolved` rather than hiding the fault.
+
+`/healthz` says what it resolved — all fields additive over the 1.x shape:
+
+```jsonc
+{ "status": "ok", "version": "1.3.0", "uptime": 4091.1, "containers": 57,
+  "api_host": "192.168.1.19", "api_iface": "eth0", "api_source": "default_route",
+  "lan_ip": "192.168.1.19" }
+// degraded: { "status": "degraded", …, "error": "api_unreachable" | "api_unresolved" }
+```
+
+`api_source` ∈ `default_route | iface | override | no_default_route`. The
+reconcile worker persists `lan_ip` as the box's observed address.
+
+## Tests
+
+```bash
+npm test          # node:test — unit tests + wire-contract tests against a fake box
+```
+
+`test/fixtures/{healthz,stream-ready}.json` are the wire contracts; the web
+(`src/lib/streaming/stream-readiness.test.ts`) and the Mac client replay the
+same files, so a payload change is a change on three sides.
 
 ## Why `/proxy-test` exists
 
@@ -50,7 +89,11 @@ reports `true` even for proxies that do not route. Do not use it for that.
 | Var | Default |
 |---|---|
 | `PROXY_PORT` | `8080` |
-| `API_HOST` / `API_PORT` | box LAN IP / `18182` |
+| `API_HOST` | *(unset — resolved from the default route; setting it is the box-4 footgun, leave it unset on the fleet)* |
+| `API_IFACE` | *(unset — pin a named interface instead of the default route)* |
+| `API_PORT` | `18182` |
+| `API_HOST_REFRESH_MS` | `15000` |
+| `STREAM_READY_TIMEOUT_MS` | `1500` |
 | `CBS_STATE_DIR` | `/root/armcloud-container-backend-service/state` |
 | `PROXY_TEST_URL` | `http://cp.cloudflare.com/generate_204` |
 | `PROXY_TEST_TIMEOUT_MS` | `8000` |

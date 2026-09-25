@@ -1,0 +1,10 @@
+[Unit]
+Description=Re-assert the Attila fleet sysctl values every minute (see attila-sysctl.service)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

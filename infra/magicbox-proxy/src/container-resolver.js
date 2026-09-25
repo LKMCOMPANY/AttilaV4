@@ -12,30 +12,34 @@ const CACHE_TTL_MS = 3000;
 
 function fetchContainers() {
   return new Promise((resolve, reject) => {
-    const req = http.get(
-      `http://${config.apiHost}:${config.apiPort}/container_api/v1/list_names`,
-      (res) => {
-        let body = '';
-        res.on('data', (chunk) => { body += chunk; });
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(body);
-            if (json.code !== 200 || !json.data?.list) {
-              return reject(new Error(`API error: ${json.msg}`));
-            }
-            const map = new Map();
-            for (const c of json.data.list) {
-              map.set(c.db_id, c);
-            }
-            cache = { containers: map, updatedAt: Date.now() };
-            resolve(map);
-          } catch (err) {
-            reject(err);
+    const base = config.apiBase();
+    if (!base) return reject(new Error('API host unresolved (no default route)'));
+    const req = http.get(`${base}/container_api/v1/list_names`, (res) => {
+      let body = '';
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(body);
+          if (json.code !== 200 || !json.data?.list) {
+            return reject(new Error(`API error: ${json.msg}`));
           }
-        });
-      }
-    );
-    req.on('error', reject);
+          const map = new Map();
+          for (const c of json.data.list) {
+            map.set(c.db_id, c);
+          }
+          cache = { containers: map, updatedAt: Date.now() };
+          resolve(map);
+        } catch (err) {
+          reject(err);
+        }
+      });
+    });
+    req.on('error', (err) => {
+      // The list is the proxy's heartbeat against cbs_go: a connect error here
+      // is the earliest sign that the box's address moved.
+      config.apiHostResolver.refreshOnError(err);
+      reject(err);
+    });
     req.setTimeout(5000, () => { req.destroy(); reject(new Error('API timeout')); });
   });
 }

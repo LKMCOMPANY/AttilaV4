@@ -1,0 +1,14 @@
+{
+  "$comment": "Wire contract of GET /stream-ready/{db_id} on magicbox-proxy (since 1.2.0, unchanged in 1.3.0). `ready` is the historical boolean; `reason` says which remedy applies. Clients treat an UNKNOWN reason as 'still booting' and keep polling — only `projection_dead` is terminal. Replayed by src/lib/streaming/stream-readiness.test.ts (web) and StreamReadinessTests.swift (Mac).",
+  "variants": {
+    "ready": { "ready": true, "reason": "ready", "projection": true },
+    "projection_dead": { "ready": false, "reason": "projection_dead", "agent": true, "projection": false },
+    "android_down": { "ready": false, "reason": "android_down", "agent": false, "projection": false },
+    "not_listed": { "ready": false, "reason": "not_listed" },
+    "resolve_failed": { "ready": false, "reason": "resolve_failed" },
+    "invalid_db_id": { "ready": false, "reason": "invalid_db_id" },
+    "legacy_1_1_0": { "ready": false }
+  },
+  "http_status": { "ready": 200, "projection_dead": 200, "android_down": 200, "not_listed": 200, "resolve_failed": 200, "invalid_db_id": 400, "legacy_1_1_0": 200 },
+  "terminal_reasons": ["projection_dead"]
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Re-assert the Attila fleet sysctl values (files/sysctl.d/90-attila.conf)
+# Why a timer for a sysctl: every Android guest's init.rc runs
+# `write /proc/sys/vm/swappiness 100`, and the containers are privileged. On the
+# 5.10 kernel (box-1, firmware 1.0.86) that write reaches the HOST — measured on
+# 25 Sep 2026: 10 with no container, 100 as soon as one runs — which is what
+# drove zram to 100 % and kswapd0 to 95 % under eight containers. On the 6.1
+# kernel (box-2, tested the same evening) the write stays in the guest. Until
+# box-1 is on 2.0.57 this timer wins the fight once a minute; on 6.1 hosts it
+# is a no-op.
+Documentation=file:///etc/sysctl.d/90-attila.conf
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/sysctl -q -p /etc/sysctl.d/90-attila.conf

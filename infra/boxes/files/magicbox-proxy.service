@@ -6,13 +6,18 @@ Wants=network-online.target cloudflared.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/magicbox-proxy
-ExecStart=/usr/bin/node src/index.js
+# Node 24 LTS from the official arm64 tarball, installed by deploy.sh under
+# /opt/node-v24.* with /opt/node as the stable symlink (the distro/nodesource
+# Node 20 under /usr/bin is EOL since 30 April 2026 and is left alone).
+ExecStart=/opt/node/bin/node src/index.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
-# API_HOST is auto-detected by config.js (first non-internal IPv4 = box LAN
-# IP). Override only if a box has multiple NICs by creating /etc/magicbox-proxy.env
-# with a single line: API_HOST=<lan-ip>  (the leading "-" makes it optional).
+# The API host is RESOLVED by the proxy (default-route interface, re-resolved
+# on connect errors) — nothing to configure. /etc/magicbox-proxy.env is kept
+# optional for a documented API_HOST/API_IFACE override only; deploy.sh removes
+# the file, because a pinned address is what took box-4 down when its DHCP
+# lease moved (25 Sep 2026).
 EnvironmentFile=-/etc/magicbox-proxy.env
 ExecStartPre=/bin/sleep 3
 StandardOutput=journal

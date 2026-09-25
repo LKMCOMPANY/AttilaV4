@@ -1,0 +1,53 @@
+{
+  "$comment": "Wire contract of GET /healthz on magicbox-proxy. Every 1.3.0 field is ADDITIVE over the 1.x shape (status, version, uptime, containers | error). The web (src/lib/box-api, presence) and the Mac client decode these payloads in their own tests; a change here is a change on three sides. `legacy_1_2_0` is what a not-yet-redeployed box still answers and MUST keep decoding.",
+  "variants": {
+    "ok": {
+      "status": "ok",
+      "version": "1.3.0",
+      "uptime": 4091.15,
+      "api_host": "192.168.1.19",
+      "api_iface": "eth0",
+      "api_source": "default_route",
+      "lan_ip": "192.168.1.19",
+      "containers": 57
+    },
+    "api_unreachable": {
+      "status": "degraded",
+      "version": "1.3.0",
+      "uptime": 4.68,
+      "api_host": "192.168.1.237",
+      "api_iface": "eth0",
+      "api_source": "default_route",
+      "lan_ip": "192.168.1.237",
+      "error": "api_unreachable"
+    },
+    "api_unresolved": {
+      "status": "degraded",
+      "version": "1.3.0",
+      "uptime": 1.02,
+      "api_host": null,
+      "api_iface": null,
+      "api_source": "no_default_route",
+      "lan_ip": null,
+      "error": "api_unresolved"
+    },
+    "override": {
+      "status": "ok",
+      "version": "1.3.0",
+      "uptime": 120.5,
+      "api_host": "192.168.1.16",
+      "api_iface": null,
+      "api_source": "override",
+      "lan_ip": "192.168.1.16",
+      "containers": 73
+    },
+    "legacy_1_2_0": {
+      "status": "ok",
+      "version": "1.2.0",
+      "uptime": 3930.56,
+      "containers": 96
+    }
+  },
+  "http_status": { "ok": 200, "override": 200, "api_unreachable": 503, "api_unresolved": 503, "legacy_1_2_0": 200 },
+  "api_source_values": ["default_route", "iface", "override", "no_default_route"]
+}

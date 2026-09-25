@@ -1,0 +1,33 @@
+# MANAGED BY infra/boxes/files/logrotate.d/rsyslog — deployed by deploy.sh.
+#
+# Replaces the stanza the logrotate package ships under the same name (same
+# file name, so logrotate never sees the same log twice). The boxes ran rsyslog
+# WITHOUT logrotate installed until 25 Sep 2026: /var/log/syslog, daemon.log
+# and kern.log grew unbounded (3–3.8 GB per box) — rsyslog duplicates the
+# journal, which journald.conf.d/attila.conf already bounds.
+/var/log/syslog
+/var/log/daemon.log
+/var/log/kern.log
+/var/log/auth.log
+/var/log/user.log
+/var/log/messages
+/var/log/debug
+/var/log/mail.log
+/var/log/mail.info
+/var/log/mail.warn
+/var/log/mail.err
+/var/log/cron.log
+/var/log/lpr.log
+{
+	rotate 3
+	maxsize 50M
+	daily
+	missingok
+	notifempty
+	compress
+	delaycompress
+	sharedscripts
+	postrotate
+		/usr/lib/rsyslog/rsyslog-rotate
+	endscript
+}

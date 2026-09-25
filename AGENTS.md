@@ -28,7 +28,9 @@ Read these in order before touching anything in this repo.
 | `ADB-REFERENCE.md` | Any shell, IME, focus, screenshot, or container helper |
 | `GORGONE-INGESTION.md` | The webhook + sweep that feeds posts into the pipeline |
 | `LLM-ALERIA.md` | The Aleria LLM provider used for analyst + writer |
-| `infra/boxes/MAINTENANCE.md` | **Anything about a box itself** — disk, boot health, device provisioning, scrcpy tuning, stream diagnosis, vendor upgrades, proxy hygiene |
+| `infra/boxes/README.md` | The fleet IaC: manifest (identity, no IP), LAN-first transport, what `deploy.sh` converges, what `check-drift.mjs` fails on |
+| `infra/boxes/MAINTENANCE.md` | **Anything about a box itself** — moving a box, disk, boot health, device provisioning, scrcpy tuning, stream diagnosis, vendor upgrades, proxy hygiene |
+| `infra/boxes/FLEET-ALIGNMENT.md` | Dated fleet snapshots (25 September 2026: Phase 0 and Phase 1) and the gated actions |
 | `PROXY-STRATEGY.md` | Proxy assignment, testing, and the exit-IP geo check |
 | `VMOS-API-V2-EVALUATION.md` | The Android Control API v2 — measured agent versions, MCP, what to adopt and what not to |
 | `MAINTENANCE-AGENT.md` | **Read before touching any automation.** The 9 September 2026 study of avatar maintenance ("opérateur IA"): fleet and account measurements, live tests of the production flows (one false `done` reproduced), the selector-based path validated on X and TikTok, the screen-state taxonomy, decisions, target architecture, roadmap. Nothing in it is implemented yet. |
@@ -68,6 +70,41 @@ Two measurement traps, both paid for the hard way:
   VMOS clears the enabled-IME list on every container restart, and
   `activateAdbKeyboard()` re-does `pm enable` + `ime enable` + `ime set` on
   every job. Only the APK being *installed* matters at rest.
+
+## Hard rules — boxes and their network (25 September 2026)
+
+1. **No IP address in any config, ever.** The boxes are on DHCP (cbs_go takes
+ the lease at boot and pins it) and must be pluggable into another office. A
+ box's identity is `device_id` + MAC (`infra/boxes/manifest.tsv`); its address
+ is *discovered* (LAN: ARP + `GET /v1/get_hardware_cfg`) or irrelevant
+ (tunnel). `magicbox-proxy` ≥ 1.3.0 resolves cbs_go's address from the
+ default-route interface and re-resolves on `EHOSTUNREACH`; `boxes.lan_ip` is
+ observed from `/v1/net_info`, never typed. A pinned `API_HOST` is what kept
+ box-4 `offline` for four days.
+2. **LAN first, tunnel as fallback — for tooling only.** `deploy.sh`,
+ `check-drift.mjs`, `box-power.mjs` and the audits find the box on the current
+ LAN before riding the tunnel. The Render runtime is tunnel-only; never make
+ product code depend on a LAN path.
+3. **Three sources, three levels of trust.** The vendor's online reference
+ (`help.vmosedge.com/ai-reference-container.txt`, `-control.txt`) says what
+ exists; a box's MCP catalogue (`/mcp/sse`, 65 tools, partial — no
+ `scd_config`, `/sys/network/config`, `/backup/*`, `/disk_migration/*`,
+ `/tunnel/*`) says what the box believes it serves; only a REST probe on the
+ box says what answers on that CBS line. Count on an endpoint only after
+ probing it on the box that will run it.
+4. **Never unplug a box without `node scripts/box-power.mjs <box> shutdown`.**
+ VMOS restarts at boot every container that was running when the power went
+ (box-1: 8 containers at once, load 192). The script pauses maintenance, stops
+ containers one by one, waits for 0 running, then `GET /v1/shutdown`.
+5. **Vendor firmware is per hardware model and one-way.** L1 (box-1..4) and
+ K1 (box-5, API `model` says `E1.01`) do not share a kernel; no kernel-only
+ image exists to go back to 2.0.30. Read `model` first, canary box-2 first,
+ `disk_migration/prepare` before every kernel flash, one box at a time, and a
+ written vendor confirmation before touching box-1 (5.10 → 6.1, no overlayroot).
+6. **The host is vendor firmware; our layer is `infra/boxes/`.** No `apt
+ upgrade`; `logrotate` is the only package we add. Everything we converge is a
+ versioned file under `infra/boxes/files/` shipped by `deploy.sh` and verified
+ by `check-drift.mjs` (exit 0 = uniform). Hand edits on a box are drift.
 
 ## Hard rules — screen projection
 
@@ -268,6 +305,8 @@ them. Their real value is that they are a self-describing catalogue of what a
 box actually serves — that is how we found `/interface_logs/{recent,stats,detail}`
 (per-box API call log with success rates), `/v1/discover` and
 `/v1/swap_size/{gb}`, none of which appear in the published documentation.
+`.cursor/mcp.json` (gitignored) points at box-2 both over the LAN and through
+the tunnel since 25 September 2026 (box-5, the previous entry, is unreachable).
 
 **The product MCP is the one the macOS app hosts** (11 September 2026, see
 `ARCHITECTURE.md` § "Cockpit MCP"): Cursor connects to `Attila.app` on

@@ -42,6 +42,15 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Unit tests
+        run: npm run test
+
+      - name: magicbox-proxy tests
+        # The box-side proxy is a standalone Node service (node:test, no dev
+        # dependencies). Its wire contracts (/healthz, /stream-ready) are the
+        # fixtures the web and Mac clients replay.
+        run: npm --prefix infra/magicbox-proxy test
+
       - name: Build
         # Placeholders only: the build must not reach a real project, and Next
         # needs these present at collect-page-data time. Runtime secrets live in

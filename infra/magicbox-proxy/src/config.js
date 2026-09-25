@@ -1,23 +1,21 @@
-const os = require('os');
+const { ApiHostResolver } = require('./api-host');
 
-function detectLanIp() {
-  const interfaces = os.networkInterfaces();
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        return iface.address;
-      }
-    }
-  }
-  return '127.0.0.1';
-}
-
-const lanIp = process.env.API_HOST || detectLanIp();
+// The address cbs_go listens on is RESOLVED, not configured: the IPv4 of the
+// default-route interface, re-resolved after a connect error and on a timer.
+// See api-host.js for why. `API_HOST` survives only as an explicit override
+// for a host with an exotic routing table — it is the setting that broke
+// box-4 when its DHCP lease moved, so leave it unset on the fleet.
+const apiHost = new ApiHostResolver({
+  override: process.env.API_HOST || undefined,
+  iface: process.env.API_IFACE || undefined,
+});
 
 const config = {
   port: parseInt(process.env.PROXY_PORT, 10) || 8080,
-  apiHost: lanIp,
+  apiHost: null, // live getter, defined below
+  apiHostResolver: apiHost,
   apiPort: parseInt(process.env.API_PORT, 10) || 18182,
+  apiHostRefreshMs: parseInt(process.env.API_HOST_REFRESH_MS, 10) || 15000,
   streamHost: '127.0.0.1',
   streamPrefix: '/stream/',
   // Readiness probe: complete a WebSocket handshake against the scrcpy video
@@ -39,5 +37,15 @@ const config = {
   proxyTestUrl: process.env.PROXY_TEST_URL || 'http://cp.cloudflare.com/generate_204',
   proxyTestTimeoutMs: parseInt(process.env.PROXY_TEST_TIMEOUT_MS, 10) || 8000,
 };
+
+// Every module reads `config.apiHost` at call time and therefore follows a
+// re-resolution without being told. `null` when the host has no default route.
+Object.defineProperty(config, 'apiHost', {
+  enumerable: true,
+  get: () => apiHost.current().host,
+});
+
+/** `http://<api host>:<port>` for the current resolution, or `null`. */
+config.apiBase = () => (config.apiHost ? `http://${config.apiHost}:${config.apiPort}` : null);
 
 module.exports = config;

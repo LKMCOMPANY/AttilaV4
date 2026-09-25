@@ -4,11 +4,45 @@ Operational procedures for the VMOS Edge hosts. Read
 [`README.md`](README.md) first for the deploy/drift model, and
 [`FLEET-ALIGNMENT.md`](FLEET-ALIGNMENT.md) for version policy.
 
-Everything here is reachable over the Cloudflare tunnel: HTTP on
+Everything here is reachable two ways. Over the Cloudflare tunnel: HTTP on
 `https://box-N.attila.army` with the CF Access service token, SSH on
-`root@ssh-box-N.attila.army` through a `cloudflared access ssh` ProxyCommand.
-There is no LAN path — the boxes' `192.168.1.x` addresses belong to their own
-remote network and merely happen to overlap with ours.
+`root@ssh-box-N.attila.army` through a `cloudflared access ssh` ProxyCommand —
+the only path the Render runtime uses. And, since 25 September 2026, **over the
+LAN when the boxes are on it**: `cbs_go` answers on `http://<lan ip>:18182`
+(no auth — a trusted-LAN API, never expose it), SSH on `root@<lan ip>`. The
+tooling finds the LAN address itself from the MAC + `device_id` in
+`manifest.tsv` (`scripts/lib/transport.sh`, `scripts/lib/lan.mjs`); never write
+an address down, the boxes are on DHCP and move between offices. An image
+import over the LAN takes minutes instead of hours, and a box whose tunnel is
+down can still be diagnosed.
+
+## 0. Moving a box (power off / power on)
+
+VMOS restarts at boot **every container that was running when the power went**:
+box-1 came back on 25 September 2026 with 8 containers booting at once, 4 GB
+each on a 32 GB host — load average 192, zram at 100 %, `kswapd0` at 95 %. So a
+box is never just unplugged:
+
+```bash
+node scripts/box-power.mjs 2 status            # what runs, what maintenance holds
+node scripts/box-power.mjs 2 shutdown --yes    # pause → stop one by one → 0 running → GET /v1/shutdown
+```
+
+It pauses the box's maintenance (`boxes.maintenance_until` once Phase 3 has
+landed, the global switch otherwise, restored afterwards), waits for running
+tasks, stops containers **one at a time** through `POST /container_api/v1/stop`
+(a batch with any non-running instance is refused; `starting` ones are waited
+for), confirms `list_names` at 0 running / 0 starting, then `GET /v1/shutdown`.
+On the next power-up DHCP and the tunnel are enough: cbs_go takes a new lease,
+the proxy resolves it, the reconcile worker finds the box within three minutes.
+
+What DHCP means on these hosts: cbs_go's `StaticIPManager` takes the lease at
+boot and **pins it** into the NetworkManager profile (`ipv4.method manual`,
+`ipv4.addresses`, `ipv4.gateway`, `ipv4.dns 114.114.114.114;8.8.8.8`), while
+`/sys/network/config` reports `manual: false`. The address therefore changes
+only across a reboot — which the shutdown procedure implies — and the DNS in
+the profile is rewritten at every boot, which is why host DNS is handled with
+`dns=none` and our own `resolv.conf` (see README).
 
 ## 1. Disk pressure — the failure that cost us box-1
 
@@ -73,7 +107,36 @@ model, timezone and ADBKeyboard all intact. A container with 13 historical
 
 `check-drift.mjs` now fails on disk occupancy, warning at 75% and critical at
 85% (`host_disk` in [`fleet-reference.json`](fleet-reference.json)). Nothing
-watched this before, which is how a box reached 98%.
+watched this before, which is how a box reached 98%. box-1's SSD was back at
+**80 %** on 25 September 2026 (352/469 GB): the pass is due again there.
+
+### The eMMC root — what fills 26 GB
+
+Measured on 25 September 2026, before the hygiene layer landed: journald 2.5 GB
+per box (no `SystemMaxUse`), rsyslog duplicating it into `/var/log` with **no
+logrotate installed** (3–3.8 GB per box), and the per-container proxy engine
+logs. `cbs_go` runs one host-side `mihomo` per running container and writes its
+config with `"log-level": "debug"`: two-thirds of the lines are `[Rule]` /
+`[Sniffer]` debug, the rest one `info` line per connection, and every QUIC
+attempt from TikTok is `REJECT`ed by rule and logged — 1.46 GB for a single
+device, 3.4 GB on box-1. `proxy_set` has no log-level parameter, so the fix is
+host-side: `journald.conf.d/attila.conf` (300 MB), `logrotate.d/rsyslog`
+(50 MB × 3), `logrotate.d/attila-mihomo` (20 MB, copytruncate), plus
+`GET /v1/prune_images` for Android images no container uses (5.9 GB on box-1,
+3.3 GB on box-2 that evening). Root went 77 % → 38 % on box-1 without touching
+a device.
+
+Two more things measured that evening, both explained:
+
+- **`vm.swappiness` at 100 on box-1** while the firmware's `zram-init.service`
+  sets 10 at boot. Every Android guest's `init.rc` runs
+  `write /proc/sys/vm/swappiness 100`, the containers are privileged, and on
+  the 5.10 kernel the write reaches the host — 10 with no container, 100 as
+  soon as one runs. On the 6.1 kernel (box-2, same test) it stays in the guest.
+  `attila-sysctl.timer` re-asserts 10 every minute until box-1 is on 2.0.57.
+- **`/interface_logs/stats` is not empty on CBS 1.1.6.12.1** (5 categories,
+  381 k adb calls with a 100 % success rate); `/recent` returns 20 rows with a
+  method label and a status, no path.
 
 ## 2. Device inventory and provisioning
 
@@ -262,18 +325,33 @@ Upgradable through the official API, contrary to what this repo used to claim:
 reliable source of the CBS version — `/v1/systeminfo` returns it blank on the
 1.1.4.x line, which is why three boxes read as "unknown" for months.
 
-### Open item: box-1's kernel
+### The L1 targets and box-1's kernel (state on 25 September 2026)
 
-All boxes are the same board (`Rockchip RK3588S MARSBOX`), but box-1 runs Linux
-**5.10.157** where box-2 runs **6.1.158** — different LTS lines, not just
-different builds. Its `cbs_go.backup` shows it took the June CBS upgrade to
-1.1.6.x while box-2/3/4 stayed on 1.1.4.x, yet its kernel was never moved with
-it. A half-completed migration, on precisely the box that then suffered ext4
-corruption under disk pressure.
+All four boxes are the same board (`Rockchip RK3588S MARSBOX`, model `L1`). The
+vendor's last releases **for L1** — every later one is L20-only, then K30-only
+— are pinned in `fleet-reference.json`: kernel `boot-2.0.57-marsbox.img`
+(61 MB, 5 June 2026) and CBS `1.1.7.17.1` (211 MB, 17 July 2026, "fixed cloud
+devices getting stuck during startup"), fallback CBS `1.1.7.2.1` (embedded in
+the last L1 firmware `update_2.0.61_marsbox_20260703.img`). The vendor's note
+of 5 June: **CBS ≥ 1.1.6.5 requires kernel ≥ 2.0.57**.
 
-The correlation is suggestive, not proven. Acting on it needs the vendor's
-kernel `.img` — no kernel image is retained on any box — and a maintenance
-window, since `update_kernel` reboots the host. **Not actionable without VMOS.**
+box-1 violates it: CBS `1.1.6.12.1` (taken on 23 June — `cbs_go.pre-upgrade`
+under `/root/upgrades` is the 1.1.4.x binary it ran before) on kernel
+`1.0.86_marsbox`, Linux **5.10.157**, firmware E1.02 of November 2025, no
+`overlayroot`. box-2/3/4 run CBS `1.1.4.30.1` on kernel `2.0.30_marsbox`,
+Linux **6.1.158**, with `overlayroot`. Two measured consequences of box-1's
+kernel so far: the guest `swappiness` write leaking to the host (above), and
+the ext4 corruption episode under disk pressure in June (correlation, not
+proof).
+
+The upgrade path is the API (`POST /v1/update_kernel`, host reboots ~3 min;
+`POST /v1/update_cbs`), **one box at a time, box-2 as canary**, and it is
+**one-way**: no kernel-only image exists to return to 2.0.30, the only way back
+is a full firmware flash that erases the SSD. Hence `disk_migration/prepare`
+before each flash, pre-flight probes of every endpoint the procedure counts on,
+and for box-1 a written vendor confirmation that the kernel-only jump from
+1.0.86 / E1.02 without overlayroot is supported. Full procedure and gates:
+`fleet-reference.json → vendor_upgrade_path` and the September 2026 plan.
 
 ## 6 bis. Concurrency, the 10-container ceiling and the v2 agent — measured 9 September 2026
 

@@ -393,6 +393,13 @@ function startPipelineWorkers(port) {
     console.warn("[Pipeline] CRON_SECRET not set — workers disabled");
     return;
   }
+  // A local `npm run dev` against the production database would otherwise run
+  // a second set of loops (Maintain claims tasks, the reaper stops containers)
+  // next to Render's. WORKERS_ENABLED=0 keeps the UI and routes, not the loops.
+  if (process.env.WORKERS_ENABLED === "0") {
+    console.warn("[Pipeline] WORKERS_ENABLED=0 — worker loops disabled for this process");
+    return;
+  }
 
   for (let i = 0; i < PROCESS_CONCURRENCY; i++) {
     workerLoop(`Worker-Process-${i}`, port, "/api/pipeline/process");

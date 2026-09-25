@@ -48,6 +48,11 @@ function probeScrcpyHandshake(host, port) {
     socket.setTimeout(config.streamReadyTimeoutMs);
     socket.once('timeout', () => done(false));
     socket.once('error', () => done(false));
+    // A peer that accepts and then closes cleanly (FIN, no RST) fires neither
+    // `error` nor `timeout` — Node clears the inactivity timer on close — and
+    // 1.2.0 left this promise pending forever. Found by the contract test.
+    socket.once('close', () => done(false));
+    socket.once('end', () => done(false));
 
     socket.once('connect', () => {
       const key = crypto.randomBytes(16).toString('base64');
@@ -87,8 +92,10 @@ function probeScrcpyHandshake(host, port) {
  */
 function probeAgent(dbId) {
   return new Promise((resolve) => {
+    const base = config.apiBase();
+    if (!base) return resolve(false);
     const req = http.get(
-      `http://${config.apiHost}:${config.apiPort}/android_api/v2/${dbId}/base/version_info`,
+      `${base}/android_api/v2/${dbId}/base/version_info`,
       (res) => {
         let body = '';
         res.on('data', (c) => { body += c; });
@@ -103,7 +110,10 @@ function probeAgent(dbId) {
         });
       }
     );
-    req.on('error', () => resolve(false));
+    req.on('error', (err) => {
+      config.apiHostResolver.refreshOnError(err);
+      resolve(false);
+    });
     req.setTimeout(config.streamReadyTimeoutMs, () => {
       req.destroy();
       resolve(false);
