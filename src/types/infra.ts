@@ -136,10 +136,14 @@ export interface Device {
   twitter_installed: boolean | null;
   packages_checked_at: string | null;
   /**
-   * Control API v2 line the guest runs (`"1.1.1"` / `"1.1.3"`), read once from
-   * `base/version_info`. The lines differ in how the accessibility tree
+   * Control API v2 line the guest runs (`"1.0.8"` / `"1.1.1"` / `"1.1.3"`),
+   * read from `base/version_info` at every session open (the measured value
+   * wins and is written back). The lines differ in how the accessibility tree
    * refreshes after a gesture (measured 9 September 2026), so the engine's
-   * reader picks its freshness strategy from this. `null` = never read.
+   * reader picks its freshness strategy from this. Rows never read were
+   * seeded on 26 September 2026 from the image, a mapping measured on the
+   * fleet: `20260307` → 1.0.8, `20260417` → 1.1.1, `20260511`/`20260626` →
+   * 1.1.3 (`agent_checked_at` left null for those).
    */
   agent_line: string | null;
   agent_checked_at: string | null;

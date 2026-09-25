@@ -229,6 +229,58 @@ Commit `ad34715`, Render deploy `dep-darej7gu01pc73e4kuv0` built in 88 s and
   tunnel job of many minutes): ADBKeyboard 338 (96 %), TikTok 144, X 144,
   **208 devices with no social app** — box-3 alone has 107 of them.
 
+## Snapshot — 26 September 2026, Phase 4 (devices, 00:00–01:30 Paris) and Phase 5 (cockpits)
+
+**One boot per device.** `audit-device-health.mjs --with-proxy`, one process
+per box, two starts in flight each, LAN-first (`fleet.mjs`, `box-ssh.mjs`):
+351 devices booted between 23:55 and 00:45; median healthy boot 15 s on
+box-2/3/4, 25 s on box-1 (kernel 5.10). `boot_health` re-recorded for all.
+
+| Box | booted | healthy | dead (serial re-probe) | ADBKeyboard | social app | job-capable |
+|---|---:|---:|---|---:|---:|---:|
+| box-1 | 95 | 89 | **6** — ES8, FR10, FR4, US2, US42, US8 | 94 → 94 | 61 | 61 |
+| box-2 | 57 | 57 | 0 (US11 read dead alone at 23:55, healthy at 00:20) | 56 → 57 | 44 | 44 |
+| box-3 | 126 | 126 | 0 | 117 → 126 | 19 | 19 |
+| box-4 | 73 | 73 | 0 | 71 → 73 | 22 | 22 |
+
+- **Booting a dead device costs the box.** The six box-1 devices went from
+  `stopped` to VMOS `starting`, crash-looping (Docker "Up About a minute",
+  again and again), `stop` refused (`code 2`), load average 14.8 with nothing
+  useful running. The sweep now leaves known-dead devices alone unless
+  `--recheck`; `fetchRunningDbIds()` counts `starting` as an occupied slot; a
+  patient `stop` loop (2-minute period, 6-hour horizon, MAINTENANCE.md § "the
+  `starting` deadlock") was left running on the five still looping at 01:30.
+- **ADBKeyboard**: 12 of the 14 missing installed (`--missing-only
+  --concurrency 1`); the two failures (FR4, US2) are dead devices. Fleet
+  coverage 350/352 on the four boxes.
+- **App versions** (offline, LAN, boxes 1/2/4 — box-3 after its installs):
+  X present on 58 (of 91 scanned) + 44 + 20 devices, TikTok on 57 + 44 + 21; box-1 alone has
+  ten X builds from 11.82 to 12.24 and TikTok 44.6.4 on 23 devices.
+- **`aosp_version` / `agent_line` seeded from the image** where never read
+  (203 and 237 rows): `20260307` → agent 1.0.8 (box-1 — an older line than
+  documented), `20260417` → 1.1.1, `20260511` → 1.1.3; `agent_checked_at`
+  left null so the engine's `base/version_info` read still wins.
+- **Proxies** — the full picture is in `PROXY-STRATEGY.md` § "Measured on
+  the whole fleet": two engine placements (host-side mihomo vs in-guest clash
+  on a TUN), a 15–20 s unproxied window after every boot in the in-guest
+  mode, 85 of box-3's 104 checked devices exiting in the wrong country, six
+  NodeMaven engines `DOWN`. magicbox-proxy went to **1.3.2** (guest probe,
+  `engine`, `exit`, `engine_starting`, `unproxied`; fixture
+  `proxy-test.json`) and was redeployed on the four boxes in under a minute
+  each. Fifteen attention items opened (`record-sweep-attention.ts`): six
+  `boot_dead`, eight device `proxy_incoherent`, one box-scoped item for
+  box-3's 85.
+
+**Phase 5, measured on production** (deploy `5ca4baf`, live 22:25 UTC):
+`POST /api/devices/{US23}/start` during a 10-minute window answered
+`{"error":null,"refused":"box_maintenance","refusedDetail":"2026-09-25T22:36:44…","max":10}`
+in 0.9 s and the container stayed `stopped` on the box; the admin page
+shows the presence and verdict badges, the gauges, the firmware facts and the
+maintenance window (opened and closed from the UI, `maintenance_until`
+followed in the database). Web: 178 tests, 0 lint errors; macOS: 0 failures,
+`make build` exit 0, the four vocabularies pinned to their fixtures on both
+sides.
+
 Run the read-only checker any time to regenerate the live picture:
 
 ```bash

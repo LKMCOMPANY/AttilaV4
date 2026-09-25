@@ -347,11 +347,35 @@ proof).
 The upgrade path is the API (`POST /v1/update_kernel`, host reboots ~3 min;
 `POST /v1/update_cbs`), **one box at a time, box-2 as canary**, and it is
 **one-way**: no kernel-only image exists to return to 2.0.30, the only way back
-is a full firmware flash that erases the SSD. Hence `disk_migration/prepare`
-before each flash, pre-flight probes of every endpoint the procedure counts on,
-and for box-1 a written vendor confirmation that the kernel-only jump from
-1.0.86 / E1.02 without overlayroot is supported. Full procedure and gates:
-`fleet-reference.json → vendor_upgrade_path` and the September 2026 plan.
+is a full firmware flash that erases the SSD. For box-1 a written vendor
+confirmation that the kernel-only jump from 1.0.86 / E1.02 without overlayroot
+is supported comes first. Full procedure and gates: `fleet-reference.json →
+vendor_upgrade_path` and the September 2026 plan.
+
+Pre-flight measured on 25 September 2026, on both CBS lines (1.1.4.30.1 on
+box-2, 1.1.6.12.1 on box-1), REST on the box itself:
+
+- **`/disk_migration/v1/status` → `404 page not found` on both lines.** The
+  vendor's documented safety net for a flash does not exist on our firmware;
+  the plan's "`disk_migration/prepare` before each flash" cannot be done. What
+  protects the data is that `update_kernel` and `update_cbs` do not touch the
+  NVMe (containers live under `/container_nswc_lv`) — the full firmware image
+  is the only operation that erases it, and it is not part of the path.
+- `/backup/export` exists on both lines (called without `db_id` it answers
+  `code 400, param db_id` — the per-container export, the per-device fallback
+  if a box has to be re-imaged one day); `/backup/list` answers `backups: []`
+  on both: nothing has ever been exported.
+- `/v1/swap_size/{gb}` is in the box's MCP catalogue and is **mutating** (it
+  resizes the swap file); deliberately not probed — `/v1/swap_size` without
+  a size is a 404, which says nothing about the sized route.
+- The rollback of a CBS step is the binary the updater leaves behind
+  (`/root/armcloud-container-backend-service/cbs_go.backup`, restarted through
+  `supervisorctl restart cbs_go`); the kernel step has none.
+- The artifacts were downloaded and hashed that evening (sizes equal to the
+  vendor's declared ones): `boot-2.0.57-marsbox.img` 61 023 232 B sha256
+  `5bb83814…95ce`; `cbs_go_edge_1.1.7.17.1.cbs` 211 228 000 B sha256
+  `e4298435…3d94`; `cbs_go_edge_1.1.7.2.1.cbs` 211 039 680 B sha256
+  `580cac03…156b`. The vendor publishes no checksums; these are ours.
 
 ## 6 bis. Concurrency, the 10-container ceiling and the v2 agent — measured 9 September 2026
 

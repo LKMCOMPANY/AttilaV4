@@ -99,11 +99,14 @@ export async function shell(boxHost, dbId, cmd) {
   };
 }
 
-/** Set of `db_id`s currently `running` on a box. Throws if the box is unreachable. */
+/** Set of `db_id`s occupying a slot on a box (`running` or `starting`). Throws if the box is unreachable. */
 export async function fetchRunningDbIds(boxHost) {
   const json = await boxFetch(boxHost, "/container_api/v1/list_names");
   const list = json?.data?.list ?? [];
-  return new Set(list.filter((c) => c.state === "running").map((c) => c.db_id));
+  // `starting` occupies a slot too (the VMOS ceiling counts it, boots contend
+  // with it, its image is mounted, and `run`/`stop` both refuse it): a dead
+  // device crash-looping in `starting` for hours must not read as free.
+  return new Set(list.filter((c) => c.state === "running" || c.state === "starting").map((c) => c.db_id));
 }
 
 /** VMOS ROM readiness code: 200 = ready, 1 = running but not ready, 0 = not started. */

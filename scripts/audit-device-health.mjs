@@ -13,6 +13,10 @@
  *   dead      never reached it
  *
  * Safety contract:
+ *   - never boots a device already recorded `dead` unless `--recheck` asks for
+ *     it: a dead device booted sits in VMOS `starting`, crash-looping, which
+ *     `stop` refuses for hours and which costs the host ~3 load points each
+ *     (box-1, 26 September 2026: five of them, load 14.8, zero useful work);
  *   - never touches a device with a ready/executing campaign job;
  *   - never exceeds the VMOS ceiling of 10 running containers per box, counting
  *     what is ALREADY running (an operator may be streaming);
@@ -27,6 +31,7 @@
  *   node scripts/audit-device-health.mjs --box box-1.attila.army
  *   node scripts/audit-device-health.mjs --all --concurrency 2 --with-proxy
  *   node scripts/audit-device-health.mjs --box box-1.attila.army --dry-run
+ *   node scripts/audit-device-health.mjs --box box-3.attila.army --names US30,FR22 --with-proxy
  */
 
 import {
@@ -60,7 +65,7 @@ const DEFAULT_STARTS_IN_FLIGHT = 2;
 
 function parseArgs(argv) {
   const args = {
-    box: null, all: false, concurrency: null, dryRun: false, recheck: false, withProxy: false, report: null,
+    box: null, all: false, concurrency: null, dryRun: false, recheck: false, withProxy: false, report: null, names: null,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -71,6 +76,8 @@ function parseArgs(argv) {
     else if (a === "--recheck") args.recheck = true;
     else if (a === "--with-proxy") args.withProxy = true;
     else if (a === "--report") args.report = argv[++i];
+    // `--names US30,FR22`: only these user_names (re-probe a subset after a fix).
+    else if (a === "--names") args.names = new Set(argv[++i].split(",").map((n) => n.trim()).filter(Boolean));
     else {
       console.error(`Unknown argument: ${a}`);
       process.exit(1);
@@ -243,6 +250,7 @@ async function main() {
   const args = parseArgs(process.argv);
 
   const [devices, busy] = await Promise.all([fetchDevicesWithBoxes(), fetchBusyDeviceIds()]);
+  const knownDead = [];
 
   const eligible = devices.filter((d) => {
     if (!d.db_id || !d.boxes?.tunnel_hostname) return false;
@@ -251,8 +259,11 @@ async function main() {
     if (d.state === "removed") return false;
     if (args.box && d.boxes.tunnel_hostname !== args.box) return false;
     // `--recheck`: only the devices a previous sweep could not clear. Pair it
-    // with `--concurrency 1` to get a contention-free verdict.
+    // with `--concurrency 1` to get a contention-free verdict. Without it a
+    // known-dead device is left alone (see the safety contract above).
     if (args.recheck && d.boot_health === "healthy") return false;
+    if (!args.recheck && d.boot_health === "dead") { knownDead.push(d); return false; }
+    if (args.names && !args.names.has(d.user_name ?? "")) return false;
     return true;
   });
 
@@ -261,6 +272,9 @@ async function main() {
 
   console.log("=== device boot-health sweep ===");
   console.log(`devices in scope : ${eligible.length}`);
+  if (knownDead.length) {
+    console.log(`known dead, left alone (--recheck to re-probe): ${knownDead.length} — ${knownDead.map((d) => d.user_name ?? d.db_id).join(", ")}`);
+  }
   if (skippedBusy.length) {
     console.log(`skipped (job due): ${skippedBusy.length} — ${skippedBusy.map((d) => d.db_id).join(", ")}`);
   }
@@ -326,13 +340,15 @@ async function main() {
 function summarizeProxies(results) {
   const probed = results.filter((r) => r.proxy);
   const noProxy = probed.filter((r) => r.proxy.config.status === "no_proxy");
-  const down = probed.filter((r) => r.proxy.routing && r.proxy.routing.tag !== "ROUTES");
+  const unproxied = probed.filter((r) => r.proxy.routing?.tag === "UNPROXIED");
+  const down = probed.filter((r) => r.proxy.routing && !["ROUTES", "UNPROXIED"].includes(r.proxy.routing.tag));
   const geoChecked = probed.filter((r) => r.proxy.routing?.geo?.exit);
   const mismatched = geoChecked.filter((r) => !r.proxy.routing.geo.coherent);
   console.log("\n=== proxies (same boot) ===");
-  console.log(`config read: ${probed.length}   no proxy: ${noProxy.length}   not routing: ${down.length}   geo checked: ${geoChecked.length}   geo mismatch: ${mismatched.length}`);
+  console.log(`config read: ${probed.length}   no proxy: ${noProxy.length}   UNPROXIED: ${unproxied.length}   not routing: ${down.length}   geo checked: ${geoChecked.length}   geo mismatch: ${mismatched.length}`);
   const line = (r) => `  ${r.boxHost.split(".")[0]}/${r.device.user_name ?? r.device.db_id}`;
   if (noProxy.length) console.log(`\nwithout a proxy (${noProxy.length}):\n${noProxy.map(line).join("\n")}`);
+  if (unproxied.length) console.log(`\nUNPROXIED — leaves through the box's own address (${unproxied.length}):\n${unproxied.map((r) => `${line(r)}  ${r.proxy.routing.geo?.exit?.ip ?? ""}`).join("\n")}`);
   if (down.length) console.log(`\nnot routing (${down.length}):\n${down.map((r) => `${line(r)}  ${r.proxy.routing.tag} ${r.proxy.routing.detail}`).join("\n")}`);
   if (mismatched.length) {
     console.log(`\ngeo mismatch (${mismatched.length}):`);

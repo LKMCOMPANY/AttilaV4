@@ -15,7 +15,7 @@ backend (`cbs_go`, `:18182`) and the per-container scrcpy streams, and exposes:
 It listens on `127.0.0.1:8080`; `cloudflared` publishes it as
 `https://box-N.attila.army` (protected by Cloudflare Access).
 
-## Where `cbs_go` is (1.3.0)
+## Where `cbs_go` is (since 1.3.0)
 
 `cbs_go` binds `:18182` on the box's **LAN address only** — never on
 `127.0.0.1` — and the boxes are on DHCP. Until 1.2.0 that address was written
@@ -56,10 +56,14 @@ same files, so a payload change is a change on three sides.
 
 ## Why `/proxy-test` exists
 
-The real proxy engine on a box is a **host-side `mihomo`** process per running
-container, configured by `cbs_go` at
-`state/{db_id}/mihomo.json` (holds `external-controller`, `secret`, and the
-upstream proxy node).
+The proxy engine of a container runs in one of two places. In the default mode
+it is a **host-side `mihomo`** process per running container, configured by
+`cbs_go` at `state/{db_id}/mihomo.json` (holds `external-controller`,
+`secret`, and the upstream proxy node). In the **"vpn" mode** it is a `clash`
+process **inside the guest**, on a `Meta` TUN interface (198.18.0.1/30) with
+policy routing — nothing on the host names it (measured on box-3, 26 September
+2026: 60 of 126 containers, which 1.3.0 misreported as `proxy_not_provisioned`
+while they were fully proxied).
 
 The only reliable connectivity signal is mihomo's **delay test**, which routes
 a request to a neutral 204 endpoint *through the upstream proxy*. But mihomo's
@@ -70,18 +74,27 @@ config and calls the controller locally, returning a tunnel-safe result.
 Note: `cbs_go`'s `proxy_get.healthy` flag is **not** a connectivity signal — it
 reports `true` even for proxies that do not route. Do not use it for that.
 
-### Contract
+### Contract (1.3.2, `test/fixtures/proxy-test.json`)
 
 `GET /proxy-test/{db_id}` →
 
 ```jsonc
-{ "ok": true,  "delayMs": 706 }                 // proxy reaches the internet
-{ "ok": false, "error": "unreachable" }         // upstream blocked/down
-{ "ok": false, "error": "proxy_not_provisioned" }   // 404 — no mihomo config
-{ "ok": false, "error": "engine_unreachable" }      // 503 — container stopped
+// host-side engine (mihomo.json present): the controller's delay test
+{ "ok": true,  "delayMs": 706, "engine": "host" }
+{ "ok": false, "error": "unreachable", "engine": "host" }      // upstream blocked/down
+// in-guest engine or no proxy at all (no mihomo.json): the guest is asked
+// where it comes out (`curl ipinfo.io/json` through cbs_go's shell) and the
+// answer is compared with the box's own WAN address (read hourly)
+{ "ok": true,  "delayMs": 959, "engine": "guest", "exit": { "ip": "151.241.63.63", "country": "GB", "city": "London" } }
+{ "ok": false, "error": "engine_starting", "engine": "guest" }             // clash up, TUN not routing yet (15–20 s after boot) — poll
+{ "ok": false, "error": "unproxied",   "engine": "guest", "exit": { … } }   // exits through the box → a leak
+{ "ok": false, "error": "unreachable", "engine": "guest" }                  // the guest has no internet
+{ "ok": false, "error": "engine_unreachable" }      // 503 — container stopped / cannot be asked
 { "ok": false, "error": "invalid_db_id" }           // 400
 ```
 
+`ok` + `delayMs` is the 1.x shape; `engine`, `exit` and the errors
+`engine_starting` / `unproxied` are additive (1.3.1–1.3.2). `proxy_not_provisioned` (404) no longer exists.
 `db_id` is strictly validated (`^[A-Z0-9]+$`) before touching the filesystem.
 
 ## Configuration (env, all optional)
@@ -97,6 +110,8 @@ reports `true` even for proxies that do not route. Do not use it for that.
 | `CBS_STATE_DIR` | `/root/armcloud-container-backend-service/state` |
 | `PROXY_TEST_URL` | `http://cp.cloudflare.com/generate_204` |
 | `PROXY_TEST_TIMEOUT_MS` | `8000` |
+| `GUEST_EXIT_URL` | `https://ipinfo.io/json` (asked from inside the guest) |
+| `WAN_IP_URL` | `https://ipinfo.io/ip` (the box's own address, cached an hour) |
 
 ## Deploy
 

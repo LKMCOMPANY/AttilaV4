@@ -1,0 +1,15 @@
+{
+  "$comment": "Wire contract of GET /proxy-test/{db_id} on magicbox-proxy. `ok` + `delayMs` is the historical shape (host-side mihomo delay test). 1.3.1 adds `engine` (host | guest) and, for the in-guest engine, `exit` (the guest's egress) and the errors `engine_starting` (an in-guest clash exists but its TUN is not routing yet — measured 15–20 s after boot_completed — keep polling) and `unproxied` (the guest exits through the box's own WAN address). `proxy_not_provisioned` (404) is gone: a container without a host-side mihomo.json is asked directly. Replayed by scripts/lib/proxy-probe.mjs consumers (classifyRouting) on the web side.",
+  "variants": {
+    "host_routes": { "ok": true, "delayMs": 813, "engine": "host" },
+    "host_unreachable": { "ok": false, "error": "unreachable", "engine": "host" },
+    "guest_routes": { "ok": true, "delayMs": 1420, "engine": "guest", "exit": { "ip": "151.241.63.63", "country": "GB", "city": "London" } },
+    "guest_engine_starting": { "ok": false, "error": "engine_starting", "engine": "guest" },
+    "guest_unproxied": { "ok": false, "error": "unproxied", "engine": "guest", "exit": { "ip": "145.224.95.86", "country": "FR", "city": "Paris" } },
+    "guest_unreachable": { "ok": false, "error": "unreachable", "engine": "guest" },
+    "engine_unreachable": { "ok": false, "error": "engine_unreachable", "engine": "guest" },
+    "invalid_db_id": { "ok": false, "error": "invalid_db_id" },
+    "legacy_1_3_0": { "ok": true, "delayMs": 813 }
+  },
+  "http_status": { "host_routes": 200, "host_unreachable": 200, "guest_routes": 200, "guest_engine_starting": 200, "guest_unproxied": 200, "guest_unreachable": 200, "engine_unreachable": 503, "invalid_db_id": 400, "legacy_1_3_0": 200 }
+}

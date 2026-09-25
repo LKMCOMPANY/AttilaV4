@@ -36,6 +36,11 @@ const config = {
   // Stateless, cookieless 204 endpoint — used by mihomo to time the proxy.
   proxyTestUrl: process.env.PROXY_TEST_URL || 'http://cp.cloudflare.com/generate_204',
   proxyTestTimeoutMs: parseInt(process.env.PROXY_TEST_TIMEOUT_MS, 10) || 8000,
+  // In-guest engine ("vpn" mode, no mihomo.json on the host): the guest is
+  // asked where it comes out, and that is compared with the box's own WAN
+  // address (guest-probe.js). Both endpoints answer plain JSON / plain text.
+  guestExitUrl: process.env.GUEST_EXIT_URL || 'https://ipinfo.io/json',
+  wanIpUrl: process.env.WAN_IP_URL || 'https://ipinfo.io/ip',
 };
 
 // Every module reads `config.apiHost` at call time and therefore follows a

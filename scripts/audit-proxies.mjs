@@ -69,7 +69,7 @@ async function main() {
     byBox.get(box).push(r);
   }
 
-  const counts = { ROUTES: 0, DOWN: 0, stopped: 0, "no-engine": 0, FAIL: 0 };
+  const counts = { ROUTES: 0, UNPROXIED: 0, DOWN: 0, stopped: 0, "no-engine": 0, FAIL: 0 };
   for (const box of [...byBox.keys()].sort()) {
     console.log(`── ${box} ──`);
     for (const r of byBox.get(box).sort((a, b) => (a.device.user_name || "").localeCompare(b.device.user_name || ""))) {
@@ -82,7 +82,7 @@ async function main() {
   }
 
   console.log("=== summary ===");
-  console.log(`routes: ${counts.ROUTES}   down(running): ${counts.DOWN}   stopped: ${counts.stopped}   no-engine: ${counts["no-engine"]}   fail: ${counts.FAIL}`);
+  console.log(`routes: ${counts.ROUTES}   UNPROXIED: ${counts.UNPROXIED}   down(running): ${counts.DOWN}   stopped: ${counts.stopped}   no-engine: ${counts["no-engine"]}   fail: ${counts.FAIL}`);
   if (args.geo) {
     const checked = rows.filter((r) => r.geo?.exit);
     const mismatched = checked.filter((r) => !r.geo.coherent);

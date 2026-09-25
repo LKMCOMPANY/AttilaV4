@@ -50,17 +50,28 @@ export function expectedCountry(device) {
   return match ? match[1].toUpperCase() : null;
 }
 
-/** Routing verdict from a `/proxy-test` result, honest about stopped devices. */
+/**
+ * Routing verdict from a `/proxy-test` result, honest about stopped devices.
+ * Contract: `infra/magicbox-proxy/test/fixtures/proxy-test.json`. Since proxy
+ * 1.3.1 the box also probes the in-guest engine ("vpn" mode) and answers
+ * `engine: guest` with the guest's `exit`; `unproxied` means the guest leaves
+ * through the box's own WAN address — the one verdict that is a leak.
+ */
 export function classifyRouting(device, result) {
-  if (result.ok && typeof result.delayMs === "number") return { tag: "ROUTES", detail: `${result.delayMs} ms` };
+  const engine = result.engine ? ` (${result.engine} engine)` : "";
+  if (result.ok && typeof result.delayMs === "number") return { tag: "ROUTES", detail: `${result.delayMs} ms${engine}`, exit: result.exit ?? null };
   const err = String(result.error ?? "unknown");
+  if (/\bunproxied\b/i.test(err)) return { tag: "UNPROXIED", detail: `guest exits through the box's own address${engine}`, exit: result.exit ?? null };
+  if (/\bengine_starting\b/i.test(err)) return { tag: "starting", detail: "in-guest engine up, TUN not routing yet" };
   if (/engine_unreachable|ECONNREFUSED|503|timeout/i.test(err)) {
     return device.state === "running"
       ? { tag: "DOWN", detail: "engine down while running — investigate" }
       : { tag: "stopped", detail: "not running (start to test)" };
   }
-  if (/proxy_not_provisioned|404/i.test(err)) return { tag: "no-engine", detail: "no proxy engine provisioned" };
-  if (/unreachable/i.test(err)) return { tag: "DOWN", detail: "upstream proxy did not respond" };
+  // proxy ≤ 1.3.0 answered this for a container without a host-side mihomo.json;
+  // 1.3.1 asks the guest instead. Kept for a box not yet redeployed.
+  if (/proxy_not_provisioned|404/i.test(err)) return { tag: "no-engine", detail: "no host-side engine (proxy < 1.3.1 cannot tell)" };
+  if (/unreachable/i.test(err)) return { tag: "DOWN", detail: `upstream proxy did not respond${engine}` };
   return { tag: "FAIL", detail: err.slice(0, 80) };
 }
 
@@ -85,11 +96,24 @@ export async function fetchExitGeo(boxHost, dbId) {
  * Returns `{ tag, detail, geo? }` where `geo = { exit, expected, coherent }`.
  * Only a routing proxy is asked where it comes out.
  */
+// An in-guest engine brings its TUN up 15–20 s after boot_completed (measured
+// on CA2, box-3, 26 Sep 2026); until then the guest egresses through the box.
+// The probe polls through that window before calling anything unproxied.
+const ENGINE_STARTING_BUDGET_MS = 45_000;
+const ENGINE_STARTING_POLL_MS = 5_000;
+
 export async function probeRouting(boxHost, device, { geo = false } = {}) {
-  const result = await proxyTest(boxHost, device.db_id);
+  const started = Date.now();
+  let result = await proxyTest(boxHost, device.db_id);
+  while (result?.error === "engine_starting" && Date.now() - started < ENGINE_STARTING_BUDGET_MS) {
+    await sleep(ENGINE_STARTING_POLL_MS);
+    result = await proxyTest(boxHost, device.db_id);
+  }
   const row = classifyRouting({ ...device, state: "running" }, result);
-  if (geo && row.tag === "ROUTES") {
-    const exit = await fetchExitGeo(boxHost, device.db_id);
+  if (result?.error === "engine_starting") row.detail += ` after ${Math.round((Date.now() - started) / 1000)} s`;
+  if (geo && (row.tag === "ROUTES" || row.tag === "UNPROXIED")) {
+    // The guest-engine probe already carries the exit; the host-engine one does not.
+    const exit = row.exit ?? (await fetchExitGeo(boxHost, device.db_id));
     const expected = expectedCountry(device);
     row.geo = { exit, expected, coherent: !exit || !expected || exit.country === expected };
   }

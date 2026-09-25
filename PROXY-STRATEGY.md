@@ -115,6 +115,59 @@ Connecticut/Massachusetts exits). The coherence check to automate is
 of the notifications the apps receive, at every session, with an attention
 item when it fails.
 
+## Measured on the whole fleet — 26 September 2026 (one boot per device)
+
+`scripts/audit-device-health.mjs --with-proxy` booted every device of the four
+online boxes (two starts in flight per box, LAN-first) and, on the same boot,
+read the configured proxy, tested routing (`/proxy-test`, magicbox-proxy
+1.3.2) and asked the guest where it comes out (`ipinfo.io` from inside).
+
+| Box | booted | configured | routes | exit ≠ persona | not routing | no proxy |
+|---|---:|---:|---:|---:|---:|---:|
+| box-1 | 95 (6 dead) | 89 | 86 | **0** / 80 checked | 3 (`DOWN`, NodeMaven) | 1 (US42, dead) |
+| box-2 | 57 | 56 | 53 | 1 / 51 (spare, Oxylabs) | 3 (`DOWN`, NodeMaven) | 1 |
+| box-3 | 126 | 108–112 | 103 | **85** / 104 checked | 1 (`UNPROXIED`, US32) | 14–18 |
+| box-4 | 73 | 72 | 72 | 1 / 71 (`GB41`, row says CN) | 0 | 1 |
+
+Three facts, none visible before:
+
+1. **The proxy engine runs in two places, and the old probe knew one.** In the
+   default mode cbs_go runs a host-side `mihomo` per container
+   (`state/<db_id>/mihomo.json`) — every NodeMaven device, and the `US1xx`
+   Oxylabs range of box-3. In the **"vpn" mode** the engine is a `clash`
+   process *inside the guest* on a `Meta` TUN (198.18.0.1/30, policy
+   routing) — 60 of box-3's 126 containers. magicbox-proxy ≤ 1.3.0 answered
+   `proxy_not_provisioned` for those; 1.3.1+ asks the guest and compares its
+   exit with the box's own WAN address (`engine: guest`, `unproxied`).
+2. **The vpn mode leaks the box's address for 15–20 s after every boot.**
+   Measured on CA2 (box-3): at `sys.boot_completed` the clash process exists
+   but its TUN has no address and no rule, and the guest egresses through
+   `145.224.95.86` (the box); at +20 s the TUN is up and the exit is the
+   proxy's (`82.26.244.28`). A host-side engine (US23, box-2) routes from
+   +0 s. Whatever the apps do in those first seconds (push registration,
+   telemetry, the feed's first fetch) leaves with the operator's residential
+   IP. **Recommendation reversed:** do not standardise on `vpn`; the host-side
+   mode is the one with no window. The 1.3.2 probe answers `engine_starting`
+   during the window and the sweep polls through it (45 s budget) before
+   calling anything `unproxied`.
+3. **box-3's Oxylabs exits are not the personas' countries.** 85 of 104
+   checked devices exit elsewhere: `CA` → Paris, `DE` → London, `FR` → New
+   York / Leesburg / London, `US` → Paris / London; only the `GB` devices and
+   the `US117`–`US144` range (ports 8271–8298) come out where they claim. The
+   sticky port does not carry the country — the Oxylabs username does, and
+   these were provisioned without it (or with the wrong one). One
+   re-assignment pass on box-3 (correct `cc-XX` usernames, host-side mode)
+   fixes 85 devices; until then those accounts must not be maintained or
+   automated. One box-scoped `proxy_incoherent` attention item carries the
+   list (`scripts/record-sweep-attention.ts`).
+
+Also measured: `proxy_get` right after boot intermittently reports a proxy
+`disabled` that the previous or next boot reports enabled (4 different devices
+each run on box-3) — read it a few seconds after `boot_completed`, never as
+the only source. The six NodeMaven `DOWN` devices (DE2, GB3, GB8 on box-1;
+GB34, GB35, US13 on box-2) had a host-side engine that did not answer while
+the container ran — re-test before touching the upstream.
+
 ## What is implemented vs recommended
 
 - Implemented: paste parsing, live `proxy_set`/`proxy_stop`, real `/proxy-test`

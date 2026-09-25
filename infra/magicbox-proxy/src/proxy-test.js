@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config');
+const { probeGuestExit } = require('./guest-probe');
 
 // db_ids are uppercase alphanumeric (e.g. EDGE2DD6WZJU1251). Strict whitelist
 // — it is interpolated into a filesystem path, so anything else is rejected.
@@ -86,20 +87,24 @@ async function handleProxyTest(req, res) {
   try {
     info = readMihomo(dbId);
   } catch {
-    // No mihomo.json → the device has never been provisioned with a proxy
-    // engine (or the state dir differs). Treated as "not provisioned".
-    return send(404, { ok: false, error: 'proxy_not_provisioned' });
+    // No mihomo.json on the host: the engine, if any, runs inside the guest
+    // ("vpn" mode — 60 of box-3's 126 containers on 26 September 2026), or
+    // there is no proxy at all. Only the guest can tell the two apart: ask it
+    // where it comes out. `null` = the container cannot be asked (stopped).
+    const guest = await probeGuestExit(dbId);
+    if (guest === null) return send(503, { ok: false, error: 'engine_unreachable', engine: 'guest' });
+    return send(200, guest);
   }
   if (!info.controller || !info.node) {
-    return send(502, { ok: false, error: 'mihomo_config_incomplete' });
+    return send(502, { ok: false, error: 'mihomo_config_incomplete', engine: 'host' });
   }
 
   try {
     const { json } = await delayTest(info);
     if (json && typeof json.delay === 'number') {
-      return send(200, { ok: true, delayMs: json.delay });
+      return send(200, { ok: true, delayMs: json.delay, engine: 'host' });
     }
-    return send(200, { ok: false, error: (json && json.message) || 'unreachable' });
+    return send(200, { ok: false, error: (json && json.message) || 'unreachable', engine: 'host' });
   } catch (err) {
     // ECONNREFUSED here means mihomo isn't listening → container stopped /
     // proxy engine down rather than a genuine upstream failure.
@@ -107,6 +112,7 @@ async function handleProxyTest(req, res) {
     return send(stopped ? 503 : 502, {
       ok: false,
       error: stopped ? 'engine_unreachable' : err.message,
+      engine: 'host',
     });
   }
 }
