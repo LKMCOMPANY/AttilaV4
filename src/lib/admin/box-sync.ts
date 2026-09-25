@@ -2,13 +2,15 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RequestSession } from "@/lib/auth/session";
 import {
-  fetchHealthz,
   fetchContainerList,
   fetchContainerDetail,
   fetchTimezoneLocale,
   fetchProxyConfig,
   aospFromDetail,
 } from "@/lib/box-api";
+import { reconcileDeviceRows } from "@/lib/boxes/device-inventory";
+import { BOX_PRESENCE_COLUMNS, observeBox, type BoxPresenceRow } from "@/lib/boxes/presence";
+import type { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * Box / device sync cores (admin-only) — the single implementation behind
@@ -40,40 +42,33 @@ export async function syncBoxCore(
 
   const { data: box } = await ctx.supabase
     .from("boxes")
-    .select("tunnel_hostname")
+    .select(BOX_PRESENCE_COLUMNS)
     .eq("id", boxId)
     .single();
 
   if (!box) return { error: "Box not found" };
+  const row = box as unknown as BoxPresenceRow;
 
-  try {
-    const health = await fetchHealthz(box.tunnel_hostname);
-
-    await ctx.supabase
-      .from("boxes")
-      .update({
-        status: "online",
-        uptime_seconds: health.uptime,
-        container_count: health.containers,
-        last_heartbeat: new Date().toISOString(),
-      })
-      .eq("id", boxId);
-
-    await syncBoxDevices(ctx.supabase, boxId, box.tunnel_hostname);
-  } catch {
-    // Box unreachable: mark offline AND reconcile its devices — nothing runs on
-    // a down box, so any lingering `running` rows are stale (capacity/UI truth).
-    await ctx.supabase
-      .from("boxes")
-      .update({ status: "offline" })
-      .eq("id", boxId);
+  // Presence goes through the one writer (status, observed lan_ip, uptime,
+  // host sample, firmware facts — read now, the admin asked). A Sync is the
+  // moment an operator wants the truth, so the firmware facts are re-read.
+  const admin = ctx.supabase as unknown as ReturnType<typeof createAdminClient>;
+  const { observation } = await observeBox(admin, row, { withFirmware: true });
+  if (!observation.health) {
+    // Nothing runs on a down box: the reconcile worker cannot see it either, so
+    // any lingering `running` rows are stale (capacity/UI truth).
     await ctx.supabase
       .from("devices")
       .update({ state: "stopped", last_seen: new Date().toISOString() })
       .eq("box_id", boxId)
       .eq("state", "running");
-
     return { error: "Box is offline or unreachable." };
+  }
+
+  try {
+    await syncBoxDevices(ctx.supabase, boxId, row.tunnel_hostname);
+  } catch {
+    return { error: "Box answered but its device inventory could not be read." };
   }
 
   return { error: null };
@@ -171,47 +166,11 @@ export async function syncBoxDevices(
 ): Promise<void> {
   const containerData = await fetchContainerList(tunnelHostname);
 
-  // Update box lan_ip
-  if (containerData.host_ip) {
-    await supabase
-      .from("boxes")
-      .update({ lan_ip: containerData.host_ip })
-      .eq("id", boxId);
-  }
-
-  // Collect all db_ids from the box API to detect removed devices
-  const liveDbIds = new Set(containerData.list.map((c) => c.db_id));
-
-  // Mark devices no longer on the box as 'removed'
-  const { data: existingDevices } = await supabase
-    .from("devices")
-    .select("id, db_id, state")
-    .eq("box_id", boxId);
-
-  if (existingDevices) {
-    const removedIds = existingDevices
-      .filter((d) => !liveDbIds.has(d.db_id) && d.state !== "removed")
-      .map((d) => d.id);
-
-    if (removedIds.length > 0) {
-      await supabase
-        .from("devices")
-        .update({ state: "removed", last_seen: new Date().toISOString() })
-        .in("id", removedIds);
-    }
-
-    // Restore devices that reappear after being removed
-    const restoredIds = existingDevices
-      .filter((d) => liveDbIds.has(d.db_id) && d.state === "removed")
-      .map((d) => d.id);
-
-    if (restoredIds.length > 0) {
-      await supabase
-        .from("devices")
-        .update({ state: "stopped" })
-        .in("id", restoredIds);
-    }
-  }
+  // running / stopped / removed / restored — the same rule as the reconcile
+  // worker (lan_ip is written by the presence writer, not here).
+  await reconcileDeviceRows(supabase as unknown as ReturnType<typeof createAdminClient>, boxId, containerData.list, {
+    broadcast: false,
+  });
 
   for (const container of containerData.list) {
     // Upsert basic device info

@@ -1,6 +1,6 @@
 import { ensureContainerReady, stopContainerIfIdle, waitForControlApi } from "@/lib/box-api";
 import { getCurrentIme, restoreIme } from "@/lib/automation/adb-helpers";
-import { assessBoxSlot, withStartSlot, type BoxRow, type SlotDecision } from "@/lib/engine/box-slots";
+import { assessBoxSlot, BOX_SLOT_COLUMNS, withStartSlot, type BoxRow, type SlotDecision } from "@/lib/engine/box-slots";
 import type { DeviceRef } from "@/lib/engine/device";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { broadcastAccountEvent } from "@/lib/supabase/realtime";
@@ -85,7 +85,7 @@ export async function openDeviceSession(
 
   const { data: box } = await supabase
     .from("boxes")
-    .select("id, tunnel_hostname, max_concurrent_containers, operator_reserve")
+    .select(BOX_SLOT_COLUMNS)
     .eq("id", device.box_id)
     .maybeSingle();
   if (!box) return { kind: "missing", what: "box" };
@@ -97,10 +97,12 @@ export async function openDeviceSession(
   const { wasStarted } = slot.reason === "already_running"
     ? await ensureContainerReady(host, device.db_id)
     : await withStartSlot(box, () => ensureContainerReady(host, device.db_id));
-  if (wasStarted) {
-    await supabase.from("devices").update({ state: "running", last_seen: new Date().toISOString() }).eq("id", device.id);
-    broadcastAccountEvent(avatar.account_id, "devices", { action: "state_changed" });
-  }
+  // `last_seen` is refreshed whether the container was started here or was
+  // already up: the reaper stops any `running` device it has not seen for 15
+  // minutes, and on 25 September 2026 five sessions that had reused an
+  // already-running container died mid-scroll with "instance not running".
+  await supabase.from("devices").update({ state: "running", last_seen: new Date().toISOString() }).eq("id", device.id);
+  if (wasStarted) broadcastAccountEvent(avatar.account_id, "devices", { action: "state_changed" });
 
   // The v2 agent may lag the boot (host still routing to the old IP); its
   // line decides how the reader refreshes the tree, so it is worth the wait.

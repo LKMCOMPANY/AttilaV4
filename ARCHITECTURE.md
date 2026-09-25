@@ -730,17 +730,29 @@ FETCH À LA DEMANDE       → données lourdes ou détaillées
 
 ### Table `boxes`
 
-| Colonne | Type | Source | Sync | Description |
-|---------|------|--------|------|-------------|
-| `id` | uuid PK | Généré | — | Identifiant interne |
-| `tunnel_hostname` | text UNIQUE | Config | — | `box-1.attila.army` |
-| `lan_ip` | inet | API `list_names` → `host_ip` | Gateway 30s | `192.168.1.27` |
-| `status` | text | API `healthz` | Gateway 30s | `online` / `offline` |
-| `uptime_seconds` | numeric | API `healthz` → `uptime` | Gateway 30s | Uptime en secondes |
-| `container_count` | int | API `healthz` → `containers` | Gateway 30s | Nombre total de containers |
-| `last_heartbeat` | timestamptz | Gateway | Gateway 30s | Dernière sync réussie |
-| `created_at` | timestamptz | — | — | Date d'ajout |
-| `metadata` | jsonb | — | — | Données libres (CPU, RAM, disque) |
+> **Depuis le 25 septembre 2026, une seule écriture** : `src/lib/boxes/presence.ts`
+> (`observeBox`, appelé par le worker Reconcile toutes les 3 min, par le Sync
+> admin, à la création d'une box, et par le reaper via `markBoxUnreachable`).
+> La décision est la fonction pure `decidePresence()` (testée). Pendant une
+> fenêtre `maintenance_until`, le statut n'est plus basculé — un flash
+> firmware qui redémarre l'hôte n'est pas une panne.
+
+| Colonne | Type | Source | Description |
+|---------|------|--------|-------------|
+| `id` | uuid PK | Généré | Identifiant interne |
+| `tunnel_hostname` | text UNIQUE | Config | `box-1.attila.army` |
+| `lan_ip` | text | **observé** : `/v1/net_info` → `host_ip`, sinon `healthz.lan_ip`, sinon `list_names.host_ip` | Jamais saisi : les boxes sont en DHCP et se déplacent |
+| `status` | text | `healthz` répond ou non | `online` / `offline` (tenu pendant `maintenance_until`) |
+| `uptime_seconds` | numeric | `healthz.uptime` | Uptime du proxy (≈ depuis le boot, ou depuis un redéploiement) |
+| `container_count` | int | `list_names` | Nombre total de containers |
+| `last_heartbeat` | timestamptz | presence | Dernière observation réussie |
+| `model` · `cbs_version` · `kernel_version` | text | `/v1/get_hardware_cfg` (relu au plus toutes les heures, ou au Sync) | Faits firmware — les cibles vendeur sont par modèle |
+| `default_image` | text | `get_android_detail` du premier container | Image Android représentative (sans tag) |
+| `host_health` | jsonb | `/v1/systeminfo` + `list_names` | `{cpu_percent, mem_percent, swap_percent, mmc_percent, ssd_percent, running, starting, sampled_at}` — lu par l'arbitre avant un démarrage à froid |
+| `firmware_checked_at` | timestamptz | presence | Dernière lecture des faits firmware |
+| `maintenance_until` | timestamptz | opérateur (admin web / Mac) | Fenêtre de maintenance par box : l'arbitre refuse `box_maintenance`, le reaper passe, le reconcile tient le statut |
+| `created_at` | timestamptz | — | Date d'ajout |
+| `metadata` | jsonb | — | Données libres |
 
 Données source (API `healthz`) :
 ```json

@@ -77,15 +77,26 @@ async function main() {
     .single();
   if (insertError || !inserted) throw new Error(`insert failed: ${insertError?.message}`);
 
+  // Claim OUR row and only ours (migration 20260925211148 added p_task_id):
+  // on 25 September 2026 the unfiltered claim twice returned nothing because
+  // another task held the device, and would have left a foreign row `running`
+  // had it returned one. The same rules apply — a device already carrying a
+  // running task refuses, so the row is cancelled instead of lingering.
   const workerId = `script:${process.pid}`;
   const { data: claimed, error: claimError } = await supabase.rpc("claim_maintenance_task", {
     p_worker: workerId,
     p_lease_seconds: settings.leaseSeconds,
+    p_task_id: inserted.id,
   });
   if (claimError) throw new Error(`claim failed: ${claimError.message}`);
   const task = (Array.isArray(claimed) ? claimed[0] : claimed) as { id: string } | undefined;
-  if (!task || task.id !== inserted.id) {
-    throw new Error(`claimed ${task?.id ?? "nothing"} instead of ${inserted.id} — another due task was more urgent; re-run`);
+  if (!task) {
+    await supabase
+      .from("maintenance_tasks")
+      .update({ status: "cancelled", outcome: "cancelled", finished_at: new Date().toISOString(), error_message: "device busy with another task at claim time (scripts/maintenance-task.ts)" })
+      .eq("id", inserted.id)
+      .eq("status", "scheduled");
+    throw new Error(`could not claim ${inserted.id}: another task is running on this device — row cancelled, re-run later`);
   }
 
   const started = Date.now();

@@ -17,13 +17,20 @@
 
 export { boxFetch, boxFetchBytes, getCfHeaders, type BoxFetchInit } from "./fetch";
 export type {
+  ProxyHealthz,
   VmosContainer,
   VmosContainerDetail,
+  VmosHardwareCfg,
+  VmosNetInfo,
+  VmosSystemInfo,
   VmosTimezoneLocale,
   VmosProxyConfig,
 } from "./types";
 export {
   fetchHealthz,
+  fetchHardwareCfg,
+  fetchSystemInfo,
+  fetchNetInfo,
   fetchContainerList,
   fetchContainerDetail,
   fetchTimezoneLocale,

@@ -1,21 +1,11 @@
 import type { AvatarPlatformState, MaintenanceProfile } from "./maintenance";
+import type { Box, Device } from "./infra";
+
+export type { Box, BoxHostHealth, BoxStatus, Device, DeviceBootHealth, DeviceState, DeviceWithBox } from "./infra";
 
 export type UserRole = "admin" | "manager" | "operator";
 
 export type AccountStatus = "active" | "standby" | "archived";
-
-export type BoxStatus = "online" | "offline";
-
-export type DeviceState = "running" | "stopped" | "creating" | "removed";
-
-/**
- * Whether the container actually boots Android, as measured by a real probe.
- *
- * - `healthy` — came up within the deadline and stayed up.
- * - `unstable` — came up, then dropped out; jobs may fail part-way.
- * - `dead` — never reached `sys.boot_completed`; a black screen for operators.
- */
-export type DeviceBootHealth = "healthy" | "unstable" | "dead";
 
 export interface UserProfile {
   id: string;
@@ -42,99 +32,13 @@ export interface AccountWithUsers extends Account {
 }
 
 // ---------------------------------------------------------------------------
-// Boxes
+// Boxes & devices — rows live in ./infra; the relation shapes stay here
+// because they reach into Account.
 // ---------------------------------------------------------------------------
-
-export interface Box {
-  id: string;
-  tunnel_hostname: string;
-  name: string | null;
-  lan_ip: string | null;
-  status: BoxStatus;
-  uptime_seconds: number | null;
-  container_count: number;
-  max_concurrent_containers: number;
-  /**
-   * Slots reserved for operators out of `max_concurrent_containers`. The
-   * automator may only use `max_concurrent_containers - operator_reserve`, so a
-   * live operator always has capacity. Defaults to 1 (migration 20260625090000).
-   */
-  operator_reserve: number;
-  last_heartbeat: string | null;
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
 
 export interface BoxWithRelations extends Box {
   accounts: Account[];
   device_count: number;
-}
-
-// ---------------------------------------------------------------------------
-// Devices
-// ---------------------------------------------------------------------------
-
-export interface Device {
-  id: string;
-  box_id: string;
-  account_id: string | null;
-  db_id: string;
-  user_name: string | null;
-
-  image: string | null;
-  aosp_version: string | null;
-  resolution: string | null;
-  memory_mb: number | null;
-  dpi: number | null;
-  fps: number | null;
-  model: string | null;
-  brand: string | null;
-  serial: string | null;
-
-  state: DeviceState;
-  /**
-   * Verdict of the last boot probe — `null` when never probed.
-   *
-   * Distinct from `state`, and the distinction is the point: VMOS reporting
-   * `running` only means the container process is up, not that Android came up
-   * inside it. This is `sys.boot_completed` polled to a deadline, so it is the
-   * signal that tells an operator whether clicking a device gives them
-   * anything.
-   */
-  boot_health: DeviceBootHealth | null;
-  /** When that verdict was reached — a stale one is aged out, not trusted. */
-  boot_checked_at: string | null;
-  /**
-   * Control API v2 line the guest runs (`"1.1.1"` / `"1.1.3"`), read once from
-   * `base/version_info`. The lines differ in how the accessibility tree
-   * refreshes after a gesture (measured 9 September 2026), so the engine's
-   * reader picks its freshness strategy from this. `null` = never read.
-   */
-  agent_line: string | null;
-  agent_checked_at: string | null;
-  screen_state: string | null;
-  foreground_app: string | null;
-  country: string | null;
-  locale: string | null;
-  timezone: string | null;
-  proxy_enabled: boolean;
-  proxy_host: string | null;
-  proxy_port: number | null;
-  proxy_type: string | null;
-  proxy_account: string | null;
-  proxy_password: string | null;
-  battery_level: number | null;
-  docker_ip: string | null;
-  tags: string[];
-  last_seen: string | null;
-
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DeviceWithBox extends Device {
-  box: Box;
 }
 
 // ---------------------------------------------------------------------------

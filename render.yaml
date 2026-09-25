@@ -1,16 +1,25 @@
 services:
   # ── Main Web Service ──────────────────────────────────────────────────
-  # Pipeline workers (process + execute) and the Gorgone sweep worker run
-  # as continuous loops inside server.mjs — no external cron needed.
-  # Concurrency knobs are wired through env vars below.
+  # Pipeline workers (process + execute), the Gorgone sweep, reconcile, reaper,
+  # verify, account-health, schedule and maintain workers run as continuous
+  # loops inside server.mjs — no external cron needed. Concurrency knobs are
+  # wired through env vars below.
+  #
+  # Re-aligned on the LIVE service on 25 September 2026 (Render MCP,
+  # srv-d7g6qtdckfvc73bapk20): name `attila` (slug attila-yew3), build
+  # `npm install; npm run build`, start `npm run start`, auto-deploy on every
+  # commit to main, one starter instance in Frankfurt. The live service has NO
+  # health check path configured; `/api/health` exists and answering it is what
+  # a zero-downtime deploy should wait for — enable it in the dashboard (Settings
+  # → Health Check Path) and this line stops being aspirational.
   - type: web
-    name: attila-v4
+    name: attila
     runtime: node
     region: frankfurt
     plan: starter
     branch: main
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    buildCommand: npm install; npm run build
+    startCommand: npm run start
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION

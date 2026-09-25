@@ -1,5 +1,3 @@
-import { ContainerNotReadyError } from "@/lib/box-api";
-import { TreeUnreadableError } from "@/lib/engine/reader";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { broadcastAccountEvent } from "@/lib/supabase/realtime";
 import type { MaintenanceTask, MaintenanceTaskKind } from "@/types";
@@ -16,6 +14,7 @@ import { runSocialSession } from "../recipes/social-session";
 import { runDismissDialogs, runWarmup } from "../recipes/warmup";
 import type { MaintenanceSettings } from "../settings";
 import { openDeviceSession } from "./device-session";
+import { categorizeFailure, RETRYABLE_CATEGORIES } from "./failures";
 import { TaskCancelledError, TaskJournal } from "./journal";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -25,6 +24,7 @@ const DEFER_MIN_MINUTES = 8;
 const DEFER_MAX_MINUTES = 20;
 /** Attempts before a task that keeps failing is given up (each attempt is a claim). */
 const MAX_ATTEMPTS = 3;
+
 
 const RECIPES: Record<MaintenanceTaskKind, (ctx: RecipeContext) => Promise<RecipeResult>> = {
   probe: runProbe,
@@ -111,9 +111,7 @@ async function fail(
     return finish(supabase, task, "cancelled", "cancelled", {});
   }
   const message = err instanceof Error ? err.message : String(err);
-  let category = "unknown";
-  if (err instanceof ContainerNotReadyError) category = "device_not_ready";
-  else if (err instanceof TreeUnreadableError) category = "tree_unreadable";
+  const category = categorizeFailure(err);
 
   if (category === "device_not_ready") {
     await openAttention(supabase, {
@@ -130,7 +128,7 @@ async function fail(
   }
 
   // A transient failure gets another attempt later; the third strike is final.
-  if (task.attempt < MAX_ATTEMPTS && category !== "unknown") {
+  if (task.attempt < MAX_ATTEMPTS && RETRYABLE_CATEGORIES.has(category)) {
     await supabase
       .from("maintenance_tasks")
       .update({

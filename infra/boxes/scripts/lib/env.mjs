@@ -19,6 +19,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { discoverLanIp, manifestBoxes } from "./lan.mjs";
+import { cfAccessHeaders, loadEnvFile } from "../../../../scripts/lib/dotenv.mjs";
 
 const execFileP = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -26,21 +27,10 @@ export const BOXES_DIR = path.resolve(__dirname, "..", "..");
 export const APP_ROOT = path.resolve(BOXES_DIR, "..", "..");
 export const TIMEOUT_MS = 8000;
 
-export function loadEnv(file) {
-  if (!fs.existsSync(file)) return;
-  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const eq = t.indexOf("=");
-    if (eq < 0) continue;
-    const k = t.slice(0, eq).trim();
-    let v = t.slice(eq + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    if (!(k in process.env)) process.env[k] = v;
-  }
-}
-loadEnv(path.join(BOXES_DIR, ".env"));
-loadEnv(path.join(APP_ROOT, ".env.local"));
+// infra/boxes/.env wins, the app .env.local fills the gaps — through the one
+// loader the terminal scripts share (scripts/lib/dotenv.mjs).
+loadEnvFile(path.join(BOXES_DIR, ".env"));
+loadEnvFile(path.join(APP_ROOT, ".env.local"));
 
 export function requireEnv(names) {
   for (const k of names) {
@@ -51,10 +41,7 @@ export function requireEnv(names) {
   }
 }
 
-export const cfHeaders = () => ({
-  "CF-Access-Client-Id": process.env.CF_ACCESS_CLIENT_ID,
-  "CF-Access-Client-Secret": process.env.CF_ACCESS_CLIENT_SECRET,
-});
+export const cfHeaders = cfAccessHeaders;
 
 // ---------------------------------------------------------------------------
 // Supabase (service role, read-only usage here)

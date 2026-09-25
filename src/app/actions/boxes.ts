@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { fetchHealthz } from "@/lib/box-api";
 import { syncBoxCore, syncBoxDevices } from "@/lib/admin/box-sync";
+import { observeBox } from "@/lib/boxes/presence";
+import type { createAdminClient } from "@/lib/supabase/admin";
 import type { Account, Box, BoxWithRelations } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -133,16 +135,15 @@ export async function createBox(
 
   const supabase = await createClient();
 
-  // Insert box
+  // Insert the identity row; presence (status, lan_ip, uptime, host sample,
+  // firmware facts) is written right after by the one presence writer, so a
+  // freshly registered box carries the same facts as a reconciled one.
   const { data: box, error } = await supabase
     .from("boxes")
     .insert({
       tunnel_hostname: parsed.data.tunnel_hostname,
       name: parsed.data.name || parsed.data.tunnel_hostname,
-      status: "online",
-      uptime_seconds: healthData.uptime,
-      container_count: healthData.containers,
-      last_heartbeat: new Date().toISOString(),
+      container_count: healthData.containers ?? 0,
     })
     .select()
     .single();
@@ -154,6 +155,12 @@ export async function createBox(
     return { data: null, error: error.message };
   }
 
+  await observeBox(
+    supabase as unknown as ReturnType<typeof createAdminClient>,
+    { id: box.id, tunnel_hostname: box.tunnel_hostname, status: box.status, maintenance_until: null, firmware_checked_at: null },
+    { withFirmware: true },
+  );
+
   // Auto-discover devices
   try {
     await syncBoxDevices(supabase, box.id, parsed.data.tunnel_hostname);
@@ -162,7 +169,8 @@ export async function createBox(
   }
 
   revalidatePath("/admin/infrastructure");
-  return { data: box as Box, error: null };
+  const { data: fresh } = await supabase.from("boxes").select().eq("id", box.id).single();
+  return { data: (fresh ?? box) as Box, error: null };
 }
 
 export async function updateBox(

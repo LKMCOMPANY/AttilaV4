@@ -9,7 +9,7 @@ import {
 } from "@/lib/box-api";
 import { encodeJobError, isAutoRetryable, JobError, parseJobError } from "@/lib/automation/errors";
 import { openBlock, blockReasonFromErrorCategory } from "@/lib/account-state/blocks";
-import { assessBoxSlot, withStartSlot } from "@/lib/engine/box-slots";
+import { assessBoxSlot, BOX_SLOT_COLUMNS, withStartSlot } from "@/lib/engine/box-slots";
 import { attentionFromJobError, openAttention } from "@/lib/maintenance/attention";
 import { recordAvatarAction } from "@/lib/maintenance/ledger";
 
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
   const { data: box } = device
     ? await supabase
         .from("boxes")
-        .select("id, tunnel_hostname, max_concurrent_containers, operator_reserve")
+        .select(BOX_SLOT_COLUMNS)
         .eq("id", device.box_id)
         .single()
     : { data: null };

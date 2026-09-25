@@ -11,6 +11,14 @@ import {
   getBoxRunningCount,
   findReapableOwnDevice,
 } from "@/lib/devices/access";
+import {
+  assessBoxSlot,
+  BOX_SLOT_COLUMNS,
+  DEFAULT_MAX_CONCURRENT,
+  type BoxRow as SlotBoxRow,
+  type SlotRefusal,
+} from "@/lib/engine/box-slots";
+import type { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * Device power/lifecycle cores — the single implementation behind the
@@ -51,14 +59,16 @@ export async function toggleScreenWakeCore(
 // blocking on the full Android boot. The operator UI gates the live stream on
 // the `/stream-ready` probe, so the Start button stays responsive.
 //
-// Capacity (hybrid): starting a NEW container is gated on the box's
-// `max_concurrent_containers` (shared with the automator). When the box is
-// full we first try to auto-close one idle device the caller can reach; if
-// none qualifies we return `atCapacity` so the UI can ask the operator to free
-// a slot. Starting an already-running device is never gated (no new container).
+// Capacity (hybrid): starting a NEW container goes through the one slot
+// arbiter (`assessBoxSlot`, purpose `operator`): a maintenance window, an
+// unhealthy host or a boot storm refuse with a typed reason the cockpits can
+// name; the operator reserve is theirs to use. When the box is simply full we
+// first try to auto-close one idle device the caller can reach; if none
+// qualifies we return `atCapacity` so the UI can ask the operator to free a
+// slot. Starting an already-running device is never gated (no new container).
+// The default capacity is the arbiter's (10, the VMOS host ceiling) — the `3`
+// this file used to carry was a second, contradicting default.
 // ---------------------------------------------------------------------------
-
-const DEFAULT_MAX_CONTAINERS = 3;
 
 export interface StartContainerResult {
   error: string | null;
@@ -66,6 +76,9 @@ export interface StartContainerResult {
   max?: number;
   running?: { id: string; userName: string | null }[];
   autoClosed?: { userName: string | null };
+  /** Typed refusal from the slot arbiter (box_maintenance, box_unhealthy, box_settling, …). */
+  refused?: SlotRefusal;
+  refusedDetail?: string;
 }
 
 export async function startContainerCore(
@@ -78,16 +91,28 @@ export async function startContainerCore(
 
     const { data: row } = await ctx.supabase
       .from("devices")
-      .select("state, boxes(max_concurrent_containers)")
+      .select(`state, boxes(${BOX_SLOT_COLUMNS})`)
       .eq("id", id)
       .single();
 
     const alreadyRunning = row?.state === "running";
-    const max =
-      (row?.boxes as unknown as { max_concurrent_containers: number } | null)
-        ?.max_concurrent_containers ?? DEFAULT_MAX_CONTAINERS;
+    const box = (row?.boxes as unknown as SlotBoxRow | null) ?? {
+      id: boxId,
+      tunnel_hostname: tunnelHostname,
+      max_concurrent_containers: null,
+      operator_reserve: null,
+    };
+    const max = box.max_concurrent_containers ?? DEFAULT_MAX_CONCURRENT;
 
     let autoClosed: { userName: string | null } | undefined;
+
+    if (!alreadyRunning) {
+      const slot = await assessBoxSlot(ctx.supabase as unknown as ReturnType<typeof createAdminClient>, box, dbId, "operator");
+      const hardRefusals: SlotRefusal[] = ["box_maintenance", "box_unhealthy", "box_settling", "box_unreachable", "starts_in_flight"];
+      if (!slot.granted && hardRefusals.includes(slot.reason as SlotRefusal)) {
+        return { error: null, refused: slot.reason as SlotRefusal, refusedDetail: slot.detail, max };
+      }
+    }
 
     if (!alreadyRunning && (await getBoxRunningCount(boxId)) >= max) {
       const victim = await findReapableOwnDevice(ctx.supabase, boxId);

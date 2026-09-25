@@ -168,10 +168,24 @@ regress on them:
    about it lives in `attention_items` (`src/lib/maintenance/attention.ts`):
    the block gates, the item is worked; an account item points at its block.
 9. **Container slots are decided by the live arbiter only**
-   (`src/lib/engine/box-slots.ts`): what the box reports (`running` +
-   `starting`), the operator reserve, campaign priority over maintenance, at
-   most two cold starts in flight per box. `devices.state` is a projection the
-   Reconcile worker corrects every three minutes — never a gate.
+ (`src/lib/engine/box-slots.ts`): what the box reports (`running` +
+ `starting`), the operator reserve, campaign priority over maintenance, at
+ most two cold starts in flight per box — and, since 25 September 2026, the
+ host itself: `box_maintenance` (an operator opened `boxes.maintenance_until`),
+ `box_unhealthy` (CPU / memory / swap above `runtime_settings
+ boxes.health_thresholds`), `box_settling` (a box up for less than ten
+ minutes with more than two containers booting — the boot storm after a
+ move). The operator start route goes through the same arbiter. The
+ decision is the pure `decideSlot()`, tested; `SLOT_REFUSALS` is the closed
+ vocabulary both cockpits label. `devices.state` is a projection the
+ Reconcile worker corrects every three minutes — never a gate.
+ **One writer of a box's presence**: `src/lib/boxes/presence.ts`
+ (`observeBox` / `markBoxUnreachable`, decision `decidePresence()`) owns
+ `boxes.status`, the *observed* `lan_ip`, uptime, container count, the host
+ sample and the firmware facts; `src/lib/boxes/device-inventory.ts` owns
+ running / stopped / **removed** / restored. Reconcile, admin Sync, box
+ creation and the reaper all call them — never write `boxes.status` or
+ `devices.state = removed` anywhere else.
 10. **Every real action on a platform is one row of `avatar_actions`**
    (`src/lib/maintenance/ledger.ts`), dated in the device's local day. Daily
    caps are computed against it, never against `campaign_jobs` alone.

@@ -12,9 +12,9 @@
  */
 
 import { spawn } from "node:child_process";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadEnvFile } from "./dotenv.mjs";
 
 const PROJECT_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -27,13 +27,7 @@ export const DEFAULT_SSH_TIMEOUT_MS = 300_000;
 
 /** Read the shared box password from `infra/boxes/.env`, or the environment. */
 export function loadBoxSshPassword() {
-  const envFile = path.join(PROJECT_ROOT, "infra", "boxes", ".env");
-  if (fs.existsSync(envFile)) {
-    for (const line of fs.readFileSync(envFile, "utf8").split("\n")) {
-      const m = line.trim().match(/^BOX_SSH_PASSWORD=(.*)$/);
-      if (m) return m[1].replace(/^["']|["']$/g, "");
-    }
-  }
+  loadEnvFile(path.join(PROJECT_ROOT, "infra", "boxes", ".env"));
   return process.env.BOX_SSH_PASSWORD ?? null;
 }
 

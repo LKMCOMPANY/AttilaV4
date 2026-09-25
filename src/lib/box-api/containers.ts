@@ -5,17 +5,42 @@
 
 import { boxFetch } from "./fetch";
 import type {
+  ProxyHealthz,
   VmosContainer,
   VmosContainerDetail,
+  VmosHardwareCfg,
+  VmosNetInfo,
   VmosResponse,
+  VmosSystemInfo,
   VmosTimezoneLocale,
 } from "./types";
 
 export async function fetchHealthz(tunnelHostname: string) {
-  return boxFetch<{ status: string; uptime: number; containers: number }>(
-    tunnelHostname,
-    "/healthz",
-  );
+  return boxFetch<ProxyHealthz>(tunnelHostname, "/healthz");
+}
+
+/** Host identity and firmware — the one endpoint that answers on every CBS line. */
+export async function fetchHardwareCfg(tunnelHostname: string) {
+  const res = await boxFetch<VmosResponse<VmosHardwareCfg>>(tunnelHostname, "/v1/get_hardware_cfg", {
+    timeoutMs: 10_000,
+  });
+  return res.code === 200 ? res.data : null;
+}
+
+/** Host load, memory, swap and disks. */
+export async function fetchSystemInfo(tunnelHostname: string) {
+  const res = await boxFetch<VmosResponse<VmosSystemInfo>>(tunnelHostname, "/v1/systeminfo", {
+    timeoutMs: 10_000,
+  });
+  return res.code === 200 ? res.data : null;
+}
+
+/** The box's own view of its LAN address — the only legitimate source of `boxes.lan_ip`. */
+export async function fetchNetInfo(tunnelHostname: string) {
+  const res = await boxFetch<VmosResponse<VmosNetInfo>>(tunnelHostname, "/v1/net_info", {
+    timeoutMs: 10_000,
+  });
+  return res.code === 200 ? res.data : null;
 }
 
 export async function fetchContainerList(tunnelHostname: string) {

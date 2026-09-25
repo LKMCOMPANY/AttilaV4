@@ -7,29 +7,13 @@
  * client, the device query, and the ADBKeyboard constants — so each script no
  * longer re-declares its own copy.
  */
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cfAccessHeaders, loadDotEnvLocal } from "./dotenv.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-function loadEnv() {
-  const envPath = path.join(PROJECT_ROOT, ".env.local");
-  if (!fs.existsSync(envPath)) throw new Error(`.env.local not found at ${envPath}`);
-  for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const eq = t.indexOf("=");
-    if (eq < 0) continue;
-    const k = t.slice(0, eq).trim();
-    let v = t.slice(eq + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-      v = v.slice(1, -1);
-    }
-    if (!(k in process.env)) process.env[k] = v;
-  }
-}
-loadEnv();
+loadDotEnvLocal(PROJECT_ROOT);
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -61,10 +45,7 @@ export const ADBKEYBOARD_APK_URL =
 // VMOS box HTTP client (via Cloudflare Access)
 // ---------------------------------------------------------------------------
 
-const cfHeaders = {
-  "CF-Access-Client-Id": CF_ID,
-  "CF-Access-Client-Secret": CF_SECRET,
-};
+const cfHeaders = cfAccessHeaders();
 
 export async function boxFetch(boxHost, urlPath, init = {}) {
   const url = `https://${boxHost}${urlPath}`;
