@@ -3,12 +3,9 @@
  * Turn a boot-health sweep report into attention items — what a HUMAN must do
  * about a device the sweep found wanting. The sweep itself only measures and
  * mirrors (`boot_health`, `devices.proxy_*`); this step is deliberately
- * separate so a report can be read before anything is opened.
- *
- *   dead / unstable device            → boot_dead        (critical)
- *   proxy exits in the wrong country  → proxy_incoherent (warning)
- *   guest leaves through the box IP   → proxy_incoherent (critical — a leak)
- *   proxy configured, not routing     → proxy_incoherent (warning)
+ * separate so a report can be read before anything is opened. What a row
+ * means is decided in `scripts/lib/sweep-findings.mjs` (pure, tested); this
+ * file reads reports and writes items.
  *
  * Items are per account (RLS): a device without an account is listed, not
  * opened. `openAttention` dedupes on (target, reason) and refreshes the open
@@ -28,52 +25,9 @@
 
 import { readFile } from "node:fs/promises";
 import { loadDotEnvLocal } from "./lib/dotenv.mjs";
+import { planFindings } from "./lib/sweep-findings.mjs";
 
-interface SweepRow {
-  box: string;
-  db_id: string;
-  user_name: string | null;
-  health: "healthy" | "unstable" | "dead";
-  boot_ms: number | null;
-  note: string | null;
-  proxy: {
-    config: { status: string; detail?: string };
-    routing: { tag: string; detail: string; geo?: { exit: { ip: string; country: string; city?: string } | null; expected: string | null; coherent: boolean } } | null;
-  } | null;
-}
-
-interface Finding {
-  reason: "boot_dead" | "proxy_incoherent";
-  severity: "critical" | "warning";
-  title: string;
-  detail: string;
-}
-
-/** The findings one sweep row justifies — pure, so the mapping is readable in one place. */
-export function findingsFor(row: SweepRow): Finding[] {
-  const out: Finding[] = [];
-  if (row.health !== "healthy") {
-    out.push({ reason: "boot_dead", severity: "critical", title: `Device ${row.user_name ?? row.db_id} does not boot`, detail: `${row.health}: ${row.note ?? "no boot_completed"}` });
-  }
-  const proxy = row.proxy;
-  if (proxy && proxy.config.status === "proxied") {
-    const routing = proxy.routing;
-    if (routing?.tag === "UNPROXIED") {
-      out.push({ reason: "proxy_incoherent", severity: "critical", title: `${row.user_name ?? row.db_id} leaves through the box's own address`, detail: `${proxy.config.detail}: guest egress ${routing.geo?.exit?.ip ?? "?"} = box WAN — the proxy is not applied` });
-    } else if (routing && routing.tag !== "ROUTES") {
-      const what = routing.tag === "no-engine" ? "no host-side engine and the box's proxy is older than 1.3.1 — re-probe after the redeploy" : `proxy not routing (${routing.tag}: ${routing.detail})`;
-      out.push({ reason: "proxy_incoherent", severity: "warning", title: `Proxy of ${row.user_name ?? row.db_id} is not in service`, detail: `${proxy.config.detail}: ${what}` });
-    } else if (routing?.geo && !routing.geo.coherent && routing.geo.exit) {
-      out.push({
-        reason: "proxy_incoherent",
-        severity: "warning",
-        title: `Proxy of ${row.user_name ?? row.db_id} exits in ${routing.geo.exit.country}, persona is ${routing.geo.expected}`,
-        detail: `${proxy.config.detail} → ${routing.geo.exit.country}/${routing.geo.exit.city ?? "?"} (${routing.geo.exit.ip}); expected ${routing.geo.expected}`,
-      });
-    }
-  }
-  return out;
-}
+type SweepRow = Parameters<typeof planFindings>[0][number];
 
 function parseArgs(argv: string[]) {
   const reports: string[] = [];
@@ -88,30 +42,6 @@ function parseArgs(argv: string[]) {
   }
   if (!reports.length) throw new Error("--report <file.json> [more…] is required");
   return { reports, dryRun, boxThreshold };
-}
-
-type Planned = { row: SweepRow; finding: Finding };
-
-/**
- * Group the proxy findings per box; a box over the threshold gets one
- * box-scoped finding (its devices in the detail) instead of one per device.
- */
-export function planFindings(rows: SweepRow[], boxThreshold: number): { perDevice: Planned[]; perBox: { box: string; findings: Planned[] }[] } {
-  const perDevice: Planned[] = [];
-  const proxyByBox = new Map<string, Planned[]>();
-  for (const row of rows) {
-    for (const finding of findingsFor(row)) {
-      if (finding.reason !== "proxy_incoherent") { perDevice.push({ row, finding }); continue; }
-      if (!proxyByBox.has(row.box)) proxyByBox.set(row.box, []);
-      proxyByBox.get(row.box)!.push({ row, finding });
-    }
-  }
-  const perBox: { box: string; findings: Planned[] }[] = [];
-  for (const [box, findings] of proxyByBox) {
-    if (findings.length > boxThreshold) perBox.push({ box, findings });
-    else perDevice.push(...findings);
-  }
-  return { perDevice, perBox };
 }
 
 async function main() {

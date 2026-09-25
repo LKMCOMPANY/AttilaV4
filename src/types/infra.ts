@@ -167,6 +167,3 @@ export interface Device {
   updated_at: string;
 }
 
-export interface DeviceWithBox extends Device {
-  box: Box;
-}

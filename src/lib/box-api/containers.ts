@@ -48,6 +48,11 @@ export async function fetchContainerList(tunnelHostname: string) {
     tunnelHostname,
     "/container_api/v1/list_names",
   );
+  // A list that is not an array is a box that did not answer, not a box with
+  // no containers — the inventory would otherwise read it as a wipe.
+  if (!res.data || !Array.isArray(res.data.list)) {
+    throw new Error(`Box API error: list_names without a list (code ${res.code}) — ${tunnelHostname}`);
+  }
   return res.data;
 }
 

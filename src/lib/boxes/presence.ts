@@ -29,6 +29,7 @@ import {
   type VmosSystemInfo,
 } from "@/lib/box-api";
 import { assessHostHealth, DEFAULT_HEALTH_THRESHOLDS, loadHealthThresholds, type HealthThresholds } from "@/lib/boxes/host-health";
+import { isMaintenanceOpen } from "@/lib/boxes/maintenance-window";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import type { BoxHostHealth, BoxStatus } from "@/types";
 
@@ -63,10 +64,11 @@ export interface PresenceDecision {
 }
 
 /** Re-read firmware facts at most this often (they change on an upgrade only). */
-export const FIRMWARE_REFRESH_MS = 60 * 60 * 1000;
+const FIRMWARE_REFRESH_MS = 60 * 60 * 1000;
 
+/** Row-shaped reading of the shared window rule (`maintenance-window.ts`). */
 export function isUnderMaintenance(row: Pick<BoxPresenceRow, "maintenance_until">, now = new Date()): boolean {
-  return row.maintenance_until != null && new Date(row.maintenance_until).getTime() > now.getTime();
+  return isMaintenanceOpen(row.maintenance_until, now);
 }
 
 /** Strip the docker tag: `repo:latest` → `repo`. */
@@ -165,16 +167,14 @@ export async function observeBox(
 ): Promise<{ decision: PresenceDecision; observation: BoxObservation }> {
   const now = options.now ?? new Date();
   const host = row.tunnel_hostname;
-  const obs: BoxObservation = { health: null, containers: null };
-
-  try {
-    const [health, containers] = await Promise.all([fetchHealthz(host), fetchContainerList(host)]);
-    obs.health = health;
-    obs.containers = containers;
-  } catch {
-    obs.health = null;
-    obs.containers = null;
-  }
+  // Presence is the proxy answering `/healthz`; the container list is a
+  // separate fact. A box whose `list_names` fails or comes back malformed is
+  // still online — its inventory is simply not reconciled on this pass.
+  const [health, containers] = await Promise.all([
+    fetchHealthz(host).catch(() => null),
+    fetchContainerList(host).catch(() => null),
+  ]);
+  const obs: BoxObservation = { health, containers: health ? containers : null };
 
   if (obs.health) {
     const readFirmware = options.withFirmware ?? firmwareDue(row, now);

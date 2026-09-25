@@ -60,9 +60,14 @@ export async function POST(req: NextRequest) {
     }
     summary.boxesOnline++;
 
-    const inventory = await reconcileDeviceRows(supabase, box.id, observation.containers?.list ?? [], { now });
+    if (!observation.containers) {
+      console.warn(`[Reconcile] ${box.tunnel_hostname}: list_names unavailable — inventory skipped this pass`);
+      continue;
+    }
+    const inventory = await reconcileDeviceRows(supabase, box.id, observation.containers.list, { now });
     if (inventory.markedRunning) console.warn(`[Reconcile] ${box.tunnel_hostname}: ${inventory.markedRunning} container(s) run while the database said otherwise`);
     if (inventory.markedRemoved) console.warn(`[Reconcile] ${box.tunnel_hostname}: ${inventory.markedRemoved} row(s) no longer on the box — marked removed`);
+    if (inventory.removalsSuspended) console.warn(`[Reconcile] ${box.tunnel_hostname}: list_names too short to trust (${observation.containers.list.length} listed) — removals skipped this pass`);
     if (inventory.unknownOnBox.length) console.warn(`[Reconcile] ${box.tunnel_hostname}: ${inventory.unknownOnBox.length} container(s) unknown to the database — run the admin Sync`);
     summary.markedRunning += inventory.markedRunning;
     summary.markedStopped += inventory.markedStopped;

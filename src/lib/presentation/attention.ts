@@ -5,6 +5,7 @@ import type {
   AttentionSource,
   AttentionStatus,
 } from "@/types";
+import { humaniseWireValue } from "./humanise";
 
 // ---------------------------------------------------------------------------
 // Attention queue — presentation vocabulary shared by both clients.
@@ -88,9 +89,5 @@ function isKnownReason(reason: string): reason is AttentionReason {
  */
 export function attentionReasonMeta(reason: string): AttentionMeta {
   if (isKnownReason(reason)) return ATTENTION_REASON_META[reason];
-  const humanised = reason.replace(/_/g, " ").trim();
-  return {
-    label: humanised ? humanised.charAt(0).toUpperCase() + humanised.slice(1) : "Unknown",
-    tone: UNKNOWN_REASON_TONE,
-  };
+  return { label: humaniseWireValue(reason, "Unknown"), tone: UNKNOWN_REASON_TONE };
 }

@@ -1,4 +1,6 @@
 import type { BoxHealthVerdict } from "@/lib/boxes/host-health";
+import { isMaintenanceOpen } from "@/lib/boxes/maintenance-window";
+import { humaniseWireValue } from "./humanise";
 import type { Box, BoxStatus } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -36,16 +38,11 @@ export const BOX_MAINTENANCE_META: BoxMeta = { label: "Under maintenance", tone:
 /** Tone of a value this build does not know — the server may add values first. */
 export const UNKNOWN_BOX_VALUE_TONE: BoxTone = "muted";
 
-function humanise(value: string, fallback: string): string {
-  const words = value.replace(/_/g, " ").trim();
-  return words ? words.charAt(0).toUpperCase() + words.slice(1) : fallback;
-}
-
 /** Presentation of a verdict; rows written before the verdict existed read as `unknown`. */
 export function boxHealthVerdictMeta(verdict: string | null | undefined): BoxMeta {
   if (verdict == null) return BOX_HEALTH_VERDICT_META.unknown;
   if (verdict in BOX_HEALTH_VERDICT_META) return BOX_HEALTH_VERDICT_META[verdict as BoxHealthVerdict];
-  return { label: humanise(verdict, "Unknown"), tone: UNKNOWN_BOX_VALUE_TONE };
+  return { label: humaniseWireValue(verdict, "Unknown"), tone: UNKNOWN_BOX_VALUE_TONE };
 }
 
 /**
@@ -57,10 +54,8 @@ export function boxPresenceMeta(
   box: Pick<Box, "status" | "maintenance_until">,
   now: Date = new Date(),
 ): BoxMeta {
-  if (box.maintenance_until && new Date(box.maintenance_until).getTime() > now.getTime()) {
-    return BOX_MAINTENANCE_META;
-  }
+  if (isMaintenanceOpen(box.maintenance_until, now)) return BOX_MAINTENANCE_META;
   const status: string = box.status;
   if (status in BOX_STATUS_META) return BOX_STATUS_META[status as BoxStatus];
-  return { label: humanise(status, "Unknown"), tone: UNKNOWN_BOX_VALUE_TONE };
+  return { label: humaniseWireValue(status, "Unknown"), tone: UNKNOWN_BOX_VALUE_TONE };
 }

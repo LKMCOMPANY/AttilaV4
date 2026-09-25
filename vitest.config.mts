@@ -8,12 +8,14 @@ import { defineConfig } from "vitest/config";
  * Deliberately narrow: `next build` already integration-checks the app, and
  * `tsc --noEmit` already checks the types. What neither can check is a
  * judgement call, like "how long is a boot verdict worth trusting" or "which
- * box failure reasons are terminal". Those are what live here.
+ * box failure reasons are terminal". Those are what live here — including the
+ * fleet scripts' pure verdicts (`scripts/lib/*.test.mjs`), which replay the
+ * proxy's wire fixtures like the web modules do.
  */
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/lib/**/*.test.mjs"],
   },
   resolve: {
     alias: {

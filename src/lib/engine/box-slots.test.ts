@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_HEALTH_THRESHOLDS, decideSlot, type LiveOccupancy, type SlotInput } from "./box-slots";
+import { DEFAULT_HEALTH_THRESHOLDS } from "@/lib/boxes/host-health";
+import { decideSlot, type LiveOccupancy, type SlotInput } from "./box-slots";
 
 const box = { id: "b", tunnel_hostname: "box-2.attila.army", max_concurrent_containers: 10, operator_reserve: 1 };
 

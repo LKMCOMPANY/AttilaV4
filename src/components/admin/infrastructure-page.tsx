@@ -171,6 +171,7 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
             const activeDevices = devices.filter((d) => d.state !== "removed");
             const runningCount = activeDevices.filter((d) => d.state === "running").length;
             const isLoaded = loadedBoxIds.has(box.id);
+            const presence = boxPresenceMeta(box);
 
             return (
               <AccordionItem
@@ -182,11 +183,8 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
                   <div className="flex w-full items-center gap-3 pr-2">
                     {/* Status dot — the shared presence rule (a maintenance window wins) */}
                     <span
-                      title={boxPresenceMeta(box).label}
-                      className={cn(
-                        "h-2.5 w-2.5 shrink-0 rounded-full",
-                        TONE_CLASS[boxPresenceMeta(box).tone].dot
-                      )}
+                      title={presence.label}
+                      className={cn("h-2.5 w-2.5 shrink-0 rounded-full", TONE_CLASS[presence.tone].dot)}
                     />
 
                     {/* Name + hostname */}

@@ -15,6 +15,7 @@ import {
   assessBoxSlot,
   BOX_SLOT_COLUMNS,
   DEFAULT_MAX_CONCURRENT,
+  OPERATOR_HARD_REFUSALS,
   type BoxRow as SlotBoxRow,
   type SlotRefusal,
 } from "@/lib/engine/box-slots";
@@ -108,8 +109,7 @@ export async function startContainerCore(
 
     if (!alreadyRunning) {
       const slot = await assessBoxSlot(ctx.supabase as unknown as ReturnType<typeof createAdminClient>, box, dbId, "operator");
-      const hardRefusals: SlotRefusal[] = ["box_maintenance", "box_unhealthy", "box_settling", "box_unreachable", "starts_in_flight"];
-      if (!slot.granted && hardRefusals.includes(slot.reason as SlotRefusal)) {
+      if (!slot.granted && OPERATOR_HARD_REFUSALS.includes(slot.reason as SlotRefusal)) {
         return { error: null, refused: slot.reason as SlotRefusal, refusedDetail: slot.detail, max };
       }
     }

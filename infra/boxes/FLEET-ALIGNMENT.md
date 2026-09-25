@@ -459,10 +459,13 @@ don't have) · ↩ intentionally skipped.
    - Note: box-4 has **73 live containers vs 67 in DB** → ~6 devices created on
      the box but not yet imported into Attila; run admin **Sync** on box-4.
    Tools added: `scripts/audit-proxy-fleet.mjs` (`--dry-run`, `--box`, `--limit`,
-   `--only-unproxied`) and `scripts/reconcile-devices.mjs`.
-9. ⏸ **Standardize proxy mode to `vpn`** + consider `udpDisabled: true` for the
-   creation profile — validate on box-5 first (see `PROXY-STRATEGY.md`). Applied
-   at creation in `MagicBox-Industrial`, not from Attila.
+   `--only-unproxied`) and `scripts/reconcile-devices.mjs`. *(26 September 2026:
+   the fleet proxy audit was retired — `audit-device-health.mjs --with-proxy`
+   does the same mirror on the same boot, plus routing and exit geo.)*
+9. ~~⏸ **Standardize proxy mode to `vpn`**~~ — **reversed on 26 September 2026**:
+   the in-guest (`vpn`) engine leaks the box's address for 15–20 s after every
+   boot, the host-side engine does not (`PROXY-STRATEGY.md` § "Measured on the
+   whole fleet"). `udpDisabled: true` for the creation profile still stands.
 
 ## E. Capacity policy — ✅ done
 

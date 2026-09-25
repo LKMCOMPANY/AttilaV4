@@ -108,8 +108,10 @@ Two measurement traps, both paid for the hard way:
 7. **One boot per device per sweep.** `scripts/audit-device-health.mjs
  --with-proxy` answers boot health, the configured proxy (mirrored to
  `devices.proxy_*`), routing and exit geo on the same boot; the per-device
- probes have one definition, `scripts/lib/proxy-probe.mjs`, shared with
- `audit-proxies.mjs` and `audit-proxy-fleet.mjs`. Two starts in flight per box
+ probes have one definition, `scripts/lib/proxy-probe.mjs` (verdicts in
+ `proxy-verdict.mjs`, tested against the proxy's fixture), shared with the
+ read-only `audit-proxies.mjs`; the former `audit-proxy-fleet.mjs` is gone,
+ the sweep does its job. Two starts in flight per box
  is the default; `scripts/lib/fleet.mjs` and `box-ssh.mjs` reach the box on
  the LAN first (352 devices' packages audited in 126 s). Don't add a fourth
  boot-everything script.

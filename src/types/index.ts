@@ -1,7 +1,7 @@
 import type { AvatarPlatformState, MaintenanceProfile } from "./maintenance";
 import type { Box, Device } from "./infra";
 
-export type { Box, BoxHostHealth, BoxStatus, Device, DeviceBootHealth, DeviceState, DeviceWithBox } from "./infra";
+export type { Box, BoxHostHealth, BoxStatus, Device, DeviceBootHealth, DeviceState } from "./infra";
 
 export type UserRole = "admin" | "manager" | "operator";
 

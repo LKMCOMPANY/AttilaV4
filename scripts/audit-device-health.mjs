@@ -153,7 +153,7 @@ async function probeDevice(boxHost, device, { withProxy = false } = {}) {
 async function probeProxyWhileUp(boxHost, device) {
   const config = await readProxyConfig(boxHost, device).catch((err) => ({ status: "error", detail: short(err) }));
   const routing = config.status === "proxied"
-    ? await probeRouting(boxHost, device, { geo: true }).catch((err) => ({ tag: "FAIL", detail: short(err) }))
+    ? await probeRouting(boxHost, { ...device, state: "running" }, { geo: true }).catch((err) => ({ tag: "FAIL", detail: short(err) }))
     : null;
   return { config, routing };
 }

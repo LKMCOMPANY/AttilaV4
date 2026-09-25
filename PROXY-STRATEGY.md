@@ -175,6 +175,8 @@ the container ran — re-test before touching the upstream.
   saves persist. `dnsOverProxyDisabled:false` (correct).
 - Recommended follow-ups (validate on box-5, then roll forward — gated):
   - Flip `udpDisabled` → `true` for the account-creation profile.
-  - Standardize new devices to proxy **mode `vpn`** at creation.
+  - ~~Standardize new devices to proxy **mode `vpn`** at creation.~~ Reversed
+    26 September 2026 — the in-guest engine leaks the box's address for
+    15–20 s after every boot (measured above); keep the host-side mode.
   - Keep the creation-time Oxylabs IP/blacklist check (`checkProxyIp`) as the
     gate before hand-off.

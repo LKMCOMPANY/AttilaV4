@@ -27,6 +27,7 @@ import {
   attentionReasonMeta,
 } from "@/lib/presentation/attention";
 import { TONE_CLASS } from "./tone-class";
+import { TonePill } from "./tone-pill";
 import { ATTENTION_SEVERITY_RANK, type AttentionQueueItem, type AttentionReason, type AttentionSeverity, type AttentionStatus } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -82,22 +83,12 @@ export function AttentionReasonBadge({ reason, className }: { reason: string; cl
 
 export function AttentionSeverityBadge({ severity, className }: { severity: AttentionSeverity; className?: string }) {
   const meta = ATTENTION_SEVERITY_META[severity];
-  const tone = TONE_CLASS[meta.tone];
-  return (
-    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", tone.text, tone.bg, className)}>
-      {meta.label}
-    </span>
-  );
+  return <TonePill label={meta.label} tone={meta.tone} className={className} />;
 }
 
 export function AttentionStatusBadge({ status, className }: { status: AttentionStatus; className?: string }) {
   const meta = ATTENTION_STATUS_META[status];
-  const tone = TONE_CLASS[meta.tone];
-  return (
-    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", tone.text, tone.bg, className)}>
-      {meta.label}
-    </span>
-  );
+  return <TonePill label={meta.label} tone={meta.tone} className={className} />;
 }
 
 /**

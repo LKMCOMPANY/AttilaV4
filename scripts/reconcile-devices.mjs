@@ -15,7 +15,7 @@
  *   node scripts/reconcile-devices.mjs --dry-run  # report only
  */
 
-import { boxFetch, fetchDevicesForProxyAudit, updateDeviceState } from "./lib/fleet.mjs";
+import { boxFetch, fetchDevicesOnOnlineBoxes, updateDeviceState } from "./lib/fleet.mjs";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 
@@ -27,7 +27,7 @@ async function liveDbIds(host) {
 
 async function main() {
   console.log(`=== device reconcile ${DRY_RUN ? "(DRY RUN)" : "(applying)"} ===`);
-  const devices = await fetchDevicesForProxyAudit();
+  const devices = await fetchDevicesOnOnlineBoxes();
 
   const byBox = new Map();
   for (const d of devices) {

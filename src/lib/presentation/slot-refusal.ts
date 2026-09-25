@@ -1,4 +1,5 @@
 import type { SlotRefusal } from "@/lib/engine/box-slots";
+import { humaniseWireValue } from "./humanise";
 
 // ---------------------------------------------------------------------------
 // Slot arbiter refusals — presentation vocabulary shared by both clients.
@@ -40,9 +41,5 @@ function isKnownRefusal(reason: string): reason is SlotRefusal {
 /** Presentation of a refusal, tolerant of values newer than this build. */
 export function slotRefusalMeta(reason: string): SlotRefusalMeta {
   if (isKnownRefusal(reason)) return SLOT_REFUSAL_META[reason];
-  const humanised = reason.replace(/_/g, " ").trim();
-  return {
-    label: humanised ? humanised.charAt(0).toUpperCase() + humanised.slice(1) : "Start refused",
-    tone: UNKNOWN_REFUSAL_TONE,
-  };
+  return { label: humaniseWireValue(reason, "Start refused"), tone: UNKNOWN_REFUSAL_TONE };
 }

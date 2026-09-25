@@ -7,6 +7,7 @@ import {
   actionableOnDeviceStatus,
 } from "@/lib/presentation/maintenance";
 import { TONE_CLASS } from "./tone-class";
+import { TonePill } from "./tone-pill";
 import type { AvatarPlatformStateSummary, MaintenanceTaskStatus } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -50,8 +51,5 @@ export function OnDeviceBadge({
 
 export function TaskStatusBadge({ status, className }: { status: MaintenanceTaskStatus; className?: string }) {
   const meta = TASK_STATUS_META[status];
-  const tone = TONE_CLASS[meta.tone];
-  return (
-    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", tone.text, tone.bg, className)}>{meta.label}</span>
-  );
+  return <TonePill label={meta.label} tone={meta.tone} className={className} />;
 }

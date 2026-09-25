@@ -27,10 +27,6 @@ import { isUnderMaintenance } from "@/lib/boxes/presence";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import type { BoxHostHealth } from "@/types";
 
-// The thresholds and the verdict rule live with the presence writer's other
-// host facts; re-exported so the arbiter's callers and tests keep one import.
-export { DEFAULT_HEALTH_THRESHOLDS, loadHealthThresholds, type HealthThresholds } from "@/lib/boxes/host-health";
-
 type AdminClient = ReturnType<typeof createAdminClient>;
 
 export interface BoxRow {
@@ -59,6 +55,21 @@ export const SLOT_REFUSALS = [
 ] as const;
 export type SlotRefusal = (typeof SLOT_REFUSALS)[number];
 
+/**
+ * The refusals the operator start route answers as `{ refused }`: closing a
+ * device would not help, so the cockpits name the reason and revert. A plainly
+ * full box (`box_full`) keeps its own flow — auto-close an idle device, else
+ * `atCapacity` with the victims list; `operator_reserve` and
+ * `campaign_priority` never apply to an operator.
+ */
+export const OPERATOR_HARD_REFUSALS: readonly SlotRefusal[] = [
+  "box_maintenance",
+  "box_unhealthy",
+  "box_settling",
+  "box_unreachable",
+  "starts_in_flight",
+];
+
 export interface LiveOccupancy {
   running: number;
   starting: number;
@@ -82,9 +93,9 @@ export interface SlotDecision {
 
 /** The one default the whole codebase uses when `boxes.max_concurrent_containers` is null. */
 export const DEFAULT_MAX_CONCURRENT = 10;
-export const DEFAULT_OPERATOR_RESERVE = 1;
+const DEFAULT_OPERATOR_RESERVE = 1;
 /** Serial boots: at most this many `run` calls in flight per box (35–90 s boots beyond). */
-export const MAX_STARTS_IN_FLIGHT = 2;
+const MAX_STARTS_IN_FLIGHT = 2;
 const LIVE_CACHE_MS = 5_000;
 
 const liveCache = new Map<string, { at: number; occupancy: LiveOccupancy }>();

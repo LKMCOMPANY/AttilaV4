@@ -27,8 +27,8 @@
  *   node scripts/audit-proxies.mjs --concurrency 4
  */
 
-import { fetchProxiedDevices, mapWithConcurrency, proxyTest } from "./lib/fleet.mjs";
-import { classifyRouting, describeRouting, expectedCountry, fetchExitGeo } from "./lib/proxy-probe.mjs";
+import { fetchProxiedDevices, mapWithConcurrency } from "./lib/fleet.mjs";
+import { describeRouting, probeRouting } from "./lib/proxy-probe.mjs";
 
 function parseArgs(argv) {
   const args = { runningOnly: false, concurrency: 3, geo: false };
@@ -43,24 +43,16 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv);
   let devices = await fetchProxiedDevices();
-  // box-3 is out of service; only test devices on reachable (online) boxes.
+  // Only devices on reachable (online) boxes can be asked anything.
   devices = devices.filter((d) => d.boxes && d.boxes.status !== "offline");
   if (args.runningOnly) devices = devices.filter((d) => d.state === "running");
 
   console.log(`=== proxy routing audit — ${devices.length} proxy-enabled device(s) on online boxes ===\n`);
 
-  const rows = await mapWithConcurrency(devices, args.concurrency, async (d) => {
-    const host = d.boxes.tunnel_hostname;
-    const result = await proxyTest(host, d.db_id);
-    const row = { device: d, ...classifyRouting(d, result) };
-    // Only a routing proxy can be asked where it comes out.
-    if (args.geo && row.tag === "ROUTES") {
-      const exit = await fetchExitGeo(host, d.db_id);
-      const expected = expectedCountry(d);
-      row.geo = { exit, expected, coherent: !exit || !expected || exit.country === expected };
-    }
-    return row;
-  });
+  const rows = await mapWithConcurrency(devices, args.concurrency, async (d) => ({
+    device: d,
+    ...(await probeRouting(d.boxes.tunnel_hostname, d, { geo: args.geo })),
+  }));
 
   const byBox = new Map();
   for (const r of rows) {

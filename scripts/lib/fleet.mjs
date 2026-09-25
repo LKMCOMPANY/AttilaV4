@@ -193,8 +193,8 @@ export async function fetchProxiedDevices() {
   );
 }
 
-/** Every device on an ONLINE box, with what the full proxy audit needs. */
-export async function fetchDevicesForProxyAudit() {
+/** Every device on an ONLINE box (reconcile, ghosts): identity, state, proxy flag, box. */
+export async function fetchDevicesOnOnlineBoxes() {
   return supabaseFetch(
     "devices?select=id,db_id,user_name,state,account_id,proxy_enabled," +
       "boxes!inner(name,tunnel_hostname,status,max_concurrent_containers)" +

@@ -4,10 +4,9 @@ import { useState, useTransition } from "react";
 import { Loader2, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { TONE_CLASS } from "@/components/shared/tone-class";
+import { TonePill } from "@/components/shared/tone-pill";
 import { setBoxMaintenance } from "@/app/actions/boxes";
 import { BOX_MAINTENANCE_META, boxHealthVerdictMeta, boxPresenceMeta } from "@/lib/presentation/box-health";
-import { cn } from "@/lib/utils";
 import type { Box } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -31,15 +30,6 @@ function percent(value: number | null | undefined): string {
 function shortTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
   return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
-function Pill({ label, tone, title }: { label: string; tone: keyof typeof TONE_CLASS; title?: string }) {
-  const classes = TONE_CLASS[tone];
-  return (
-    <span title={title} className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", classes.text, classes.bg)}>
-      {label}
-    </span>
-  );
 }
 
 export function BoxHostFacts({ box, onUpdated }: { box: Box; onUpdated: () => void }) {
@@ -76,8 +66,8 @@ export function BoxHostFacts({ box, onUpdated }: { box: Box; onUpdated: () => vo
   return (
     <div className="space-y-2 rounded-md border bg-muted/20 px-3 py-2 text-xs">
       <div className="flex flex-wrap items-center gap-2">
-        <Pill label={presence.label} tone={presence.tone} />
-        <Pill label={verdict.label} tone={verdict.tone} title={health?.over?.join(", ")} />
+        <TonePill label={presence.label} tone={presence.tone} />
+        <TonePill label={verdict.label} tone={verdict.tone} title={health?.over?.join(", ")} />
         {health && (
           <span className="text-muted-foreground">
             cpu {percent(health.cpu_percent)} · mem {percent(health.mem_percent)} · swap {percent(health.swap_percent)} · ssd{" "}
