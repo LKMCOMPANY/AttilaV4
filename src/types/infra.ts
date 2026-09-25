@@ -28,6 +28,14 @@ export type DeviceBootHealth = "healthy" | "unstable" | "dead";
  * cold start and rendered by both cockpits.
  */
 export interface BoxHostHealth {
+  /**
+   * The arbiter's own reading of this sample against
+   * `runtime_settings.boxes.health_thresholds` (`src/lib/boxes/host-health.ts`):
+   * `ok`, `unhealthy` (with `over` naming the gauges), `unknown` (no gauge read).
+   * Absent on rows written before 25 September 2026 — read as `unknown`.
+   */
+  verdict?: "ok" | "unhealthy" | "unknown";
+  over?: string[];
   cpu_percent: number | null;
   mem_percent: number | null;
   swap_percent: number | null;

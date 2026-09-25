@@ -17,6 +17,8 @@ import { getAccounts } from "@/app/actions/accounts";
 import { getDeviceAvatarMap } from "@/app/actions/avatars";
 import type { DeviceAvatarAssignment } from "@/app/actions/avatars";
 import { cn } from "@/lib/utils";
+import { TONE_CLASS } from "@/components/shared/tone-class";
+import { boxPresenceMeta } from "@/lib/presentation/box-health";
 import { Search, Server, Smartphone, Clock } from "lucide-react";
 import type { Account, BoxWithRelations, Device } from "@/types";
 
@@ -178,13 +180,12 @@ export function InfrastructurePage({ initialBoxes }: InfrastructurePageProps) {
               >
                 <AccordionTrigger className="px-4 py-3 hover:no-underline">
                   <div className="flex w-full items-center gap-3 pr-2">
-                    {/* Status dot */}
+                    {/* Status dot — the shared presence rule (a maintenance window wins) */}
                     <span
+                      title={boxPresenceMeta(box).label}
                       className={cn(
                         "h-2.5 w-2.5 shrink-0 rounded-full",
-                        box.status === "online"
-                          ? "bg-success"
-                          : "bg-muted-foreground/40"
+                        TONE_CLASS[boxPresenceMeta(box).tone].dot
                       )}
                     />
 

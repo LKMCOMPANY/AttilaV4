@@ -748,16 +748,26 @@ FETCH À LA DEMANDE       → données lourdes ou détaillées
 | `last_heartbeat` | timestamptz | presence | Dernière observation réussie |
 | `model` · `cbs_version` · `kernel_version` | text | `/v1/get_hardware_cfg` (relu au plus toutes les heures, ou au Sync) | Faits firmware — les cibles vendeur sont par modèle |
 | `default_image` | text | `get_android_detail` du premier container | Image Android représentative (sans tag) |
-| `host_health` | jsonb | `/v1/systeminfo` + `list_names` | `{cpu_percent, mem_percent, swap_percent, mmc_percent, ssd_percent, running, starting, sampled_at}` — lu par l'arbitre avant un démarrage à froid |
+| `host_health` | jsonb | `/v1/systeminfo` + `list_names` | `{verdict, over, cpu_percent, mem_percent, swap_percent, mmc_percent, ssd_percent, running, starting, sampled_at}` — `verdict` (`ok` / `unhealthy` / `unknown`) et `over` (jauges au-dessus des seuils, ex. `swap 74% > 60%`) sont posés par `assessHostHealth()` (`src/lib/boxes/host-health.ts`) contre `runtime_settings.boxes.health_thresholds` ; c'est la même règle que l'arbitre applique avant un démarrage à froid, et ce que les deux cockpits affichent (`box-health.ts` ↔ `BoxHealthPresentation.swift`) sans connaître les seuils |
 | `firmware_checked_at` | timestamptz | presence | Dernière lecture des faits firmware |
 | `maintenance_until` | timestamptz | opérateur (admin web / Mac) | Fenêtre de maintenance par box : l'arbitre refuse `box_maintenance`, le reaper passe, le reconcile tient le statut |
 | `created_at` | timestamptz | — | Date d'ajout |
 | `metadata` | jsonb | — | Données libres |
 
-Données source (API `healthz`) :
+Données source (API `healthz`, contrat figé dans
+`infra/magicbox-proxy/test/fixtures/healthz.json` — rejoué par le proxy,
+`presence.test.ts` et le Mac) :
 ```json
-{ "status": "ok", "uptime": 1193920.07, "containers": 31 }
+{ "status": "ok", "version": "1.3.0", "uptime": 4091.15, "api_host": "192.168.1.19",
+  "api_iface": "eth0", "api_source": "default_route", "lan_ip": "192.168.1.19", "containers": 57 }
 ```
+
+Écriture admin : `setBoxMaintenance` (`src/app/actions/boxes.ts`, web) et
+`InfraProviding.setBoxMaintenance` (Mac, PostgREST sous le JWT admin) ouvrent
+ou ferment `maintenance_until` (30 min / 2 h / 8 h) ; les deux cockpits
+affichent les faits hôte dans le détail d'une box (`BoxHostFacts` ↔
+`BoxHostFactsView`) et l'outil MCP `boxes` les renvoie (`lanIP`, `model`,
+`cbsVersion`, `kernelVersion`, `defaultImage`, `hostHealth`, `maintenanceUntil`).
 
 ### Table `account_boxes` (N:N — box partageable entre clients)
 
@@ -1014,6 +1024,14 @@ CF-Access-Client-Secret: {service_token_secret}
    `lib/operator/briefs.ts`).
 4. Vocabulaire : `src/lib/presentation/maintenance.ts` ↔
    `MaintenancePresentation.swift`, fixture `maintenance-vocabulary.json`.
+   Depuis le 25 septembre 2026, deux vocabulaires de plus, même mécanique :
+   `box-health.ts` ↔ `BoxHealthPresentation.swift`
+   (`box-health-vocabulary.json` : statuts, verdicts hôte, badge maintenance)
+   et `slot-refusal.ts` ↔ `SlotRefusalPresentation.swift`
+   (`slot-refusal-vocabulary.json` : les 8 refus de l'arbitre). Le refus
+   arrive typé dans la réponse de `POST /api/devices/[id]/start`
+   (`{ refused, refusedDetail }`) ; avant cette date les deux clients
+   lisaient cette réponse comme un succès et affichaient le device « running ».
 ```
 
 ### Cockpit MCP (app macOS → Cursor — 11 septembre 2026)

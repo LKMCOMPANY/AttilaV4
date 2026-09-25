@@ -15,6 +15,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEnvFile } from "./dotenv.mjs";
+import { discoverLanIp, manifestBoxes } from "../../infra/boxes/scripts/lib/lan.mjs";
 
 const PROJECT_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -43,12 +44,28 @@ export function sshHostFor(tunnelHostname) {
  * option (that is `execFileSync`), so `bash -s` would sit waiting on a stdin
  * that never closes until the timeout fired.
  */
-export function runOverSsh(
+// LAN first, tunnel otherwise (25 Sep 2026): the box is found on the current
+// LAN by MAC + device_id (manifest.tsv, infra/boxes/scripts/lib/lan.mjs) and
+// SSH'd directly; the cloudflared ProxyCommand is the fallback. Cached per run.
+const lanIpByHost = new Map();
+async function sshTargetFor(tunnelHostname) {
+  if (!lanIpByHost.has(tunnelHostname)) {
+    const row = manifestBoxes().find((m) => m.host === tunnelHostname);
+    lanIpByHost.set(tunnelHostname, row ? await discoverLanIp(row).catch(() => null) : null);
+  }
+  const ip = lanIpByHost.get(tunnelHostname);
+  return ip
+    ? { host: ip, extra: [] }
+    : { host: sshHostFor(tunnelHostname), extra: ["-o", "ProxyCommand=cloudflared access ssh --hostname %h"] };
+}
+
+export async function runOverSsh(
   tunnelHostname,
   sshPassword,
   script,
   { timeoutMs = DEFAULT_SSH_TIMEOUT_MS } = {},
 ) {
+  const target = await sshTargetFor(tunnelHostname);
   return new Promise((resolve, reject) => {
     const child = spawn(
       "sshpass",
@@ -59,9 +76,10 @@ export function runOverSsh(
         "-o", "PreferredAuthentications=password",
         "-o", "PubkeyAuthentication=no",
         "-o", "StrictHostKeyChecking=no",
+        "-o", "UserKnownHostsFile=/dev/null",
         "-o", "LogLevel=ERROR",
-        "-o", "ProxyCommand=cloudflared access ssh --hostname %h",
-        `root@${sshHostFor(tunnelHostname)}`,
+        ...target.extra,
+        `root@${target.host}`,
         "bash -s",
       ],
       {

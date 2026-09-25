@@ -105,6 +105,33 @@ Two measurement traps, both paid for the hard way:
  upgrade`; `logrotate` is the only package we add. Everything we converge is a
  versioned file under `infra/boxes/files/` shipped by `deploy.sh` and verified
  by `check-drift.mjs` (exit 0 = uniform). Hand edits on a box are drift.
+7. **One boot per device per sweep.** `scripts/audit-device-health.mjs
+ --with-proxy` answers boot health, the configured proxy (mirrored to
+ `devices.proxy_*`), routing and exit geo on the same boot; the per-device
+ probes have one definition, `scripts/lib/proxy-probe.mjs`, shared with
+ `audit-proxies.mjs` and `audit-proxy-fleet.mjs`. Two starts in flight per box
+ is the default; `scripts/lib/fleet.mjs` and `box-ssh.mjs` reach the box on
+ the LAN first (352 devices' packages audited in 126 s). Don't add a fourth
+ boot-everything script.
+8. **Host health has one rule and the cockpits never compare gauges.**
+ `assessHostHealth()` (`src/lib/boxes/host-health.ts`) reads a sample against
+ `runtime_settings.boxes.health_thresholds`; the slot arbiter refuses
+ `box_unhealthy` with it and the presence writer stamps its `verdict` and
+ `over` on `boxes.host_health`. Web and Mac show `verdict` through the shared
+ vocabulary (`src/lib/presentation/box-health.ts` ↔
+ `BoxHealthPresentation.swift`, pinned to `__fixtures__/box-health-vocabulary.json`).
+9. **A refused start is never shown running.** `POST /api/devices/{id}/start`
+ answers `{ refused, refusedDetail }` for the arbiter's hard refusals
+ (`box_maintenance`, `box_unhealthy`, `box_settling`, `box_unreachable`,
+ `starts_in_flight`); both cockpits revert the optimistic state and name the
+ reason through `src/lib/presentation/slot-refusal.ts` ↔
+ `SlotRefusalPresentation.swift` (`slot-refusal-vocabulary.json`). Before 25
+ September 2026 both clients read that answer as success.
+10. **The proxy's wire contracts are fixtures, replayed on three sides.**
+ `infra/magicbox-proxy/test/fixtures/{healthz,stream-ready}.json` are asserted
+ by the proxy's contract test, by `presence.test.ts` / `stream-readiness.test.ts`
+ (web) and by `StreamReadinessTests.swift` (Mac). A new `/healthz` field or
+ `/stream-ready` reason is a change to the fixture first.
 
 ## Hard rules — screen projection
 
@@ -236,9 +263,11 @@ flows themselves:
 5. **Presentation vocabularies shared with the macOS client live in
    `src/lib/presentation/*`**, one label and one semantic tone per wire value,
    pinned to a JSON fixture under `__fixtures__/` that the Swift side copies
-   and tests too (`attention.ts` ↔ `AttentionPresentation.swift`). A component
-   never re-labels a wire value; the two cockpits change wording together or
-   not at all.
+   and tests too (`attention.ts` ↔ `AttentionPresentation.swift`,
+   `maintenance.ts` ↔ `MaintenancePresentation.swift`, `box-health.ts` ↔
+   `BoxHealthPresentation.swift`, `slot-refusal.ts` ↔
+   `SlotRefusalPresentation.swift`). A component never re-labels a wire value;
+   the two cockpits change wording together or not at all.
 
 ### Quality gates (web)
 

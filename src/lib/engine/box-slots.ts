@@ -22,9 +22,14 @@
  */
 
 import { fetchContainerList, fetchHealthz, fetchSystemInfo } from "@/lib/box-api";
+import { assessHostHealth, loadHealthThresholds, type HealthThresholds } from "@/lib/boxes/host-health";
 import { isUnderMaintenance } from "@/lib/boxes/presence";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import type { BoxHostHealth } from "@/types";
+
+// The thresholds and the verdict rule live with the presence writer's other
+// host facts; re-exported so the arbiter's callers and tests keep one import.
+export { DEFAULT_HEALTH_THRESHOLDS, loadHealthThresholds, type HealthThresholds } from "@/lib/boxes/host-health";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
 
@@ -75,32 +80,15 @@ export interface SlotDecision {
   detail?: string;
 }
 
-export interface HealthThresholds {
-  cpu_percent: number;
-  mem_percent: number;
-  swap_percent: number;
-  settling_seconds: number;
-  settling_max_starting: number;
-}
-
 /** The one default the whole codebase uses when `boxes.max_concurrent_containers` is null. */
 export const DEFAULT_MAX_CONCURRENT = 10;
 export const DEFAULT_OPERATOR_RESERVE = 1;
 /** Serial boots: at most this many `run` calls in flight per box (35–90 s boots beyond). */
 export const MAX_STARTS_IN_FLIGHT = 2;
-export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
-  cpu_percent: 90,
-  mem_percent: 92,
-  swap_percent: 60,
-  settling_seconds: 600,
-  settling_max_starting: 2,
-};
 const LIVE_CACHE_MS = 5_000;
-const THRESHOLDS_CACHE_MS = 60_000;
 
 const liveCache = new Map<string, { at: number; occupancy: LiveOccupancy }>();
 const startsInFlight = new Map<string, number>();
-let thresholdsCache: { at: number; value: HealthThresholds } | null = null;
 
 /** What the box reports right now (cached 5 s so a burst of claims reads once). */
 async function readLiveOccupancy(tunnelHostname: string): Promise<LiveOccupancy | null> {
@@ -138,23 +126,6 @@ function invalidateLiveOccupancy(tunnelHostname: string): void {
   liveCache.delete(tunnelHostname);
 }
 
-/** `runtime_settings.boxes.health_thresholds`, defaults for anything missing, cached 60 s. */
-export async function loadHealthThresholds(supabase: AdminClient): Promise<HealthThresholds> {
-  if (thresholdsCache && Date.now() - thresholdsCache.at < THRESHOLDS_CACHE_MS) return thresholdsCache.value;
-  const { data } = await supabase.from("runtime_settings").select("value").eq("key", "boxes.health_thresholds").maybeSingle();
-  const raw = (data?.value ?? {}) as Partial<Record<keyof HealthThresholds, unknown>>;
-  const pick = (k: keyof HealthThresholds) => (typeof raw[k] === "number" ? (raw[k] as number) : DEFAULT_HEALTH_THRESHOLDS[k]);
-  const value: HealthThresholds = {
-    cpu_percent: pick("cpu_percent"),
-    mem_percent: pick("mem_percent"),
-    swap_percent: pick("swap_percent"),
-    settling_seconds: pick("settling_seconds"),
-    settling_max_starting: pick("settling_max_starting"),
-  };
-  thresholdsCache = { at: Date.now(), value };
-  return value;
-}
-
 export interface SlotInput {
   box: BoxRow;
   dbId: string;
@@ -186,14 +157,8 @@ export function decideSlot(input: SlotInput): SlotDecision {
     return refuse("box_maintenance", box.maintenance_until ?? undefined);
   }
 
-  const host = live.host ?? box.host_health ?? null;
-  if (host) {
-    const trips: string[] = [];
-    if (host.cpu_percent != null && host.cpu_percent > thresholds.cpu_percent) trips.push(`cpu ${host.cpu_percent}% > ${thresholds.cpu_percent}%`);
-    if (host.mem_percent != null && host.mem_percent > thresholds.mem_percent) trips.push(`mem ${host.mem_percent}% > ${thresholds.mem_percent}%`);
-    if (host.swap_percent != null && host.swap_percent > thresholds.swap_percent) trips.push(`swap ${host.swap_percent}% > ${thresholds.swap_percent}%`);
-    if (trips.length) return refuse("box_unhealthy", trips.join(", "));
-  }
+  const health = assessHostHealth(live.host ?? box.host_health ?? null, thresholds);
+  if (health.verdict === "unhealthy") return refuse("box_unhealthy", health.over.join(", "));
   if (live.uptimeSeconds != null && live.uptimeSeconds < thresholds.settling_seconds && live.starting > thresholds.settling_max_starting) {
     return refuse("box_settling", `up ${Math.round(live.uptimeSeconds)} s, ${live.starting} starting`);
   }

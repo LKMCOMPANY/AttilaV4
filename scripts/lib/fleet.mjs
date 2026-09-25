@@ -10,6 +10,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { cfAccessHeaders, loadDotEnvLocal } from "./dotenv.mjs";
+import { discoverLanIp, manifestBoxes } from "../../infra/boxes/scripts/lib/lan.mjs";
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -47,9 +48,27 @@ export const ADBKEYBOARD_APK_URL =
 
 const cfHeaders = cfAccessHeaders();
 
+// LAN first, tunnel otherwise (25 Sep 2026): a box on the operator's LAN is
+// reached on http://<ip>:18182 straight from cbs_go — no CF hop, minutes
+// instead of hours for a fleet sweep. The address is discovered once per run
+// from the manifest identity (MAC + device_id), never configured. Proxy-only
+// paths (/healthz, /stream-ready, /proxy-test) live on 127.0.0.1 of the box
+// and are tunnel-only by construction. FORCE_TUNNEL=1 disables the LAN.
+const PROXY_ONLY = ["/healthz", "/stream-ready/", "/proxy-test/"];
+const lanIpByHost = new Map();
+async function lanIpFor(boxHost) {
+  if (lanIpByHost.has(boxHost)) return lanIpByHost.get(boxHost);
+  const row = manifestBoxes().find((m) => m.host === boxHost);
+  const ip = row ? await discoverLanIp(row).catch(() => null) : null;
+  lanIpByHost.set(boxHost, ip);
+  if (ip) console.log(`[fleet] ${boxHost} reached over the LAN (${ip})`);
+  return ip;
+}
+
 export async function boxFetch(boxHost, urlPath, init = {}) {
-  const url = `https://${boxHost}${urlPath}`;
-  const headers = { ...cfHeaders, ...(init.headers || {}) };
+  const lanIp = PROXY_ONLY.some((p) => urlPath.startsWith(p)) ? null : await lanIpFor(boxHost);
+  const url = lanIp ? `http://${lanIp}:18182${urlPath}` : `https://${boxHost}${urlPath}`;
+  const headers = { ...(lanIp ? {} : cfHeaders), ...(init.headers || {}) };
   if (init.method === "POST" && !headers["Content-Type"]) {
     headers["Content-Type"] = "application/json";
   }
@@ -157,7 +176,7 @@ async function supabaseFetch(pathAndQuery, init = {}) {
 /** All devices with their box + last-known ADBKeyboard state, ordered by name. */
 export async function fetchDevicesWithBoxes() {
   return supabaseFetch(
-    "devices?select=id,db_id,user_name,state,box_id,adbkeyboard_installed,adbkeyboard_enabled,adbkeyboard_checked_at," +
+    "devices?select=id,db_id,user_name,state,box_id,country,adbkeyboard_installed,adbkeyboard_enabled,adbkeyboard_checked_at," +
       "tiktok_installed,twitter_installed,boot_health," +
       "boxes(id,name,tunnel_hostname,max_concurrent_containers)&order=user_name.asc",
   );

@@ -38,7 +38,7 @@ export async function startContainer(deviceId: string) {
   try {
     const ctx = await requireActionSession();
     const result = await startContainerCore(ctx, deviceId);
-    if (!result.error && !result.atCapacity) revalidatePath("/dashboard/operator");
+    if (!result.error && !result.atCapacity && !result.refused) revalidatePath("/dashboard/operator");
     return result;
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error" };

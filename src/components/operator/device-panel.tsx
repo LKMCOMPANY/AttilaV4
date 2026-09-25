@@ -17,6 +17,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { slotRefusalMeta } from "@/lib/presentation/slot-refusal";
 import { useDeviceStream, type UseDeviceStreamReturn } from "@/hooks/use-device-stream";
 import { useAudioToggle } from "@/hooks/use-audio-toggle";
 import { isWebCodecsSupported, type StreamStatus } from "@/lib/streaming/scrcpy-stream";
@@ -127,6 +128,11 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
     if (result.error) {
       setOptimisticState(null);
       toast.error("Failed to start device", { description: result.error });
+    } else if (result.refused) {
+      // The arbiter said no for a reason closing a device cannot fix
+      // (maintenance window, overloaded host, boot storm): name it, revert.
+      setOptimisticState(null);
+      toast.warning(slotRefusalMeta(result.refused).label, { description: result.refusedDetail });
     } else if (result.atCapacity) {
       setOptimisticState(null);
       setCapacity({ max: result.max ?? 0, running: result.running ?? [] });
@@ -148,6 +154,9 @@ export function DevicePanel({ avatar }: DevicePanelProps) {
       const result = await startContainer(device.id);
       if (result.error) {
         toast.error("Failed to start device", { description: result.error });
+        setCapacity(null);
+      } else if (result.refused) {
+        toast.warning(slotRefusalMeta(result.refused).label, { description: result.refusedDetail });
         setCapacity(null);
       } else if (result.atCapacity) {
         // Another slot got taken in the meantime — refresh the list.

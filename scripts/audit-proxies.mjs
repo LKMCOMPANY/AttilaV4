@@ -27,7 +27,8 @@
  *   node scripts/audit-proxies.mjs --concurrency 4
  */
 
-import { fetchProxiedDevices, proxyTest, shell, mapWithConcurrency } from "./lib/fleet.mjs";
+import { fetchProxiedDevices, mapWithConcurrency, proxyTest } from "./lib/fleet.mjs";
+import { classifyRouting, describeRouting, expectedCountry, fetchExitGeo } from "./lib/proxy-probe.mjs";
 
 function parseArgs(argv) {
   const args = { runningOnly: false, concurrency: 3, geo: false };
@@ -37,47 +38,6 @@ function parseArgs(argv) {
     else if (argv[i] === "--concurrency") args.concurrency = Number(argv[++i]) || 3;
   }
   return args;
-}
-
-/**
- * The device's real egress, seen from inside the guest so the request actually
- * goes through the proxy. Returns `null` when the device cannot reach the
- * internet at all — which is itself the answer.
- */
-async function fetchExitGeo(boxHost, dbId) {
-  try {
-    const res = await shell(boxHost, dbId, "curl -s -m 12 https://ipinfo.io/json");
-    if (!res.ok) return null;
-    const body = JSON.parse(res.message.trim());
-    return body?.country ? { ip: body.ip, country: body.country, city: body.city } : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The country the avatar is supposed to live in. `user_name` carries it as a
- * prefix (FR90, US2, GB48) and is the value the provisioning flow keys on, so
- * it is the intent; `country` on the row is only filled for some devices.
- */
-function expectedCountry(device) {
-  const fromColumn = device.country?.trim().toUpperCase();
-  if (fromColumn && fromColumn.length === 2) return fromColumn;
-  const match = (device.user_name ?? "").match(/^([A-Za-z]{2})\d/);
-  return match ? match[1].toUpperCase() : null;
-}
-
-function classify(device, result) {
-  if (result.ok && typeof result.delayMs === "number") return { tag: "ROUTES", detail: `${result.delayMs} ms` };
-  const err = String(result.error ?? "unknown");
-  if (/engine_unreachable|ECONNREFUSED|503|timeout/i.test(err)) {
-    return device.state === "running"
-      ? { tag: "DOWN", detail: "engine down while running — investigate" }
-      : { tag: "stopped", detail: "not running (start to test)" };
-  }
-  if (/proxy_not_provisioned|404/i.test(err)) return { tag: "no-engine", detail: "no proxy engine provisioned" };
-  if (/unreachable/i.test(err)) return { tag: "DOWN", detail: "upstream proxy did not respond" };
-  return { tag: "FAIL", detail: err.slice(0, 80) };
 }
 
 async function main() {
@@ -92,7 +52,7 @@ async function main() {
   const rows = await mapWithConcurrency(devices, args.concurrency, async (d) => {
     const host = d.boxes.tunnel_hostname;
     const result = await proxyTest(host, d.db_id);
-    const row = { device: d, ...classify(d, result) };
+    const row = { device: d, ...classifyRouting(d, result) };
     // Only a routing proxy can be asked where it comes out.
     if (args.geo && row.tag === "ROUTES") {
       const exit = await fetchExitGeo(host, d.db_id);
@@ -116,14 +76,7 @@ async function main() {
       counts[r.tag] = (counts[r.tag] ?? 0) + 1;
       const name = (r.device.user_name || r.device.db_id).padEnd(10);
       const proxy = `${r.device.proxy_host}:${r.device.proxy_port}`.padEnd(28);
-      let geo = "";
-      if (r.geo) {
-        geo = r.geo.exit
-          ? `  exit=${r.geo.exit.country}/${r.geo.exit.city ?? "?"}` +
-            (r.geo.coherent ? "" : `  MISMATCH (expected ${r.geo.expected})`)
-          : "  exit=unreachable";
-      }
-      console.log(`  ${name} ${proxy} ${r.tag.padEnd(9)} ${r.detail}${geo}`);
+      console.log(`  ${name} ${proxy} ${describeRouting(r)}`);
     }
     console.log("");
   }

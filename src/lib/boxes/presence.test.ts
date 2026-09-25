@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import healthzFixture from "../../../infra/magicbox-proxy/test/fixtures/healthz.json";
+import { DEFAULT_HEALTH_THRESHOLDS } from "./host-health";
 import { decidePresence, firmwareDue, isUnderMaintenance, stripImageTag, type BoxObservation, type BoxPresenceRow } from "./presence";
+import type { ProxyHealthz } from "@/lib/box-api";
 
 const now = new Date("2026-09-25T20:00:00Z");
 const row = (over: Partial<BoxPresenceRow> = {}): BoxPresenceRow => ({
@@ -58,6 +61,40 @@ describe("decidePresence", () => {
     expect(firmwareDue(row(), now)).toBe(true);
     expect(firmwareDue(row({ firmware_checked_at: "2026-09-25T19:30:00Z" }), now)).toBe(false);
     expect(firmwareDue(row({ firmware_checked_at: "2026-09-25T18:30:00Z" }), now)).toBe(true);
+  });
+
+  it("stamps the arbiter's verdict on the host sample", () => {
+    const loaded = { ...answering, system: { cpu: 99.2, mem_percent: 61, swap_percent: 100 } };
+    expect(decidePresence(row(), loaded, now).patch.host_health).toMatchObject({ verdict: "unhealthy", over: ["cpu 99.2% > 90%", "swap 100% > 60%"] });
+    expect(decidePresence(row(), answering, now).patch.host_health).toMatchObject({ verdict: "unknown", over: [] });
+    expect(decidePresence(row(), loaded, now, { ...DEFAULT_HEALTH_THRESHOLDS, cpu_percent: 100, swap_percent: 100 }).patch.host_health).toMatchObject({ verdict: "ok" });
+  });
+
+  /**
+   * Replays `GET /healthz` as magicbox-proxy answers it
+   * (`infra/magicbox-proxy/test/fixtures/healthz.json`, asserted by the
+   * proxy's own contract test). Every variant must decode; `legacy_1_2_0` is
+   * what a not-yet-redeployed box still says and must keep the box online.
+   */
+  it("decodes every /healthz variant of the proxy fixture", () => {
+    const variants = healthzFixture.variants as Record<string, ProxyHealthz>;
+    expect(Object.keys(variants).sort()).toEqual(["api_unreachable", "api_unresolved", "legacy_1_2_0", "ok", "override"]);
+    const containers = { host_ip: "192.168.1.19", list: [] as never };
+
+    const ok = decidePresence(row(), { health: variants.ok, containers }, now);
+    expect(ok.patch).toMatchObject({ status: "online", lan_ip: "192.168.1.19", uptime_seconds: 4091.15, container_count: 0 });
+
+    // The observed address wins over the pinned one a stale drop-in would report.
+    expect(decidePresence(row(), { health: variants.override, containers }, now).patch.lan_ip).toBe("192.168.1.16");
+
+    const legacy = decidePresence(row(), { health: variants.legacy_1_2_0, containers }, now);
+    expect(legacy.patch).toMatchObject({ status: "online", lan_ip: "192.168.1.19", container_count: 0 });
+
+    // A degraded proxy still answers: the box is reachable, its lan_ip may be unknown.
+    const unresolved = decidePresence(row(), { health: variants.api_unresolved, containers: null }, now);
+    expect(unresolved.patch).toMatchObject({ status: "online" });
+    expect(unresolved.patch).not.toHaveProperty("lan_ip");
+    for (const source of healthzFixture.api_source_values) expect(typeof source).toBe("string");
   });
 
   it("helpers", () => {

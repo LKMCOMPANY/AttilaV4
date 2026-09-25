@@ -18,9 +18,14 @@
  *     what is ALREADY running (an operator may be streaming);
  *   - stops only what it started, so a device someone else is using stays up.
  *
+ * With `--with-proxy` the same boot also answers the proxy questions while the
+ * device is up (one boot instead of three sweeps): the configured proxy is
+ * mirrored into the DB (`readProxyConfig`), then routing and exit geo are
+ * probed (`probeRouting`). `--report <path>` writes the per-device rows as JSON.
+ *
  * Usage:
  *   node scripts/audit-device-health.mjs --box box-1.attila.army
- *   node scripts/audit-device-health.mjs --all --concurrency 8
+ *   node scripts/audit-device-health.mjs --all --concurrency 2 --with-proxy
  *   node scripts/audit-device-health.mjs --box box-1.attila.army --dry-run
  */
 
@@ -35,6 +40,8 @@ import {
   mapWithConcurrency,
   sleep,
 } from "./lib/fleet.mjs";
+import { describeRouting, probeRouting, readProxyConfig } from "./lib/proxy-probe.mjs";
+import { writeFile } from "node:fs/promises";
 
 // Android on these images boots in ~20-45s when healthy. 120s matches the
 // pipeline's own `ensureContainerReady` ceiling, so a device this sweep calls
@@ -45,9 +52,16 @@ const POLL_INTERVAL_MS = 5_000;
 // success and then dies. That is `unstable`, not `healthy`.
 const STABILITY_WATCH_MS = 20_000;
 const VMOS_MAX_RUNNING_PER_BOX = 10;
+// Boots contend for the host: median healthy boot 22–24 s alone against 93 s
+// at concurrency 9, which pushes healthy devices past the ceiling. Two cold
+// starts in flight per box is the fleet rule (box-slots.ts MAX_STARTS_IN_FLIGHT)
+// and the default here; `--concurrency` overrides it knowingly.
+const DEFAULT_STARTS_IN_FLIGHT = 2;
 
 function parseArgs(argv) {
-  const args = { box: null, all: false, concurrency: null, dryRun: false, recheck: false };
+  const args = {
+    box: null, all: false, concurrency: null, dryRun: false, recheck: false, withProxy: false, report: null,
+  };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--box") args.box = argv[++i];
@@ -55,6 +69,8 @@ function parseArgs(argv) {
     else if (a === "--concurrency") args.concurrency = Number(argv[++i]);
     else if (a === "--dry-run") args.dryRun = true;
     else if (a === "--recheck") args.recheck = true;
+    else if (a === "--with-proxy") args.withProxy = true;
+    else if (a === "--report") args.report = argv[++i];
     else {
       console.error(`Unknown argument: ${a}`);
       process.exit(1);
@@ -81,7 +97,7 @@ async function readBootCompleted(boxHost, dbId) {
  * Boot one device and classify it. Returns `{ health, bootMs }` and leaves the
  * container stopped if we were the ones who started it.
  */
-async function probeDevice(boxHost, device) {
+async function probeDevice(boxHost, device, { withProxy = false } = {}) {
   const { db_id: dbId } = device;
   const startedAt = Date.now();
 
@@ -106,14 +122,39 @@ async function probeDevice(boxHost, device) {
     return { health: "dead", bootMs: null, note: `no boot_completed in ${BOOT_TIMEOUT_MS / 1000}s` };
   }
 
+  // The device is up: ask the proxy questions now, while it can answer them.
+  // Also the stability watch — these probes take a few seconds, so only the
+  // remainder of the window is slept.
+  const probesStartedAt = Date.now();
+  const proxy = withProxy ? await probeProxyWhileUp(boxHost, device) : undefined;
+
   // Still alive a moment later? Then it is genuinely up, not crash-looping.
-  await sleep(STABILITY_WATCH_MS);
+  await sleep(Math.max(0, STABILITY_WATCH_MS - (Date.now() - probesStartedAt)));
   const stillUp = await readBootCompleted(boxHost, dbId);
   await stopQuietly(boxHost, dbId);
 
   return stillUp
-    ? { health: "healthy", bootMs, note: null }
-    : { health: "unstable", bootMs, note: "booted then died within the stability window" };
+    ? { health: "healthy", bootMs, note: null, proxy }
+    : { health: "unstable", bootMs, note: "booted then died within the stability window", proxy };
+}
+
+/**
+ * Configured proxy (mirrored to the DB) + routing + exit geo, on a device that
+ * has just reached boot_completed. Returns `{ config, routing }` where
+ * `routing` is null when nothing is configured.
+ */
+async function probeProxyWhileUp(boxHost, device) {
+  const config = await readProxyConfig(boxHost, device).catch((err) => ({ status: "error", detail: short(err) }));
+  const routing = config.status === "proxied"
+    ? await probeRouting(boxHost, device, { geo: true }).catch((err) => ({ tag: "FAIL", detail: short(err) }))
+    : null;
+  return { config, routing };
+}
+
+function describeProxy(proxy) {
+  if (!proxy) return "";
+  if (proxy.config.status !== "proxied") return `  proxy: ${proxy.config.status}`;
+  return `  proxy: ${proxy.config.detail} ${describeRouting(proxy.routing)}`;
 }
 
 async function stopQuietly(boxHost, dbId) {
@@ -128,7 +169,7 @@ function short(err) {
   return (err instanceof Error ? err.message : String(err)).slice(0, 120);
 }
 
-async function sweepBox(boxHost, devices, concurrency, dryRun) {
+async function sweepBox(boxHost, devices, { concurrency, dryRun, withProxy }) {
   console.log(`\n=== ${boxHost} — ${devices.length} device(s) ===`);
 
   let alreadyRunning;
@@ -143,7 +184,7 @@ async function sweepBox(boxHost, devices, concurrency, dryRun) {
   // our budget accordingly.
   const targets = devices.filter((d) => !alreadyRunning.has(d.db_id));
   const budget = Math.max(0, VMOS_MAX_RUNNING_PER_BOX - alreadyRunning.size);
-  const limit = Math.max(1, Math.min(concurrency ?? budget, budget));
+  const limit = Math.max(1, Math.min(concurrency ?? DEFAULT_STARTS_IN_FLIGHT, budget));
 
   if (alreadyRunning.size > 0) {
     console.log(`  ${alreadyRunning.size} already running (left untouched) → budget ${budget}`);
@@ -159,13 +200,14 @@ async function sweepBox(boxHost, devices, concurrency, dryRun) {
 
   let done = 0;
   const first = await mapWithConcurrency(targets, limit, async (device) => {
-    const verdict = await probeDevice(boxHost, device);
+    const verdict = await probeDevice(boxHost, device, { withProxy });
     done++;
     const ms = verdict.bootMs ? `${(verdict.bootMs / 1000).toFixed(0)}s` : "—";
     console.log(
       `  [${String(done).padStart(3)}/${targets.length}] ${device.db_id} ` +
         `${(device.user_name ?? "").padEnd(6)} ${verdict.health.padEnd(8)} ${ms}` +
-        (verdict.note ? `  (${verdict.note})` : ""),
+        (verdict.note ? `  (${verdict.note})` : "") +
+        describeProxy(verdict.proxy),
     );
     return { boxHost, device, ...verdict };
   });
@@ -180,7 +222,7 @@ async function sweepBox(boxHost, devices, concurrency, dryRun) {
   if (suspects.length) {
     console.log(`  — re-probing ${suspects.length} non-healthy device(s) serially —`);
     for (const [i, suspect] of suspects.entries()) {
-      const verdict = await probeDevice(boxHost, suspect.device);
+      const verdict = await probeDevice(boxHost, suspect.device, { withProxy });
       Object.assign(suspect, verdict);
       const ms = verdict.bootMs ? `${(verdict.bootMs / 1000).toFixed(0)}s` : "—";
       console.log(
@@ -234,7 +276,22 @@ async function main() {
   // Boxes sequentially: each one's ceiling is independent, but a serial sweep
   // keeps the log readable and the tunnel unstressed.
   for (const [host, list] of [...byBox].sort()) {
-    results.push(...(await sweepBox(host, list, args.concurrency, args.dryRun)));
+    results.push(...(await sweepBox(host, list, args)));
+  }
+
+  if (args.report) {
+    await writeFile(
+      args.report,
+      JSON.stringify(
+        results.map((r) => ({
+          box: r.boxHost, db_id: r.device.db_id, user_name: r.device.user_name ?? null,
+          health: r.health, boot_ms: r.bootMs, note: r.note ?? null, proxy: r.proxy ?? null,
+        })),
+        null,
+        2,
+      ),
+    );
+    console.log(`\nreport written: ${args.report}`);
   }
 
   if (!results.length) return;
@@ -260,6 +317,28 @@ async function main() {
     console.log("\nnot usable:");
     for (const r of broken) {
       console.log(`  ${r.device.db_id} ${(r.device.user_name ?? "").padEnd(6)} ${r.health}  ${r.note ?? ""}`);
+    }
+  }
+
+  if (args.withProxy) summarizeProxies(results);
+}
+
+function summarizeProxies(results) {
+  const probed = results.filter((r) => r.proxy);
+  const noProxy = probed.filter((r) => r.proxy.config.status === "no_proxy");
+  const down = probed.filter((r) => r.proxy.routing && r.proxy.routing.tag !== "ROUTES");
+  const geoChecked = probed.filter((r) => r.proxy.routing?.geo?.exit);
+  const mismatched = geoChecked.filter((r) => !r.proxy.routing.geo.coherent);
+  console.log("\n=== proxies (same boot) ===");
+  console.log(`config read: ${probed.length}   no proxy: ${noProxy.length}   not routing: ${down.length}   geo checked: ${geoChecked.length}   geo mismatch: ${mismatched.length}`);
+  const line = (r) => `  ${r.boxHost.split(".")[0]}/${r.device.user_name ?? r.device.db_id}`;
+  if (noProxy.length) console.log(`\nwithout a proxy (${noProxy.length}):\n${noProxy.map(line).join("\n")}`);
+  if (down.length) console.log(`\nnot routing (${down.length}):\n${down.map((r) => `${line(r)}  ${r.proxy.routing.tag} ${r.proxy.routing.detail}`).join("\n")}`);
+  if (mismatched.length) {
+    console.log(`\ngeo mismatch (${mismatched.length}):`);
+    for (const r of mismatched) {
+      const g = r.proxy.routing.geo;
+      console.log(`${line(r)}  expected ${g.expected}, exits ${g.exit.country}/${g.exit.city ?? "?"}`);
     }
   }
 }

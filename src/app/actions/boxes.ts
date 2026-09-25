@@ -197,6 +197,36 @@ export async function updateBox(
   return { error: null };
 }
 
+const maintenanceSchema = z.object({
+  id: z.string().uuid(),
+  /** Minutes from now; `null` closes the window. */
+  minutes: z.number().int().min(1).max(24 * 60).nullable(),
+});
+
+/**
+ * Open or close a box's maintenance window (`boxes.maintenance_until`). While
+ * open, the slot arbiter refuses `box_maintenance`, the reconcile leaves the
+ * status alone (a firmware flash reboots the host), the reaper skips the box
+ * and the operator start route refuses. Admin only.
+ */
+export async function setBoxMaintenance(
+  input: z.infer<typeof maintenanceSchema>
+): Promise<{ error: string | null; maintenance_until: string | null }> {
+  await requireAdmin();
+  const parsed = maintenanceSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0].message, maintenance_until: null };
+
+  const until = parsed.data.minutes == null
+    ? null
+    : new Date(Date.now() + parsed.data.minutes * 60_000).toISOString();
+  const supabase = await createClient();
+  const { error } = await supabase.from("boxes").update({ maintenance_until: until }).eq("id", parsed.data.id);
+  if (error) return { error: error.message, maintenance_until: null };
+
+  revalidatePath("/admin/infrastructure");
+  return { error: null, maintenance_until: until };
+}
+
 export async function deleteBox(
   id: string
 ): Promise<{ error: string | null }> {

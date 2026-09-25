@@ -1,0 +1,13 @@
+{
+  "refusals": {
+    "box_unreachable": { "label": "Box unreachable", "tone": "critical" },
+    "box_full": { "label": "Box full", "tone": "watch" },
+    "operator_reserve": { "label": "Slot kept for operators", "tone": "info" },
+    "campaign_priority": { "label": "Campaign has priority", "tone": "info" },
+    "starts_in_flight": { "label": "Boots in progress — retry shortly", "tone": "watch" },
+    "box_maintenance": { "label": "Box under maintenance", "tone": "info" },
+    "box_unhealthy": { "label": "Box overloaded", "tone": "critical" },
+    "box_settling": { "label": "Box settling after a restart", "tone": "watch" }
+  },
+  "unknownRefusal": { "tone": "muted" }
+}

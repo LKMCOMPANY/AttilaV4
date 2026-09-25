@@ -1,0 +1,13 @@
+{
+  "statuses": {
+    "online": { "label": "Online", "tone": "ok" },
+    "offline": { "label": "Offline", "tone": "critical" }
+  },
+  "verdicts": {
+    "ok": { "label": "Host healthy", "tone": "ok" },
+    "unhealthy": { "label": "Host overloaded", "tone": "critical" },
+    "unknown": { "label": "Host not sampled", "tone": "muted" }
+  },
+  "maintenance": { "label": "Under maintenance", "tone": "info" },
+  "unknownValue": { "tone": "muted" }
+}

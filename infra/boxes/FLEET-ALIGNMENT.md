@@ -199,6 +199,36 @@ full flash, erases data); kernel-only `boot-2.0.57-marsbox.img` (61 023 232 B,
 5 June); CBS `1.1.7.17.1` is 211 228 000 B. All three download URLs answered
 200 that evening.
 
+## Snapshot — 25 September 2026, Phase 3 (backend, 23:00–23:45 Paris)
+
+Commit `ad34715`, Render deploy `dep-darej7gu01pc73e4kuv0` built in 88 s and
+`live` at 21:39:03 UTC. Measured on the production database afterwards:
+
+- **One presence writer.** The first reconcile pass (21:39:01 UTC, three
+  seconds after `live`) wrote the observed facts on the four reachable boxes:
+  `lan_ip` (box-4 `192.168.1.237` — the DB had carried the pre-move `.32`
+  since the afternoon), `model L1`, `cbs_version` / `kernel_version` /
+  `default_image` (`firmware_checked_at` set, re-read hourly), and
+  `host_health` sampled every pass (`cpu 0.6–6.8 %`, `mem 2.5–10.2 %`,
+  `swap 0–0.9 %`, `mmc 7–27 %`, `ssd 10–75 %`, `running` / `starting`).
+  box-5 (unreachable) and box-6 (decommissioned row) are untouched: the
+  writer only records what it observed.
+- **Inventory.** The ghost `EDGEOFXMNKGJR87N` (box-1, US4 — in the DB since
+  the 14 September Sync, never on the box) was marked `removed` at 21:39:06
+  UTC by the worker; the admin Sync and the worker now share
+  `reconcileDeviceRows`. Live/DB inventory: 96/96, 57/57, 126/126, 73/73.
+- **check-drift** (exit 2, only gated items left): `lan_ip OK observed /
+  db` on the four boxes; still `[!]` box-1 SSD 75 % (reclaim pass is a
+  decision) and the box-4 orphan `EDGEUSBP66ZTYMNV` (gated); `[gated]` root
+  password SSH; `(i)` image / CBS / kernel drift for Phase 2.
+- **Fleet scripts over the LAN.** `scripts/lib/fleet.mjs` (`boxFetch`) and
+  `scripts/lib/box-ssh.mjs` (`runOverSsh`) resolve the box on the LAN by MAC +
+  `device_id` first and fall back to the tunnel; proxy-only paths (`/healthz`,
+  `/stream-ready/`, `/proxy-test/`) stay on the tunnel by construction. The
+  offline package audit of 352 devices on four boxes took **126 s** (it was a
+  tunnel job of many minutes): ADBKeyboard 338 (96 %), TikTok 144, X 144,
+  **208 devices with no social app** — box-3 alone has 107 of them.
+
 Run the read-only checker any time to regenerate the live picture:
 
 ```bash

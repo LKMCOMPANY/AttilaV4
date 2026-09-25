@@ -29,9 +29,8 @@ import {
   fetchRomStatus,
   runContainer,
   stopContainer,
-  fetchProxyConfig,
-  recordDeviceProxy,
 } from "./lib/fleet.mjs";
+import { readProxyConfig } from "./lib/proxy-probe.mjs";
 
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run");
@@ -79,16 +78,8 @@ async function auditDevice(dev) {
       if (!(await waitRomReady(host, db, BOOT_TIMEOUT_MS))) return { ...base(dev), status: "boot_timeout" };
     }
 
-    await sleep(1500); // let cbs settle the mihomo state before reading it
-    const cfg = await fetchProxyConfig(host, db).catch(() => null);
-
-    if (cfg && cfg.enabled && cfg.ip) {
-      if (!DRY_RUN) await recordDeviceProxy(dev.id, cfg);
-      return { ...base(dev), status: "proxied", detail: `${cfg.proxyType} ${cfg.ip}:${cfg.port}` };
-    }
-    // Genuinely no proxy (config missing or disabled).
-    if (!DRY_RUN) await recordDeviceProxy(dev.id, null);
-    return { ...base(dev), status: "no_proxy" };
+    const read = await readProxyConfig(host, dev, { dryRun: DRY_RUN });
+    return { ...base(dev), status: read.status, detail: read.status === "proxied" ? read.detail : undefined };
   } catch (err) {
     return { ...base(dev), status: "error", detail: err instanceof Error ? err.message : String(err) };
   } finally {

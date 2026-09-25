@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { DeviceItem } from "@/components/admin/device-item";
+import { BoxHostFacts } from "@/components/admin/box-host-facts";
 import type { DeviceAvatarAssignment } from "@/app/actions/avatars";
 import {
   RefreshCw,
@@ -185,6 +186,8 @@ export function BoxContent({
           {isSyncing ? "Syncing..." : "Sync"}
         </Button>
       </div>
+
+      <BoxHostFacts box={box} onUpdated={onUpdated} />
 
       {/* Assigned Accounts */}
       <div>

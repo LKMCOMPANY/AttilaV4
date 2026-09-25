@@ -28,6 +28,7 @@ import {
   type VmosNetInfo,
   type VmosSystemInfo,
 } from "@/lib/box-api";
+import { assessHostHealth, DEFAULT_HEALTH_THRESHOLDS, loadHealthThresholds, type HealthThresholds } from "@/lib/boxes/host-health";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import type { BoxHostHealth, BoxStatus } from "@/types";
 
@@ -73,11 +74,15 @@ export function stripImageTag(image: string | null | undefined): string | null {
   return image ? String(image).split(":")[0] : null;
 }
 
-function hostHealth(obs: BoxObservation, now: Date): BoxHostHealth | null {
+function hostHealth(obs: BoxObservation, now: Date, thresholds: HealthThresholds): BoxHostHealth | null {
   const sys = obs.system;
   if (!sys && !obs.containers) return null;
   const list = obs.containers?.list ?? [];
+  const sample = { cpu_percent: sys?.cpu ?? null, mem_percent: sys?.mem_percent ?? null, swap_percent: sys?.swap_percent ?? null };
+  const { verdict, over } = assessHostHealth(sample, thresholds);
   return {
+    verdict,
+    over,
     cpu_percent: sys?.cpu ?? null,
     mem_percent: sys?.mem_percent ?? null,
     swap_percent: sys?.swap_percent ?? null,
@@ -98,7 +103,12 @@ function hostHealth(obs: BoxObservation, now: Date): BoxHostHealth | null {
  *     which case the status is left alone (a firmware flash reboots the host
  *     and must not read as an outage, nor flip back mid-procedure).
  */
-export function decidePresence(row: BoxPresenceRow, obs: BoxObservation, now = new Date()): PresenceDecision {
+export function decidePresence(
+  row: BoxPresenceRow,
+  obs: BoxObservation,
+  now = new Date(),
+  thresholds: HealthThresholds = DEFAULT_HEALTH_THRESHOLDS,
+): PresenceDecision {
   const underMaintenance = isUnderMaintenance(row, now);
 
   if (!obs.health) {
@@ -118,7 +128,7 @@ export function decidePresence(row: BoxPresenceRow, obs: BoxObservation, now = n
   const lanIp = obs.net?.host_ip ?? obs.health.lan_ip ?? obs.containers?.host_ip ?? null;
   if (lanIp) patch.lan_ip = lanIp;
 
-  const health = hostHealth(obs, now);
+  const health = hostHealth(obs, now, thresholds);
   if (health) patch.host_health = health;
 
   if (obs.hardware) {
@@ -180,7 +190,8 @@ export async function observeBox(
     if (image !== undefined) obs.image = image;
   }
 
-  const decision = decidePresence(row, obs, now);
+  const thresholds = await loadHealthThresholds(supabase).catch(() => DEFAULT_HEALTH_THRESHOLDS);
+  const decision = decidePresence(row, obs, now, thresholds);
   if (Object.keys(decision.patch).length > 0) {
     await supabase.from("boxes").update(decision.patch).eq("id", row.id);
   }
