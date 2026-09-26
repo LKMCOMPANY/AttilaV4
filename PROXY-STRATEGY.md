@@ -300,10 +300,21 @@ below the route, so no client can write a proxy any other way.
   wrong-country exits) and **`GB41` got a GB/London port** (its avatar lives
   in the Emirates; UAE ports do not work at the provider, the operator chose a
   UK IP over none — row set to `GB`). 13 FR NodeMaven devices remain (the list
-  ran out: FR54–FR63, FR6, FR7, FR8 by name order). The 70 GB ports are
-  **kept for box-5** (56 GB devices), 59 free tonight; a US, ES, DE or CA
-  persona never gets a GB port — the accounts' country matters more than
-  retiring a provider, and the ones still on NodeMaven work.
+  ran out: FR54–FR63, FR6, FR7, FR8 by name order). The GB ports are **kept
+  for box-5** (56 GB devices), 58 free tonight; a US, ES, DE or CA persona
+  never gets a GB port — the accounts' country matters more than retiring a
+  provider, and the ones still on NodeMaven work.
+  **The second hundred was not new**: the full box-3 sweep that followed
+  showed 32 of its ports already held on box-3 (29 by DE / ES / US / CA
+  personas — the box's original provisioning, in-guest engine, wrong
+  countries), 12 on box-1, 2 on box-4, 1 on box-2. The planner had seen them
+  through the DB mirror and handed out only free ports — except **one**:
+  `CA1` had read "no proxy" at 13:10 and held `8138` all along, so `8138`
+  went to FR17 as well. Cause: `proxy_get` on the in-guest engine answers
+  "no proxy" for a configured device now and then (4 per box-3 pass, ES30 /
+  ES31 tonight). Fixed twice: CA1's proxy released (`proxy_stop`, no avatar,
+  wrong country anyway — FR17 keeps its proven port), and `readProxyConfig`
+  asks again 8 s later before clearing a row the mirror knows as proxied.
 - **Same evening — six dead devices of box-1 recreated** (`replace_devinfo`,
   corrupt `/data`, see `infra/boxes/MAINTENANCE.md` § 2): five boot again
   (ES8, FR4, US2, US42, US8), FR10 waits for its `starting` phase to clear.

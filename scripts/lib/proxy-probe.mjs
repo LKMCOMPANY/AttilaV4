@@ -28,6 +28,12 @@ export { describeRouting } from "./proxy-verdict.mjs";
 // cbs settles the mihomo state a moment after boot_completed; reading earlier
 // returns the previous container's config on some CBS builds.
 const PROXY_SETTLE_MS = 1_500;
+// `proxy_get` on an in-guest engine intermittently answers "no proxy" for a
+// device that is configured (4 devices per box-3 pass, measured 26 Sep 2026;
+// CA1 read empty at 13:10 and held port 8138 all along — the port was handed
+// to FR17 on the strength of that read). A device the mirror knows as proxied
+// is asked again before its row is cleared.
+const NO_PROXY_RECHECK_MS = 8_000;
 
 // An in-guest engine brings its TUN up 15–20 s after boot_completed (measured
 // on CA2, box-3, 26 Sep 2026); until then the guest egresses through the box.
@@ -41,7 +47,11 @@ const ENGINE_STARTING_POLL_MS = 5_000;
  */
 export async function readProxyConfig(boxHost, device, { dryRun = false } = {}) {
   await sleep(PROXY_SETTLE_MS);
-  const cfg = await fetchProxyConfig(boxHost, device.db_id).catch(() => null);
+  let cfg = await fetchProxyConfig(boxHost, device.db_id).catch(() => null);
+  if (!(cfg && cfg.enabled && cfg.ip) && device.proxy_host) {
+    await sleep(NO_PROXY_RECHECK_MS);
+    cfg = await fetchProxyConfig(boxHost, device.db_id).catch(() => null);
+  }
   if (cfg && cfg.enabled && cfg.ip) {
     if (!dryRun) await recordDeviceProxy(device.id, cfg);
     return { status: "proxied", detail: `${cfg.proxyType} ${cfg.ip}:${cfg.port}`, cfg };

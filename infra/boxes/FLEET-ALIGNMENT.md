@@ -328,7 +328,16 @@ US/New York City 48.47.5.11`).
   sshd refused the root password on two boxes for ~10 minutes then accepted
   it again (faillock-like; nothing changed on our side).
 - `check-drift`: hygiene converged 4/4, orphans none; `[!]` box-1 SSD 75 %
-  remains a decision; `(i)` image / CBS / kernel for box-1 (Phase 2 gated).
+  remains a decision (337 of 469 GB, 96 containers of 3–9.5 GB — usage, not
+  waste); `(i)` image / CBS / kernel for box-1 (Phase 2 gated).
+- **Full box-3 sweep (21:00–21:30, the last LAN hour)**: 126/126 healthy,
+  63 wrong-country exits, 6 without a proxy; the box-scoped item refreshed
+  with the list. It also showed the second proxy hundred was box-3's original
+  allocation in part (32 ports), and caught one collision my afternoon read
+  had created (`8138`: CA1 read "no proxy" at 13:10 — the in-guest engine's
+  intermittent answer — so FR17 got it too): CA1 released, the probe now
+  re-reads before clearing a mirrored proxy. Full account in
+  `PROXY-STRATEGY.md`.
 
 ## Snapshot — 26 September 2026, Phase 2 (vendor firmware, 07:55–08:35 Paris)
 
