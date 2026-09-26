@@ -7,7 +7,7 @@
  */
 
 import { boxFetch } from "./fetch";
-import { fetchContainerDetail } from "./containers";
+import { fetchContainerDetail, fetchContainerList } from "./containers";
 import { shellSafe } from "./shell";
 import type { VmosResponse } from "./types";
 
@@ -181,15 +181,26 @@ const RESTART_POLL_MS = 2_000;
  */
 export async function restartContainer(tunnelHostname: string, dbId: string): Promise<void> {
   await stopContainer(tunnelHostname, dbId);
+  // `list_names` is what the run endpoint judges the state on; get_android_detail
+  // already says "stopped" while the instance is still `stopping` for run.
   const deadline = Date.now() + RESTART_STOP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, RESTART_POLL_MS));
-    const detail = await fetchContainerDetail(tunnelHostname, dbId).catch(() => null);
-    const status = String(detail?.status ?? "");
-    if (status !== "running" && status !== "stopping") break;
+    const { list } = await fetchContainerList(tunnelHostname).catch(() => ({ list: [] as { db_id: string; state: string }[] }));
+    const state = String(list.find((c) => c.db_id === dbId)?.state ?? "");
+    if (state === "stopped" || state === "exited") break;
   }
-  await boxFetch(tunnelHostname, "/container_api/v1/run", {
-    method: "POST",
-    body: JSON.stringify({ db_ids: [dbId] }),
-  });
+  // The box can still answer 409 for a beat after listing `stopped`.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await boxFetch(tunnelHostname, "/container_api/v1/run", {
+        method: "POST",
+        body: JSON.stringify({ db_ids: [dbId] }),
+      });
+      return;
+    } catch (err) {
+      if (attempt >= 5 || !/409/.test(err instanceof Error ? err.message : "")) throw err;
+      await new Promise((r) => setTimeout(r, RESTART_POLL_MS));
+    }
+  }
 }
