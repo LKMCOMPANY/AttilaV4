@@ -36,6 +36,7 @@ days when its lease moved (25 September 2026).
 | `scripts/remote/converge-host.sh` | What runs ON the box, as root, during a deploy |
 | `scripts/check-drift.mjs` + `scripts/lib/{env,lan,host,vendor,render}.mjs` | Read-only: report every box's drift vs this repo, the DB and the vendor targets |
 | `../../scripts/box-power.mjs` | Move a box: pause, stop containers one by one, `GET /v1/shutdown` |
+| `ADD-A-BOX.md` | Runbook: a new box from the carton to job-capable devices, in dependency order |
 | `MAINTENANCE.md` | Runbook: disk, inventory, scrcpy, streams, vendor layer, proxies, moving a box |
 | `FLEET-ALIGNMENT.md` | Dated snapshots of the fleet and the gated actions |
 
@@ -138,6 +139,10 @@ box; the SSH password, the CF Access token and the Cloudflare API token are
 read from env / a gitignored `.env` (see `.env.example`).
 
 ## One-time bootstrap (a brand-new box)
+
+The whole sequence — identity, tunnel, converge, DB row, devices, hand-over —
+is [`ADD-A-BOX.md`](ADD-A-BOX.md). What follows is the one prerequisite that
+predates it.
 
 `deploy.sh` needs either the LAN (box on your network, root password) or
 SSH-through-Access, which needs three things in place first: the DNS record

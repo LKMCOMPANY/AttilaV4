@@ -29,6 +29,7 @@ Read these in order before touching anything in this repo.
 | `GORGONE-INGESTION.md` | The webhook + sweep that feeds posts into the pipeline |
 | `LLM-ALERIA.md` | The Aleria LLM provider used for analyst + writer |
 | `infra/boxes/README.md` | The fleet IaC: manifest (identity, no IP), LAN-first transport, what `deploy.sh` converges, what `check-drift.mjs` fails on |
+| `infra/boxes/ADD-A-BOX.md` | **Adding a box** — identity, tunnel, `deploy.sh`, DB row, devices, hand-over, in dependency order; the Cloudflare side of a new tunnel is marked unverified until played on a real box |
 | `infra/boxes/MAINTENANCE.md` | **Anything about a box itself** — moving a box, disk, boot health, device provisioning, scrcpy tuning, stream diagnosis, vendor upgrades, proxy hygiene |
 | `infra/boxes/FLEET-ALIGNMENT.md` | Dated fleet snapshots (25 September 2026: Phase 0 and Phase 1) and the gated actions |
 | `PROXY-STRATEGY.md` | Proxy assignment, testing, and the exit-IP geo check |
