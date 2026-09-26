@@ -69,13 +69,21 @@ async function main() {
   const tally = { rows: rows.length, findings: 0, opened: 0, refreshed: 0, resolved: 0, noAccount: [] as string[] };
   const { perDevice, perBox } = planFindings(rows, boxThreshold);
 
-  // Devices with nothing left to report: close what an earlier sweep opened.
-  const flagged = new Set([...perDevice.map((p) => p.row.db_id), ...perBox.flatMap((b) => b.findings.map((f) => f.row.db_id))]);
+  // Per reason, close what an earlier sweep opened and this one no longer
+  // finds: a device that boots again but has no proxy yet keeps its proxy
+  // item and loses its boot one (FR10, 26 September 2026 — skipping the whole
+  // device left a `boot_dead` item on a phone that had just been rebuilt).
+  const REASONS = ["boot_dead", "proxy_incoherent"] as const;
+  const foundByDbId = new Map<string, Set<string>>();
+  for (const { row, finding } of [...perDevice, ...perBox.flatMap((b) => b.findings)]) {
+    if (!foundByDbId.has(row.db_id)) foundByDbId.set(row.db_id, new Set());
+    foundByDbId.get(row.db_id)!.add(finding.reason);
+  }
   for (const row of rows) {
-    if (flagged.has(row.db_id)) continue;
     const device = byDbId.get(row.db_id);
     if (!device?.account_id || dryRun) continue;
-    tally.resolved += await resolveAttentionForTarget(supabase, deviceTarget(device as Device), "reprobe", ["boot_dead", "proxy_incoherent"]);
+    const gone = REASONS.filter((r) => !foundByDbId.get(row.db_id)?.has(r));
+    if (gone.length) tally.resolved += await resolveAttentionForTarget(supabase, deviceTarget(device as Device), "reprobe", gone);
   }
   const record = async (input: Parameters<typeof openAttention>[1]) => {
     if (dryRun) return;

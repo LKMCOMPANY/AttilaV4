@@ -197,8 +197,13 @@ modes; the measurements above are the bill. From here on:
    the box's status, and hands out only free ones; a device keeps its own at
    its turn whatever the sort order. `--reclaim-offline` is the one explicit
    way to re-purpose a list recorded on an offline box, and the run says how
-   many it reclaimed. A device the sweep recorded `dead` is never booted for
-   a proxy (it sits in `starting` for hours and leaks nothing).
+   many it reclaimed; `--reclaim-from <box>` does it for one named box
+   whatever its status, and only for its *contested* holdings (the outside
+   holder keeps the port; a port the box holds alone is its own). A device
+   the sweep recorded `dead` is never booted for a proxy (it sits in
+   `starting` for hours and leaks nothing). Taking a proxy **away** is its
+   own tool, `scripts/release-proxies.ts` — contested holdings of one box,
+   or named devices; never a device with an avatar unless said so.
 2. **One profile, written by one function** — `proxySetPayload()` in
    `src/lib/box-api/proxy.ts`, used by the operator route and by the fleet
    migration alike: `engineType 1` (host-side mihomo — routes from the first
@@ -322,9 +327,16 @@ below the route, so no client can write a proxy any other way.
   proxy and no port of their country exists — the sweep now opens a
   `proxy_incoherent` "has no proxy" item for a device that boots without one
   (`sweep-findings.mjs`), five opened.
-- **box-5**: `maintenance_until = 2027-12-31` set on its row (the arbiter
-  refuses every start of ours the day it answers again); its power-on
-  protocol is in `infra/boxes/MAINTENANCE.md` § 6.
+- **box-5, back the same night (22:30)** — plugged in by the operator, found
+  on the LAN, 100 containers stopped, converged (`deploy.sh 5`), then its
+  proxies: **57 devices on their own dedicated port, proven** (56 GB →
+  GB/London; FR65, the one FR avatar, on `8001` taken back from box-3's
+  parked probe) with `--reclaim-from box-5.attila.army` — its contested
+  holdings not reserved for it, a port it holds alone kept — and **42
+  devices released** (`release-proxies.ts`: 27 FR, 10 US, 5 `CN`-labelled,
+  no avatar) so no dedicated IP has two holders any more. The full sequence
+  is `infra/boxes/MAINTENANCE.md` § 6. What box-5 still needs from the order:
+  FR 28 (27 + the dead FR67), US 10.
 
 What to order to finish (26 September 2026, night; the four online boxes +
 box-5's personas, +10 %):
@@ -338,11 +350,14 @@ box-5's personas, +10 %):
 | CA | 5 | **6** | CA5 NodeMaven, 3 wrong exits on box-3, CA1 spare |
 | **total** | **269** | **296** | GB is done: 59 GB ports free, 56 of them box-5's |
 
-Where the online fleet stands after this day (352 devices): **184 on the
-list / Oxylabs dedicated, 155 on NodeMaven** (US 94, ES 35, FR 13, DE 12,
-CA 1 — all on the one profile, all proven), 13 without a proxy (8 spares
-without an avatar, 5 recreated tonight), 1 dead (FR10, recreation pending),
-**142 job-capable** (boots + IME + at least one social app).
+Where the fleet stands at the end of the day (5 boxes online, 452 devices):
+**243 on dedicated Oxylabs ports, 155 on NodeMaven** (US 94, ES 35, FR 13,
+DE 12, CA 1 — all on the one profile, all proven), 54 without a proxy (42 on
+box-5 waiting for FR / US ports, 6 on box-3 — four US spares, CA1 and the
+parked probe released tonight — and the 6 recreated on box-1; only those six
+carry an avatar), 1 dead (FR67, box-5),
+**146 job-capable** (boots + IME + at least one social app). No dedicated IP
+has two holders.
 
 `--reclaim-offline` is what made the first list usable (box-5 held all 100
 ports on paper) and what makes box-5's re-provisioning mandatory before it

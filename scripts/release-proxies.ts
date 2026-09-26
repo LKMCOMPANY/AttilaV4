@@ -5,6 +5,11 @@
  * a shared IP would tie two accounts together (box-5 back online on 26
  * September 2026: 100 rows on the ports the online fleet had taken over).
  *
+ * Scope: the devices of one box whose `host:port` another device of the
+ * fleet holds too (the DB mirror) — a CONTESTED proxy; or the devices named
+ * with `--names`, contested or not. A dedicated port a device holds alone is
+ * never touched without its name.
+ *
  * Per device, two in flight per box: boot → `proxy_stop` (product code,
  * `clearProxyConfig`) → read back until the device reports no proxy → mirror
  * `devices.proxy_*` to null → stop (only what we started). A device that
@@ -14,13 +19,14 @@
  * are left alone.
  *
  * Usage (from Attila V4/):
- *   npx tsx scripts/release-proxies.ts --box box-5.attila.army --dry-run
- *   npx tsx scripts/release-proxies.ts --box box-5.attila.army --names FR64,US70
+ *   npx tsx scripts/release-proxies.ts --box box-5.attila.army --dry-run          # contested proxies only
+ *   npx tsx scripts/release-proxies.ts --box box-5.attila.army --names FR64,US70  # these, whatever they hold
  *   npx tsx scripts/release-proxies.ts --box box-3.attila.army --names parked_box3_8001 --report out.json
  */
 
 import { writeFile } from "node:fs/promises";
-import { fetchBusyDeviceIds, fetchDevicesOnOnlineBoxes, fetchRunningDbIds, mapWithConcurrency, runContainer, stopContainer, waitBootCompleted } from "./lib/fleet.mjs";
+import { fetchBusyDeviceIds, fetchDevicesOnOnlineBoxes, fetchProxiedDevices, fetchRunningDbIds, mapWithConcurrency, runContainer, stopContainer, waitBootCompleted } from "./lib/fleet.mjs";
+import { proxyKey } from "./lib/proxy-assignment.mjs";
 import { readProxyConfig, waitProxyService } from "./lib/proxy-probe.mjs";
 import { loadDotEnvLocal } from "./lib/dotenv.mjs";
 
@@ -84,16 +90,26 @@ async function releaseOne(host: string, d: DeviceRow, alreadyRunning: Set<string
 async function main() {
   const args = parseArgs(process.argv);
   loadDotEnvLocal();
-  const [all, busy] = await Promise.all([fetchDevicesOnOnlineBoxes() as Promise<DeviceRow[]>, fetchBusyDeviceIds()]);
+  const [all, holders, busy] = await Promise.all([
+    fetchDevicesOnOnlineBoxes() as Promise<DeviceRow[]>,
+    fetchProxiedDevices() as Promise<{ id: string; proxy_host: string | null; proxy_port: number | null }[]>,
+    fetchBusyDeviceIds(),
+  ]);
   let devices = all.filter((d) => d.boxes.tunnel_hostname === args.box && d.state !== "removed" && !busy.has(d.id) && d.proxy_host);
   if (args.names) devices = devices.filter((d) => args.names!.has(d.user_name ?? ""));
+  else {
+    // Contested only: the same host:port on more than one device of the fleet.
+    const holdersByKey = new Map<string, number>();
+    for (const h of holders) if (h.proxy_host && h.proxy_port) holdersByKey.set(proxyKey(h.proxy_host, h.proxy_port), (holdersByKey.get(proxyKey(h.proxy_host, h.proxy_port)) ?? 0) + 1);
+    devices = devices.filter((d) => (holdersByKey.get(proxyKey(d.proxy_host!, d.proxy_port!)) ?? 0) > 1);
+  }
   const dead = devices.filter((d) => d.boot_health === "dead");
   devices = devices.filter((d) => d.boot_health !== "dead");
   const withAvatar = await avatarDeviceIds(devices.map((d) => d.id));
   const kept = args.withAvatars ? [] : devices.filter((d) => withAvatar.has(d.id));
   if (!args.withAvatars) devices = devices.filter((d) => !withAvatar.has(d.id));
 
-  console.log(`=== proxy release on ${args.box} — ${devices.length} device(s) to release ===`);
+  console.log(`=== proxy release on ${args.box} — ${devices.length} device(s) to release (${args.names ? "named" : "contested proxies only"}) ===`);
   if (kept.length) console.log(`  kept (carry an avatar, --with-avatars to include): ${kept.map((d) => d.user_name ?? d.db_id).join(", ")}`);
   if (dead.length) console.log(`  known dead, left alone: ${dead.map((d) => d.user_name ?? d.db_id).join(", ")}`);
   for (const d of devices) console.log(`  ${(d.user_name ?? d.db_id).padEnd(10)} releases ${d.proxy_host}:${d.proxy_port}`);

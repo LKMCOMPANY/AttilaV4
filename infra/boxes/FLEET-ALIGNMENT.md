@@ -339,6 +339,46 @@ US/New York City 48.47.5.11`).
   re-reads before clearing a mirrored proxy. Full account in
   `PROXY-STRATEGY.md`.
 
+## Snapshot — 26 September 2026, night (22:30–00:20 Paris): box-5 back, end of session
+
+- **box-5** plugged in by the operator; found on the LAN by the `:18182`
+  sweep (`E1.01`, `f4ec4cf1de69314e`, manifest filled), 100 containers
+  stopped on arrival. `deploy.sh 5` in 66 s (proxy 1.2.0 → 1.3.3, Node 20 →
+  24, cloudflared 2026.6.1 → 2026.9.3, `marsbox` → `box-5`, Europe/Paris,
+  hygiene, sshd IPv4-only, fleet key), unused image pruned (3.2 GB),
+  `check-drift`: **hygiene 5/5, its model's firmware baseline met**
+  (`1.1.6.29.1` / `2.0.57_k1`), inventory 100/100. Package audit 95/100 IME,
+  5 with a social app; scrcpy conf already the fleet's.
+- **Its proxies**: 57 devices on their own dedicated port, proven (56 GB →
+  GB/London, FR65 → FR/Paris on `8001` taken back from box-3's parked probe);
+  42 devices with no port of their country released from the shared ports
+  (`release-proxies.ts`, none with an avatar). Sweep after: **99/99 boot
+  (median 15 s), 57 exits, 0 mismatch, 0 unproxied**; one box-scoped item for
+  the 42 without a proxy. Maintenance window closed at 00:15. Fleet-wide, no
+  dedicated port has two holders left (FR67, dead, holds `8003` on paper).
+- **Product fix on the way**: a box answering under an open maintenance
+  window stayed `offline` and out of every fleet script — presence now says
+  `online` (the window is the arbiter's gate), deployed `ead9e5c`.
+- **Tooling fixes on the way**: `--reclaim-from` reclaims contested holdings
+  only (its first version let GB52's retry take GB100's port written minutes
+  before — caught by the collision check); `record-sweep-attention` resolves
+  per reason (FR10 rebuilt kept a `boot_dead` item because a proxy finding
+  remained).
+- **FR10 recreated** once its `starting` phase cleared (~3 h): boots in
+  15 s, IME installed, no app, no proxy. All six dead devices of box-1 are
+  back.
+- **Fleet, end of session (5 boxes online, 452 devices)**: 243 on dedicated
+  Oxylabs ports, 155 on NodeMaven (one profile, proven), 54 without a proxy
+  (42 on box-5, 6 on box-3, the 6 recreated on box-1 — only those six carry
+  an avatar), 1 dead (FR67, box-5), **146 job-capable**. Open
+  attention: 37 (19 `account_missing`, 9 `proxy_incoherent` incl. the two
+  box items, 5 `suspended_decision`, 2 `needs_login`, 2 `app_outdated`).
+- **Quality gates at close**: web `npm run check` 0 errors, 211 tests, `npm
+  run build` exit 0, Render live; Mac `make lint` 0 violations in 342 files, `make test` 323 tests 0 failures, `make
+  build` exit 0. Supabase security advisors: the three pre-existing WARNs
+  (`SECURITY DEFINER` functions callable from the API, leaked-password
+  protection off) — § F below, untouched tonight.
+
 ## Snapshot — 26 September 2026, Phase 2 (vendor firmware, 07:55–08:35 Paris)
 
 GO given at 07:56. Three L1 boxes brought to the vendor's last L1 targets,

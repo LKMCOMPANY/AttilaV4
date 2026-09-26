@@ -172,6 +172,17 @@ rest).
   with more than two containers booting is refused as `box_settling` by the
   slot arbiter — expected, not a fault.
 
+## A box that comes back, rather than a new one
+
+Everything above applies, minus § 2 (its tunnel exists), plus one guard
+**before it is plugged in**: open a maintenance window on its row
+(`maintenance_until`, admin page › box) so the slot arbiter refuses every
+start of ours while its proxies are re-proven — its dedicated IPs may have
+been given to other devices meanwhile. It still reads `online` the moment it
+answers (the window is a gate, not a status). Then stop what VMOS brings
+back, `deploy.sh N`, and the proxy pass with `--reclaim-from` — the whole
+sequence as run on box-5 on 26 September 2026 is `MAINTENANCE.md` § 6.
+
 ## What is not in this runbook, on purpose
 
 - Vendor firmware upgrades: per model, one-way, canary first, a written vendor

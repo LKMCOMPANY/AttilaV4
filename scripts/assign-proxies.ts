@@ -16,12 +16,13 @@
  * proxy of its country. A proxy another device already holds — on ANY box,
  * offline ones included — is never handed out: a dedicated IP shared by two
  * devices ties two accounts together. `--reclaim-offline` releases the
- * proxies held by devices of OFFLINE boxes (a list re-purposed from a box
- * that will be re-provisioned before it ever starts again) and says how many;
- * `--reclaim-from <box>` does the same for one named box whatever its status
- * (box-5 back online on 26 September 2026, its 100 rows still on the ports
- * the online fleet had taken over — its devices get new ports, the others
- * keep theirs).
+ * CONTESTED proxies held by devices of OFFLINE boxes (a list re-purposed from
+ * a box that will be re-provisioned before it ever starts again) and says how
+ * many; `--reclaim-from <box>` does the same for one named box whatever its
+ * status (box-5 back online on 26 September 2026, its 100 rows still on the
+ * ports the online fleet had taken over). Contested means the same host:port
+ * on another device too: the holder outside the reclaimed scope keeps it,
+ * else the first by name; a port the reclaimed box holds alone stays its own.
  * A device whose country has no proxy left is listed, not touched. `--box`,
  * `--names` and `--countries` narrow the run; names are NOT unique across
  * boxes (US100 lives on box-3 and box-4), so a name may be box-qualified:
@@ -230,13 +231,23 @@ async function main() {
   let reclaimed = 0;
   const reclaimedFrom = (h: ProxyHolder) =>
     (args.reclaimOffline && h.boxes?.status === "offline") || (args.reclaimFrom !== null && h.boxes?.tunnel_hostname === args.reclaimFrom);
+  // Only a CONTESTED holding is reclaimed — the same host:port on another
+  // device too, i.e. a list re-purposed while the box was away. A port the
+  // reclaimed box holds alone is its own (GB52's retry took GB100's port
+  // written minutes earlier, 26 September 2026, when every holding was skipped).
+  // Who keeps a contested port: a holder outside the reclaimed scope if there
+  // is one, else the first reclaimed holder by name (holders come sorted by
+  // user_name) — the others are reclaimed and get a new port at their turn.
+  const keyOf = (h: ProxyHolder) => (h.proxy_host && h.proxy_port ? proxyKey(h.proxy_host, h.proxy_port) : null);
+  const outsideHolder = new Set(holders.filter((h) => keyOf(h) && !reclaimedFrom(h)).map((h) => keyOf(h) as string));
   for (const h of holders) {
-    if (!h.proxy_host || !h.proxy_port) continue;
-    if (reclaimedFrom(h)) {
+    const key = keyOf(h);
+    if (!key) continue;
+    if (reclaimedFrom(h) && (outsideHolder.has(key) || reserved.has(key))) {
       reclaimed++;
       continue;
     }
-    reserved.set(proxyKey(h.proxy_host, h.proxy_port), h.id);
+    reserved.set(key, h.id);
   }
   const reclaiming = args.reclaimOffline || args.reclaimFrom !== null;
 

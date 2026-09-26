@@ -226,7 +226,9 @@ regress on them:
  **One writer of a box's presence**: `src/lib/boxes/presence.ts`
  (`observeBox` / `markBoxUnreachable`, decision `decidePresence()`) owns
  `boxes.status`, the *observed* `lan_ip`, uptime, container count, the host
- sample and the firmware facts; `src/lib/boxes/device-inventory.ts` owns
+ sample and the firmware facts — a box that answers is `online` whatever the
+ maintenance window (the window is the arbiter's gate, not a status; only a
+ *silent* box keeps its status under a window); `src/lib/boxes/device-inventory.ts` owns
  running / stopped / **removed** / restored. Reconcile, admin Sync, box
  creation and the reaper all call them — never write `boxes.status` or
  `devices.state = removed` anywhere else.

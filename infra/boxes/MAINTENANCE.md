@@ -508,31 +508,44 @@ for this: it geolocates the configured proxy hostname — `disp.oxylabs.io`
 resolves to the dispatcher in Falkenstein — rather than the session's egress.
 Only a request made from inside the guest traverses the proxy.
 
-### box-5 power-on protocol (written 26 September 2026, to run once)
+### A box back from days off, its proxies taken over meanwhile — box-5, 26 September 2026
 
-box-5 has been off since 21 September. Its 100 containers are configured on
+box-5 was off from 21 to 26 September. Its 100 containers were configured on
 Oxylabs ports `8001–8100` — the same dedicated IPs that 170 devices of the
-online boxes now hold and prove daily. Two accounts behind one dedicated IP is
-the one thing the proxy method forbids, so **the box must not run a container
-before its proxies are rewritten**, and VMOS restarts at boot every container
-that was running when the power went. Guards already in place: the row carries
-`maintenance_until = 2027-12-31` (the slot arbiter refuses every start of ours,
-`box_maintenance`); the planner reserves the old ports for their online holders.
-On the day:
+online boxes had taken over and proved meanwhile. Two accounts behind one
+dedicated IP is the one thing the proxy method forbids, so **the box must not
+run a container before its proxies are rewritten**, and VMOS restarts at boot
+every container that was running when the power went. The sequence, as run
+(22:30–23:45 Paris, over the LAN):
 
-1. Plug the box in (LAN, DHCP). Watch `list_names` over the LAN as soon as
-   `:18182` answers; **stop every container VMOS brings back** (`POST
-   /container_api/v1/stop`, then again for those that reach `running` later).
-2. `./scripts/deploy.sh 5` (it has missed the IaC since 25 September:
-   proxy 1.3.3, sshd IPv4-only, hygiene) and `check-drift.mjs`.
-3. `npx tsx scripts/assign-proxies.ts --csv <list> --box box-5.attila.army
-   --dry-run` — the second hundred of the list (`8101–8200`: GB 70, FR 30) was
-   kept for it: 56 GB devices fit the GB ports; the FR ports went to live FR
-   accounts of the online boxes first (15 of 30 on 26 September), the rest of
-   its 29 FR, its 10 US and 5 `CN` probes wait for the order. Then the run,
-   two in flight, restart-then-prove like everywhere else.
-4. A device that still has no port of its country gets `proxy_stop` (an
-   unproxied boot leaks the office address, a shared dedicated IP ties two
-   accounts — the first is the lesser evil for a device without an account;
-   for the 5 with an avatar, wait for the port).
-5. Only then clear `maintenance_until` (admin page › box › maintenance window).
+1. Guard first, before the box is even plugged: `maintenance_until` far in the
+   future on its row — the slot arbiter refuses every start of ours
+   (`box_maintenance`). Since 26 September a box that answers under an open
+   window still reads `online` (the window is a gate, not a status), so the
+   fleet scripts see it.
+2. Plug it in (LAN, DHCP). Find it by the `:18182` sweep (`get_hardware_cfg`
+   → `device_id`, MAC; fill the manifest), watch `list_names` and **stop
+   every container VMOS brings back** — box-5 came back with 100 stopped,
+   nothing to stop.
+3. `./scripts/deploy.sh 5` (proxy 1.2.0 → 1.3.3, Node 20 → 24, cloudflared,
+   hostname, hygiene, sshd IPv4-only, fleet key; 66 s), `GET /v1/prune_images`
+   for the unused image, `check-drift.mjs` (hygiene 5/5, its model's firmware
+   baseline met), offline package audit, scrcpy check.
+4. `assign-proxies.ts --csv <list> --box box-5.attila.army --reclaim-from
+   box-5.attila.army`: its **contested** holdings are not reserved for it
+   (the outside holder keeps the port), so its devices take free ports of
+   their country — 56 GB + FR65 (the one FR avatar; its port `8001` first
+   released from box-3's parked probe with `release-proxies.ts`). 57/57
+   proven on the same boot (GB52 needed a second pass). A port the box holds
+   alone stays its own: the first version of `--reclaim-from` skipped every
+   holding and GB52's retry took GB100's port written minutes before —
+   caught by the collision check, fixed the same hour.
+5. `release-proxies.ts --box box-5.attila.army`: the 42 devices with no port
+   of their country (27 FR, 10 US, 5 `CN`-labelled, none with an avatar) give
+   up their shared ports — an unproxied boot leaks the office address, a
+   shared dedicated IP ties two accounts; the first is the lesser evil for a
+   device without an account. Devices with an avatar are never released
+   without `--with-avatars`.
+6. Sweep (`audit-device-health.mjs --with-proxy --recheck`) so `boot_health`
+   and the attention items reflect the box; only then clear
+   `maintenance_until` (admin page › box › maintenance window).
