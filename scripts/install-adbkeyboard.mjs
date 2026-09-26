@@ -44,6 +44,7 @@ import {
   mapWithConcurrency,
   ADBKEYBOARD_APK_URL,
   ADBKEYBOARD_IME,
+  waitBootCompleted,
 } from "./lib/fleet.mjs";
 
 // ---------------------------------------------------------------------------
@@ -55,7 +56,6 @@ const CONTAINER_START_POLL_MS = 2000;
 const CONTAINER_START_TIMEOUT_MS = 120_000;
 const APK_INSTALL_POLL_MS = 3000;
 const APK_INSTALL_TIMEOUT_MS = 180_000;
-const POST_BOOT_WAIT_MS = 25_000;
 const POST_INSTALL_WAIT_MS = 2000;
 const NETWORK_CHECK_TIMEOUT_MS = 60_000;
 const APK_INSTALL_MAX_ATTEMPTS = 2;
@@ -212,8 +212,13 @@ async function processDevice(device) {
     if (!wasRunning) await updateDeviceState(device.id, "running");
 
     if (!wasRunning) {
-      logFor("BOOT", dbId, `wait ${POST_BOOT_WAIT_MS}ms for system boot`);
-      await sleep(POST_BOOT_WAIT_MS);
+      // The fleet's one boot wait (sys.boot_completed, 120 s ceiling) instead
+      // of a fixed pause: 10 s boxes no longer wait 25 s, slow boots no longer
+      // get pm called too early.
+      logFor("BOOT", dbId, "wait for sys.boot_completed");
+      const bootMs = await waitBootCompleted(boxHost, dbId);
+      if (bootMs === null) throw new Error("no boot_completed within the ceiling");
+      logFor("BOOT", dbId, `booted in ${(bootMs / 1000).toFixed(0)}s`);
     }
 
     if (await isAdbKeyboardInstalled(boxHost, dbId)) {

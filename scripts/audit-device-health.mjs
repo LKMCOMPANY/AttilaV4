@@ -35,24 +35,21 @@
  */
 
 import {
+  BOOT_TIMEOUT_MS,
   fetchDevicesWithBoxes,
   fetchBusyDeviceIds,
   fetchRunningDbIds,
   runContainer,
   stopContainer,
-  shell,
+  readBootCompleted,
   recordDeviceBootHealth,
   mapWithConcurrency,
   sleep,
+  waitBootCompleted,
 } from "./lib/fleet.mjs";
 import { describeRouting, probeRouting, readProxyConfig } from "./lib/proxy-probe.mjs";
 import { writeFile } from "node:fs/promises";
 
-// Android on these images boots in ~20-45s when healthy. 120s matches the
-// pipeline's own `ensureContainerReady` ceiling, so a device this sweep calls
-// dead is exactly a device the pipeline would fail on.
-const BOOT_TIMEOUT_MS = 120_000;
-const POLL_INTERVAL_MS = 5_000;
 // After boot_completed, watch a moment longer: a crash-looping container reports
 // success and then dies. That is `unstable`, not `healthy`.
 const STABILITY_WATCH_MS = 20_000;
@@ -90,16 +87,6 @@ function parseArgs(argv) {
   return args;
 }
 
-async function readBootCompleted(boxHost, dbId) {
-  try {
-    const res = await shell(boxHost, dbId, "getprop sys.boot_completed");
-    return res.ok && res.message.trim() === "1";
-  } catch {
-    // The container can vanish mid-poll (crash loop) — that is data, not an error.
-    return false;
-  }
-}
-
 /**
  * Boot one device and classify it. Returns `{ health, bootMs }` and leaves the
  * container stopped if we were the ones who started it.
@@ -115,14 +102,7 @@ async function probeDevice(boxHost, device, { withProxy = false } = {}) {
     return { health: "dead", bootMs: null, note: `run refused: ${short(err)}` };
   }
 
-  let bootMs = null;
-  while (Date.now() - startedAt < BOOT_TIMEOUT_MS) {
-    await sleep(POLL_INTERVAL_MS);
-    if (await readBootCompleted(boxHost, dbId)) {
-      bootMs = Date.now() - startedAt;
-      break;
-    }
-  }
+  const bootMs = await waitBootCompleted(boxHost, dbId, { startedAt });
 
   if (bootMs === null) {
     await stopQuietly(boxHost, dbId);

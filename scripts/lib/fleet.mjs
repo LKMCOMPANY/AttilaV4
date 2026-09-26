@@ -333,6 +333,34 @@ export async function recordDeviceBootHealth(deviceId, { health, bootMs = null }
   });
 }
 
+/** Android reports `sys.boot_completed=1`; false when the container vanished mid-poll (crash loop) or the shell failed. */
+export async function readBootCompleted(boxHost, dbId) {
+  try {
+    const res = await shell(boxHost, dbId, "getprop sys.boot_completed");
+    return res.ok && res.message.trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
+// Android on these images boots in ~10–45 s when healthy; 120 s matches the
+// pipeline's own `ensureContainerReady` ceiling, so a device that misses it here
+// is exactly one the pipeline would fail on.
+export const BOOT_TIMEOUT_MS = 120_000;
+const BOOT_POLL_MS = 5_000;
+
+/**
+ * Wait for `sys.boot_completed` after a `run`. Returns the boot time in ms, or
+ * null when the ceiling passed. One definition for every script that boots.
+ */
+export async function waitBootCompleted(boxHost, dbId, { startedAt = Date.now(), timeoutMs = BOOT_TIMEOUT_MS } = {}) {
+  while (Date.now() - startedAt < timeoutMs) {
+    await sleep(BOOT_POLL_MS);
+    if (await readBootCompleted(boxHost, dbId)) return Date.now() - startedAt;
+  }
+  return null;
+}
+
 /** Sleep helper — every sweep script polls something. */
 export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
