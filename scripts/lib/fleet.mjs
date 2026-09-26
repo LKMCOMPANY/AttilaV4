@@ -203,14 +203,20 @@ export async function fetchDevicesOnOnlineBoxes() {
 }
 
 /** device_ids with a ready/executing campaign job (must not be disturbed). */
+/**
+ * Devices someone else needs right now: a campaign job ready or executing, or
+ * a maintenance task claimed or running (the Maintain worker reuses a running
+ * container — stopping it from under a session kills the session, measured
+ * 25 September 2026). Every script that boots or stops checks this first.
+ */
 export async function fetchBusyDeviceIds() {
-  const rows = await supabaseFetch(
-    "campaign_jobs?select=device_id&status=in.(ready,executing)",
-  );
-  return new Set((rows ?? []).map((r) => r.device_id).filter(Boolean));
+  const [jobs, tasks] = await Promise.all([
+    supabaseFetch("campaign_jobs?select=device_id&status=in.(ready,executing)"),
+    supabaseFetch("maintenance_tasks?select=device_id&status=in.(claimed,running)"),
+  ]);
+  return new Set([...(jobs ?? []), ...(tasks ?? [])].map((r) => r.device_id).filter(Boolean));
 }
 
-/** Read the live proxy config of a RUNNING device (VMOS proxy_get). */
 /**
  * `proxy_get` of a RUNNING device: the config (with `engineType`), or
  * `{ enabled: false }` for a device with no proxy at all ("未设置代理"), or
