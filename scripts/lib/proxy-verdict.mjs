@@ -3,12 +3,20 @@
  * unit-tested against the proxy's own wire fixture
  * (`infra/magicbox-proxy/test/fixtures/proxy-test.json`). The probes that
  * produce the answers live in `proxy-probe.mjs`.
+ *
+ * @typedef {{ ip: string, country: string, city?: string | null }} Exit
+ * @typedef {{ exit: Exit | null, expected: string | null, coherent: boolean }} Geo
+ * @typedef {{ tag: string, detail: string, exit?: Exit | null, geo?: Geo }} RoutingVerdict
  */
 
 /**
  * The country the avatar is supposed to live in. `user_name` carries it as a
  * prefix (FR90, US2, GB48) and is the value the provisioning flow keys on, so
  * it is the intent; `country` on the row is only filled for some devices.
+ */
+/**
+ * @param {{ user_name?: string | null, country?: string | null }} device
+ * @returns {string | null}
  */
 export function expectedCountry(device) {
   const fromColumn = device.country?.trim().toUpperCase();
@@ -31,6 +39,11 @@ export function expectedCountry(device) {
  *   no-engine  a box on proxy < 1.3.1 could not tell (kept for a not-yet-redeployed box)
  *   FAIL       anything else, verbatim
  */
+/**
+ * @param {{ state?: string }} device
+ * @param {{ ok?: boolean, delayMs?: number, error?: string, engine?: string, exit?: Exit | null }} result
+ * @returns {RoutingVerdict}
+ */
 export function classifyRouting(device, result) {
   const engine = result.engine ? ` (${result.engine} engine)` : "";
   if (result.ok && typeof result.delayMs === "number") return { tag: "ROUTES", detail: `${result.delayMs} ms${engine}`, exit: result.exit ?? null };
@@ -47,13 +60,21 @@ export function classifyRouting(device, result) {
   return { tag: "FAIL", detail: err.slice(0, 80) };
 }
 
-/** Is the measured exit where the persona claims to live? Unknowns are not mismatches. */
+/**
+ * Is the measured exit where the persona claims to live? Unknowns are not mismatches.
+ * @param {{ user_name?: string | null, country?: string | null }} device
+ * @param {Exit | null} exit
+ * @returns {Geo}
+ */
 export function geoCoherence(device, exit) {
   const expected = expectedCountry(device);
   return { exit, expected, coherent: !exit || !expected || exit.country === expected };
 }
 
-/** One-line rendering of a routing verdict for sweep logs. */
+/**
+ * One-line rendering of a routing verdict for sweep logs.
+ * @param {RoutingVerdict} row
+ */
 export function describeRouting(row) {
   let geo = "";
   if (row.geo) {

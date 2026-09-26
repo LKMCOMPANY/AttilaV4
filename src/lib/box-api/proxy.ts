@@ -92,15 +92,38 @@ export class ProxyTargetNotRunningError extends Error {
   }
 }
 
-// Proxy anti-leak defaults. See PROXY-STRATEGY.md for the rationale:
-//   - dnsOverProxyDisabled=false → DNS resolves THROUGH the proxy exit (no leak).
-//   - udpDisabled: residential SOCKS5 often lacks UDP; leaving it enabled risks
-//     QUIC/WebRTC falling back to the real uplink. Kept false for compatibility
-//     today; the recommendation is to flip to true for the creation profile once
-//     validated on the reference box.
-const PROXY_DNS_SERVERS = ["8.8.8.8", "8.8.4.4"];
-const PROXY_UDP_DISABLED = false;
-const PROXY_DNS_OVER_PROXY_DISABLED = false;
+// The one proxy profile every device gets (PROXY-STRATEGY.md § "The method").
+// Measured on 26 September 2026 and applied by the operator route and the
+// fleet migration alike:
+//   - engineType 1 → the host-side mihomo engine. The in-guest engine
+//     (engineType 0, the "vpn" mode) leaves the container's traffic on the
+//     box's own address for 15–20 s after every boot while its TUN comes up;
+//     the host engine routes from the first second.
+//   - udpDisabled true → residential SOCKS5 carries no UDP; with UDP allowed
+//     QUIC / WebRTC would try the proxy, fail, and the fallback is the raw
+//     uplink. TCP-only is what the apps do behind such proxies anyway.
+//   - dnsOverProxyDisabled false + dnsServers → names resolve THROUGH the
+//     proxy exit, never through the box's resolvers.
+export const PROXY_ENGINE_HOST = 1;
+export const PROXY_DNS_SERVERS = ["8.8.8.8", "8.8.4.4"];
+export const PROXY_UDP_DISABLED = true;
+export const PROXY_DNS_OVER_PROXY_DISABLED = false;
+
+/** The `proxy_set` body for one upstream — one definition for every writer. */
+export function proxySetPayload(cfg: SetProxyInput) {
+  return {
+    proxyType: cfg.proxyType,
+    proxyName: cfg.proxyType,
+    ip: cfg.ip,
+    port: cfg.port,
+    account: cfg.account,
+    password: cfg.password,
+    engineType: PROXY_ENGINE_HOST,
+    dnsServers: PROXY_DNS_SERVERS,
+    udpDisabled: PROXY_UDP_DISABLED,
+    dnsOverProxyDisabled: PROXY_DNS_OVER_PROXY_DISABLED,
+  };
+}
 
 /**
  * Write a proxy onto the device via the VMOS `proxy_set` endpoint.
@@ -121,20 +144,7 @@ export async function setProxyConfig(
   const res = await boxFetch<VmosResponse<unknown>>(
     tunnelHostname,
     `/android_api/v1/proxy_set/${dbId}`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        proxyType: cfg.proxyType,
-        proxyName: cfg.proxyType,
-        ip: cfg.ip,
-        port: cfg.port,
-        account: cfg.account,
-        password: cfg.password,
-        dnsServers: PROXY_DNS_SERVERS,
-        udpDisabled: PROXY_UDP_DISABLED,
-        dnsOverProxyDisabled: PROXY_DNS_OVER_PROXY_DISABLED,
-      }),
-    },
+    { method: "POST", body: JSON.stringify(proxySetPayload(cfg)) },
   );
 
   if (res.code === 200) return;

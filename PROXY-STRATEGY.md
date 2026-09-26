@@ -168,13 +168,63 @@ the only source. The six NodeMaven `DOWN` devices (DE2, GB3, GB8 on box-1;
 GB34, GB35, US13 on box-2) had a host-side engine that did not answer while
 the container ran — re-test before touching the upstream.
 
+## The method — one provider, one profile, one proxy per device (decided 26 September 2026)
+
+Two providers meant two engines, two username grammars and two failure
+modes; the measurements above are the bill. From here on:
+
+1. **One provider (Oxylabs), dedicated per device.** Static residential / ISP
+   IPs, one per device, never shared, bought in the persona's country and —
+   for the accounts that already live somewhere — in the city their current
+   exit uses (a platform sees an IP move; a move within the same city is a
+   trip, a move across the Atlantic is a new person). The list is supplied by
+   the operator as a CSV: `country,host,port,username,password[,city]`.
+2. **One profile, written by one function** — `proxySetPayload()` in
+   `src/lib/box-api/proxy.ts`, used by the operator route and by the fleet
+   migration alike: `engineType 1` (host-side mihomo — routes from the first
+   second, no boot window), `udpDisabled true` (residential SOCKS5 carries no
+   UDP; QUIC / WebRTC must not fall back to the raw uplink),
+   `dnsOverProxyDisabled false` + Google resolvers (names resolve through the
+   exit). SOCKS5 with authentication.
+3. **Every device gets one**, avatar or not: a device that boots without a
+   proxy — for a probe, an install, a sweep — leaves with the office's IP.
+   Spare ~10 % per country for replacements.
+4. **Proof on the same boot.** `scripts/assign-proxies.ts` boots each device
+   (two per box), writes the proxy, re-reads it, runs `/proxy-test` and asks
+   the guest where it comes out, mirrors `devices.proxy_*`, stops what it
+   started, and reports `OK` / `MISMATCH` / not routing per device. The plan
+   (`--dry-run`) is deterministic: same list, same devices, same pairs.
+5. **NodeMaven is retired when the last device has moved** — verified by
+   `select count(*) from devices where proxy_host like '%nodemaven%'` = 0 and
+   a full `audit-device-health --with-proxy` pass with 0 mismatches.
+
+What to order (devices on the four online boxes, 26 September 2026, +10 %):
+
+| Country | devices | to order | cities the accounts already exit from |
+|---|---:|---:|---|
+| US | 159 | **175** | Boston 50, Avon 18, Westborough 11, Cambridge 8, Windsor 6, New York 5 (Massachusetts for most) |
+| FR | 61 | **67** | Paris 24, Vouillé 4 |
+| GB | 52 | **57** | London 28, Manchester 9 |
+| ES | 51 | **56** | Madrid 23, Albacete 8 |
+| DE | 20 | **22** | Frankfurt 3, Hamburg 2, Essen, Mainz, Nuremberg, Hannover |
+| CA | 5 | **6** | — |
+| **total** | **348** | **383** | |
+
+Four device rows must be fixed before the run, not bought for: `GB41`
+(box-4, `country` column says `CN`, persona is GB), `parked_probe_box2_b`
+(`CN`), and two box-3 rows without a readable country. box-5 (100 devices,
+offline, Oxylabs already) joins when it is reachable again.
+
 ## What is implemented vs recommended
 
 - Implemented: paste parsing, live `proxy_set`/`proxy_stop`, real `/proxy-test`
   verify, password redaction + blank-keeps-current, client `UPDATE` RLS policy so
-  saves persist. `dnsOverProxyDisabled:false` (correct).
+  saves persist. `dnsOverProxyDisabled:false` (correct). Since 26 September
+  2026 the payload is `proxySetPayload()` — `engineType 1`, `udpDisabled true`.
 - Recommended follow-ups (validate on box-5, then roll forward — gated):
-  - Flip `udpDisabled` → `true` for the account-creation profile.
+  - ~~Flip `udpDisabled` → `true` for the account-creation profile.~~ Done in
+    the one profile; the creation flow in `MagicBox-Industrial` should send the
+    same body.
   - ~~Standardize new devices to proxy **mode `vpn`** at creation.~~ Reversed
     26 September 2026 — the in-guest engine leaks the box's address for
     15–20 s after every boot (measured above); keep the host-side mode.

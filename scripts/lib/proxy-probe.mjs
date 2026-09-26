@@ -73,6 +73,10 @@ async function fetchExitGeo(boxHost, dbId) {
  * device reads "stopped", not "DOWN". Returns `{ tag, detail, exit?, geo? }`
  * where `geo = { exit, expected, coherent }`; only a routing (or leaking)
  * proxy is asked where it comes out.
+ * @param {string} boxHost
+ * @param {{ db_id: string, user_name?: string | null, country?: string | null, state?: string }} device
+ * @param {{ geo?: boolean }} [options]
+ * @returns {Promise<import("./proxy-verdict.mjs").RoutingVerdict>}
  */
 export async function probeRouting(boxHost, device, { geo = false } = {}) {
   const started = Date.now();
