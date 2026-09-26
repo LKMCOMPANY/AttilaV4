@@ -166,7 +166,9 @@ export function ProxySection({ device, onProxyUpdated }: ProxySectionProps) {
       setEditing(false);
       setApplied(null);
       setPaste("");
-      toast.success("Proxy applied to the device");
+      // The guest's route follows the new upstream only after a boot, so the
+      // core restarts the device: say it, the stream will reconnect.
+      toast.success(result.restarted ? "Proxy applied — device restarting to apply it" : "Proxy applied to the device");
     } catch {
       toast.error("Failed to update proxy");
     } finally {

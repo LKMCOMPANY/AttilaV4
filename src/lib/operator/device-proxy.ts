@@ -7,8 +7,10 @@ import {
   clearProxyConfig,
   fetchProxyConfig,
   fetchProxyDelayTest,
+  restartContainer,
   ProxyTargetNotRunningError,
 } from "@/lib/box-api";
+import { fanOutDeviceStateChange } from "@/lib/devices/access";
 
 /**
  * Device proxy cores — the single implementation behind the Server Actions
@@ -88,6 +90,12 @@ function proxyTestReason(code: string | null): string | null {
 export interface UpdateProxyResult {
   error: string | null;
   proxy: DeviceProxyFields | null;
+  /**
+   * Additive (26 September 2026): the container was restarted so the guest's
+   * route follows the new upstream — `proxy_set` on a running host-engine
+   * device leaves the guest without egress until the next boot.
+   */
+  restarted?: boolean;
 }
 
 const updateProxySchema = z.object({
@@ -173,8 +181,13 @@ export async function verifyDeviceProxyCore(
 // ---------------------------------------------------------------------------
 //
 // `setProxyConfig` (VMOS `proxy_set`) makes `cbs_go` rewrite the host-side
-// mihomo config and hot-reload it: the change is applied to the device
-// immediately, no restart. It requires the container to be running.
+// mihomo config and reload it; the controller's delay test passes at once.
+// The GUEST, however, is left without egress until the container restarts —
+// measured on US23, 26 September 2026: `curl ipinfo.io` from inside answered
+// before the write, nothing for 160 s after it, and the proxy's exit again on
+// the next boot. So the core restarts the container after a successful write
+// (stop → stopped → run, ~10 s before Android boots again) and says so. It
+// requires the container to be running.
 // ---------------------------------------------------------------------------
 
 export async function updateDeviceProxyCore(
@@ -238,7 +251,19 @@ export async function updateDeviceProxyCore(
       };
     }
 
-    return { error: null, proxy };
+    // The guest's route only follows the new upstream after a boot.
+    let restarted = false;
+    try {
+      await restartContainer(tunnelHostname, dbId);
+      restarted = true;
+      await ctx.supabase.from("devices").update({ state: "running", last_seen: new Date().toISOString() }).eq("id", id);
+      const { data: row } = await ctx.supabase.from("devices").select("box_id, account_id").eq("id", id).single();
+      if (row) await fanOutDeviceStateChange(row.box_id as string, (row.account_id as string | null) ?? null);
+    } catch (err) {
+      return { error: `Proxy saved, but the device could not be restarted to apply it — restart it: ${err instanceof Error ? err.message : err}`, proxy, restarted: false };
+    }
+
+    return { error: null, proxy, restarted };
   } catch (err) {
     if (err instanceof ProxyTargetNotRunningError) {
       return { error: "Start the device before updating its proxy.", proxy: null };

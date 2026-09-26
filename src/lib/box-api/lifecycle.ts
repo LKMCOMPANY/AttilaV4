@@ -168,3 +168,28 @@ export async function stopContainer(tunnelHostname: string, dbId: string): Promi
     body: JSON.stringify({ db_ids: [dbId] }),
   });
 }
+
+const RESTART_STOP_TIMEOUT_MS = 45_000;
+const RESTART_POLL_MS = 2_000;
+
+/**
+ * Stop, wait until VMOS no longer reports the container as running or
+ * stopping, then run it again. A `run` issued while the instance is still
+ * `stopping` is refused (`409`, "实例状态必须为已关机" — measured 26 September
+ * 2026), hence the wait. Resolves once the run was accepted; Android then
+ * boots on its own (10–90 s).
+ */
+export async function restartContainer(tunnelHostname: string, dbId: string): Promise<void> {
+  await stopContainer(tunnelHostname, dbId);
+  const deadline = Date.now() + RESTART_STOP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, RESTART_POLL_MS));
+    const detail = await fetchContainerDetail(tunnelHostname, dbId).catch(() => null);
+    const status = String(detail?.status ?? "");
+    if (status !== "running" && status !== "stopping") break;
+  }
+  await boxFetch(tunnelHostname, "/container_api/v1/run", {
+    method: "POST",
+    body: JSON.stringify({ db_ids: [dbId] }),
+  });
+}

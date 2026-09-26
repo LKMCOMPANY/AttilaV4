@@ -197,6 +197,47 @@ modes; the measurements above are the bill. From here on:
 5. **NodeMaven is retired when the last device has moved** — verified by
    `select count(*) from devices where proxy_host like '%nodemaven%'` = 0 and
    a full `audit-device-health --with-proxy` pass with 0 mismatches.
+6. **A proxy written on a running device is applied by a restart.** `proxy_set`
+   reloads the host engine and the controller's delay test passes at once, but
+   the guest has no egress until its next boot (US23, 26 September 2026:
+   `curl ipinfo.io` answered before the write, nothing for 160 s after it,
+   the proxy's exit again on the next start). The operator core restarts the
+   container after a successful write and says so (`restarted: true`; web
+   toast, Mac notice, MCP summary); the migration stops what it started, so
+   the next start applies it. Never judge a proxy from the delay test alone.
+
+### Three ways in, one engine
+
+| Way | Surface | Path |
+|---|---|---|
+| Fleet, from Cursor | `scripts/assign-proxies.ts --csv` / `--reapply` | LAN boot → `setProxyConfig` (tunnel) → proof → DB mirror → stop |
+| Advanced user, from Cursor | Attila.app MCP `device_proxy set / verify` | `nativeRoute` `/api/devices/{id}/proxy/set` → `updateDeviceProxyCore` |
+| Operator, web or Mac | avatar › Device › Proxy | the same route, the same core |
+
+All three end in `setProxyConfig` → `proxySetPayload()`; the engine switch
+(`proxy_stop` when the device runs the in-guest engine) and the restart live
+below the route, so no client can write a proxy any other way.
+
+### Migration log
+
+- **26 September 2026, list of 100 dedicated ports (`8001–8100`, GB 60 /
+  FR 30 / US 10, account already in the fleet).** 47 devices moved, each
+  proven on the same boot and again by an independent sweep after it: box-3's
+  26 FR (exits FR/Paris) and 3 GB (GB/London), the 10 US the list allowed
+  (New York City, Leesburg — US13, US25, US32, US56, US100, US26–30), box-1/2's
+  NodeMaven engines that were `DOWN` (GB3, GB8, GB34, GB35), the spare
+  GB41_box2_spare. Sweep after: 44/44 routing, 43 exits read, **0
+  mismatch, 0 unproxied**. The list's port `8011` is labelled GB and exits GB
+  (`151.241.182.75`); the one FR reading on it was the reload window.
+  **Attention: box-5's 100 devices (offline since 21 September) are recorded
+  on these same ports `8001–8100` with the short account spelling** — they
+  must be re-assigned before box-5 is ever started again, or two devices will
+  share one dedicated IP.
+- Still to move (the list had no ports for them): **42 US, 15 ES, 9 DE,
+  4 CA on box-3** (wrong-country Oxylabs exits) and **211 NodeMaven devices**
+  (box-1 82, box-2 55, box-4 65 — working, to unify on Oxylabs when the ports
+  exist; meanwhile `--reapply --provider nodemaven` puts them on the one
+  profile without changing their IP).
 
 What to order (devices on the four online boxes, 26 September 2026, +10 %):
 

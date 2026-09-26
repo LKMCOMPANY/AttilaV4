@@ -9,7 +9,9 @@
  *
  * Items are per account (RLS): a device without an account is listed, not
  * opened. `openAttention` dedupes on (target, reason) and refreshes the open
- * item, so re-running after a new sweep is safe.
+ * item, so re-running after a new sweep is safe — and a device the new sweep
+ * finds healthy and routing gets its open `boot_dead` / `proxy_incoherent`
+ * items resolved by `reprobe`: the sweep is the re-probe.
  *
  * A systemic problem is one item, not a flood: when a box carries more than
  * `--box-threshold` (default 10) proxy findings, one box-scoped
@@ -48,7 +50,7 @@ async function main() {
   const { reports, dryRun, boxThreshold } = parseArgs(process.argv);
   loadDotEnvLocal();
   const { createAdminClient } = await import("../src/lib/supabase/admin");
-  const { openAttention } = await import("../src/lib/maintenance/attention");
+  const { openAttention, resolveAttentionForTarget } = await import("../src/lib/maintenance/attention");
   const supabase = createAdminClient();
 
   const rows: SweepRow[] = [];
@@ -59,8 +61,22 @@ async function main() {
   if (error) throw error;
   const byDbId = new Map((devices ?? []).map((d) => [d.db_id, d]));
 
-  const tally = { rows: rows.length, findings: 0, opened: 0, refreshed: 0, noAccount: [] as string[] };
+  const tally = { rows: rows.length, findings: 0, opened: 0, refreshed: 0, resolved: 0, noAccount: [] as string[] };
   const { perDevice, perBox } = planFindings(rows, boxThreshold);
+
+  // Devices with nothing left to report: close what an earlier sweep opened.
+  const flagged = new Set([...perDevice.map((p) => p.row.db_id), ...perBox.flatMap((b) => b.findings.map((f) => f.row.db_id))]);
+  for (const row of rows) {
+    if (flagged.has(row.db_id)) continue;
+    const device = byDbId.get(row.db_id);
+    if (!device?.account_id || dryRun) continue;
+    tally.resolved += await resolveAttentionForTarget(
+      supabase,
+      { accountId: device.account_id, scope: "device", deviceId: device.id },
+      "reprobe",
+      ["boot_dead", "proxy_incoherent"],
+    );
+  }
   const record = async (input: Parameters<typeof openAttention>[1]) => {
     if (dryRun) return;
     const res = await openAttention(supabase, input);
@@ -120,7 +136,7 @@ async function main() {
     });
   }
 
-  console.log(`\nrows ${tally.rows} · findings ${tally.findings} · opened ${tally.opened} · refreshed ${tally.refreshed}`);
+  console.log(`\nrows ${tally.rows} · findings ${tally.findings} · opened ${tally.opened} · refreshed ${tally.refreshed} · resolved by reprobe ${tally.resolved}`);
   if (tally.noAccount.length) console.log(`no account (listed, not opened) ${tally.noAccount.length}: ${tally.noAccount.join(", ")}`);
 }
 

@@ -53,6 +53,7 @@ export {
   startContainerProcess,
   stopContainer,
   stopContainerIfIdle,
+  restartContainer,
 } from "./lifecycle";
 export {
   ControlApiError,

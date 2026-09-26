@@ -149,13 +149,16 @@ export function proxySetPayload(cfg: SetProxyInput) {
 /**
  * Write a proxy onto the device via the VMOS `proxy_set` endpoint.
  *
- * Verified behaviour (box-1..4, 06/2026): `cbs_go` (the ArmCloud backend)
- * rewrites the per-container host-side mihomo config and hot-reloads mihomo
- * immediately — the new proxy is LIVE, no container restart needed (confirmed
- * via the mihomo delay API: a freshly-set working upstream routes within ~1s).
- * Requires the container to be running, otherwise VMOS returns code 0 /
- * "instance not running" (a proxy set at create time is instead persisted and
- * applied on first start).
+ * `cbs_go` rewrites the per-container host-side mihomo config and reloads it,
+ * and the mihomo delay API answers through the new upstream within ~1 s — but
+ * that proves the ENGINE, not the guest: measured on 26 September 2026, the
+ * guest of a running device has no egress at all after the write until its
+ * next boot (the delay test passed for 160 s while `curl` inside answered
+ * nothing; the proxy's exit came back on the next start). Callers restart the
+ * container after a successful write (`restartContainer`). Requires the
+ * container to be running, otherwise VMOS returns code 0 / "instance not
+ * running" (a proxy set at create time is persisted and applied on first
+ * start).
  */
 export async function setProxyConfig(
   tunnelHostname: string,

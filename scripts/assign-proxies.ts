@@ -28,10 +28,17 @@
  * The CSV reading and the assignment are pure (`scripts/lib/proxy-assignment.mjs`,
  * tested); this file boots, writes and verifies.
  *
+ * `--reapply` takes no list: every device that already holds a proxy (the DB
+ * mirror) is written again with its own upstream — same host, port and
+ * credentials — so it runs on the one profile (host engine, UDP off, DNS
+ * through the exit) without changing its IP. `--provider nodemaven` narrows
+ * it to one upstream host.
+ *
  * Usage (from Attila V4/):
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --dry-run
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --box box-3.attila.army
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --names US30,FR22 --report out.json
+ *   npx tsx scripts/assign-proxies.ts --reapply --provider nodemaven --box box-2.attila.army
  */
 
 import { readFile, writeFile } from "node:fs/promises";
@@ -59,8 +66,11 @@ interface DeviceRow {
   state: string;
   country?: string | null;
   proxy_enabled: boolean | null;
+  proxy_type?: string | null;
   proxy_host?: string | null;
   proxy_port?: number | null;
+  proxy_account?: string | null;
+  proxy_password?: string | null;
   boxes: { name: string; tunnel_hostname: string; status: string };
 }
 
@@ -74,7 +84,10 @@ const STARTS_IN_FLIGHT_PER_BOX = 2;
 const BOOT_TIMEOUT_MS = 120_000;
 
 function parseArgs(argv: string[]) {
-  const args = { csv: "", dryRun: false, box: null as string | null, names: null as Set<string> | null, countries: null as Set<string> | null, report: null as string | null };
+  const args = {
+    csv: "", dryRun: false, reapply: false, provider: null as string | null,
+    box: null as string | null, names: null as Set<string> | null, countries: null as Set<string> | null, report: null as string | null,
+  };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--csv") args.csv = argv[++i];
@@ -84,9 +97,11 @@ function parseArgs(argv: string[]) {
     // each entry is `NAME` (any box) or `box-N:NAME`
     else if (a === "--countries") args.countries = new Set(argv[++i].split(",").map((s) => s.trim().toUpperCase()).filter(Boolean));
     else if (a === "--report") args.report = argv[++i];
+    else if (a === "--reapply") args.reapply = true;
+    else if (a === "--provider") args.provider = argv[++i].toLowerCase();
     else throw new Error(`Unknown argument: ${a}`);
   }
-  if (!args.csv) throw new Error("--csv <file> is required");
+  if (!args.csv && !args.reapply) throw new Error("--csv <file> or --reapply is required");
   return args;
 }
 
@@ -160,10 +175,22 @@ async function applyOne(a: Assignment & { proxy: ProxyRow }, alreadyRunning: Set
   }
 }
 
+/** `--reapply`: each device's own upstream, from the DB mirror, as the proxy to write. */
+function reapplyPlan(devices: DeviceRow[]) {
+  const assignments = devices.map((device) => {
+    const complete = device.proxy_host && device.proxy_port && device.proxy_account && device.proxy_password;
+    const proxy: ProxyRow | null = complete
+      ? { country: expectedCountry(device) ?? "??", host: device.proxy_host!, port: device.proxy_port!, username: device.proxy_account!, password: device.proxy_password!, city: undefined }
+      : null;
+    return { device, proxy, country: expectedCountry(device) };
+  });
+  return { assignments, spare: {}, short: {}, reserved: 0 };
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   loadDotEnvLocal();
-  const proxies = parseProxyCsv(await readFile(args.csv, "utf8"));
+  const proxies = args.csv ? parseProxyCsv(await readFile(args.csv, "utf8")) : [];
 
   const [all, busy] = await Promise.all([fetchDevicesOnOnlineBoxes() as Promise<DeviceRow[]>, fetchBusyDeviceIds()]);
   let devices = all.filter((d) => d.state !== "removed" && !busy.has(d.id));
@@ -174,13 +201,16 @@ async function main() {
     devices = devices.filter((d) => wanted.has(d.user_name ?? "") || wanted.has(`${short(d)}:${d.user_name ?? ""}`));
   }
   if (args.countries) devices = devices.filter((d) => args.countries!.has(expectedCountry(d) ?? ""));
+  if (args.provider) devices = devices.filter((d) => (d.proxy_host ?? "").toLowerCase().includes(args.provider!));
 
   // Proxies already held by a device on an online box (the DB mirror) — the
   // holder keeps it, nobody else gets it.
   const reserved = new Map<string, string>();
   for (const d of all) if (d.state !== "removed" && d.proxy_host && d.proxy_port) reserved.set(proxyKey(d.proxy_host, d.proxy_port), d.id);
 
-  const { assignments, spare, short, reserved: withheld } = planAssignments(devices, proxies, { reserved });
+  const { assignments, spare, short, reserved: withheld } = args.reapply
+    ? reapplyPlan(devices)
+    : planAssignments(devices, proxies, { reserved });
   const planned = assignments.filter((a): a is Assignment & { proxy: ProxyRow } => a.proxy !== null);
   const unplanned = assignments.filter((a) => a.proxy === null);
 

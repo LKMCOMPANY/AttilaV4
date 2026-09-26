@@ -229,6 +229,30 @@ Commit `ad34715`, Render deploy `dep-darej7gu01pc73e4kuv0` built in 88 s and
   tunnel job of many minutes): ADBKeyboard 338 (96 %), TikTok 144, X 144,
   **208 devices with no social app** — box-3 alone has 107 of them.
 
+## Snapshot — 26 September 2026, proxies (13:10–15:30 Paris)
+
+The operator's list: 100 Oxylabs dedicated ports, GB 60 / FR 30 / US 10.
+`scripts/assign-proxies.ts` moved **47 devices** to the one profile (host
+engine, UDP off, DNS through the exit), two boots per box, each proven on the
+same boot; an independent `audit-device-health --with-proxy` pass afterwards:
+**44/44 routing, 0 mismatch, 0 unproxied** (43 exits read). Attention items:
+9 refreshed, 4 resolved by re-probe, the box-3 item down to 61 devices.
+
+Four vendor behaviours measured and put into code on the way:
+`proxy_set` across engines is refused ("存在不同引擎的代理正在运行中") →
+`setProxyConfig` stops the in-guest engine first; `proxy_get` on a device
+with no proxy is `code 200` without `proxy_config` → `enabled: false`, not
+"cannot be asked"; cbs_go acknowledges `proxy_set` seconds before the engine
+reloads → read back until the device reports the written upstream; and **a
+running host-engine device loses its guest egress after `proxy_set` until it
+reboots** → the operator core restarts the container (`restartContainer`:
+stop → stopped → run) and every surface says so. magicbox-proxy **1.3.3**
+measures the guest's exit on the host-engine path too. Three ways in
+(Cursor script, Attila MCP `device_proxy`, web/Mac inspector), one engine
+underneath — the MCP way was exercised live from Cursor (start, verify,
+stop on US23), the route way on production (US32: `engine host`, `exit
+US/New York City 48.47.5.11`).
+
 ## Snapshot — 26 September 2026, Phase 2 (vendor firmware, 07:55–08:35 Paris)
 
 GO given at 07:56. Three L1 boxes brought to the vendor's last L1 targets,
