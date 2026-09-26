@@ -149,7 +149,20 @@ Three facts, none visible before:
    IP. **Recommendation reversed:** do not standardise on `vpn`; the host-side
    mode is the one with no window. The 1.3.2 probe answers `engine_starting`
    during the window and the sweep polls through it (45 s budget) before
-   calling anything `unproxied`.
+   calling anything `unproxied`. Re-measured on FR18 (box-1, host engine)
+   after one `UNPROXIED` reading during box-1's tunnel incident: exit polled
+   every 2 s from `run` — the proxy's address from the first answer the shell
+   gave (+22 s, *before* `sys.boot_completed`), 22 readings, 0 through the
+   box. What cbs_go writes for that engine (`state/<db_id>/mihomo.json`,
+   read on box-1): one `socks5` node, a `select` group `[node, DIRECT]`,
+   rules `DOMAIN,<gateway>,DIRECT` · `NETWORK,udp,REJECT` · `MATCH,PROXY`,
+   `mode rule`. `select` does not fail over by itself, so a dead upstream
+   fails closed; `DIRECT` is only ever chosen by the controller. Two facts
+   to raise with VMOS: the `dnsServers` we send are not what mihomo resolves
+   with — the file carries the vendor's list (`223.5.5.5`, `1.1.1.1`,
+   `8.8.8.8`, DoH Google and Cloudflare, `fake-ip`), so a Chinese resolver
+   is in the race for every name the guest looks up; and `DIRECT` has no
+   business in a group whose only job is to hide the box.
 3. **box-3's Oxylabs exits are not the personas' countries.** 85 of 104
    checked devices exit elsewhere: `CA` → Paris, `DE` → London, `FR` → New
    York / Leesburg / London, `US` → Paris / London; only the `GB` devices and
@@ -179,6 +192,13 @@ modes; the measurements above are the bill. From here on:
    exit uses (a platform sees an IP move; a move within the same city is a
    trip, a move across the Atlantic is a new person). The list is supplied by
    the operator as a CSV: `country,host,port,username,password[,city]`.
+   **One holder per proxy across the whole fleet**, offline boxes included:
+   the planner reserves every `host:port` the DB mirror shows held, whatever
+   the box's status, and hands out only free ones; a device keeps its own at
+   its turn whatever the sort order. `--reclaim-offline` is the one explicit
+   way to re-purpose a list recorded on an offline box, and the run says how
+   many it reclaimed. A device the sweep recorded `dead` is never booted for
+   a proxy (it sits in `starting` for hours and leaks nothing).
 2. **One profile, written by one function** — `proxySetPayload()` in
    `src/lib/box-api/proxy.ts`, used by the operator route and by the fleet
    migration alike: `engineType 1` (host-side mihomo — routes from the first
@@ -193,7 +213,8 @@ modes; the measurements above are the bill. From here on:
    (two per box), writes the proxy, re-reads it, runs `/proxy-test` and asks
    the guest where it comes out, mirrors `devices.proxy_*`, stops what it
    started, and reports `OK` / `MISMATCH` / not routing per device. The plan
-   (`--dry-run`) is deterministic: same list, same devices, same pairs.
+   (`--dry-run`) is deterministic — same list, same devices, same pairs — and
+   reads as `= keeps` (holds it already, not touched) or `←` (to write).
 5. **NodeMaven is retired when the last device has moved** — verified by
    `select count(*) from devices where proxy_host like '%nodemaven%'` = 0 and
    a full `audit-device-health --with-proxy` pass with 0 mismatches.
@@ -233,28 +254,61 @@ below the route, so no client can write a proxy any other way.
   on these same ports `8001–8100` with the short account spelling** — they
   must be re-assigned before box-5 is ever started again, or two devices will
   share one dedicated IP.
-- Still to move (the list had no ports for them): **42 US, 15 ES, 9 DE,
-  4 CA on box-3** (wrong-country Oxylabs exits) and **211 NodeMaven devices**
-  (box-1 82, box-2 55, box-4 65 — working, to unify on Oxylabs when the ports
-  exist; meanwhile `--reapply --provider nodemaven` puts them on the one
-  profile without changing their IP).
+- **26 September 2026, afternoon — the 211 NodeMaven devices re-written on
+  the one profile** (`--reapply --provider nodemaven`, same upstream, same
+  IP): 210 proven `OK` (exit in the persona's country), 1 `MISMATCH` (`GB41`,
+  exits GB/Birkenhead, row says CN). It took three passes, none for the
+  method: box-1's Cloudflare tunnel dropped for a few minutes at 14:52
+  (`cloudflared` "context canceled"; the journal on the box only starts at
+  14:45, cbs_go never restarted) and every write and `/proxy-test` riding it
+  failed — 23 `fetch failed`, 4 `DOWN`, 1 `FAIL`, 1 `UNPROXIED` (FR18), 3
+  `boot_timeout`; the 32 re-run once the tunnel was back: 32 `OK`. Three
+  devices busy with a maintenance task at plan time (ES2, FR19, GB4) and FR5
+  (twice past 120 s under the run's own load, 15 s alone): 4 `OK`. FR18's
+  one `UNPROXIED` reading is not reproduced (measured above) and is filed
+  under the tunnel incident, not under the engine.
+- **Same day — 46 NodeMaven GB / FR devices moved onto the list's ports
+  (`--csv --reclaim-offline`)**: 45 GB incl. the two parked probes
+  (`parked_probe_box2_b`, `parked_probe_box3_jun22`, now `GB`; box-1 14,
+  box-2 22, box-3 6, box-4 3) → GB/London, 3 FR (FR1, FR11, FR12) →
+  FR/Paris — 48 proven on the same boot, GB48 routes with its exit unread.
+  FR10 (box-1)
+  timed out twice and is `dead` since 25 September: it holds GB port `8049`
+  on-box and keeps it; the FR port it was planned for went to FR12. The
+  dry-run of this pass caught a planner defect before any write: a port held
+  by a device sorted *after* the taker was handed out (`FR1 ← 8001`, held by
+  `parked_box3_8001`) — fixed and tested, reservations are now fleet-wide,
+  offline boxes included, and `--reclaim-offline` names what it takes back
+  (100 ports recorded on box-5).
+- **Where the fleet stands (352 devices on the four online boxes):** 170 on
+  the list / Oxylabs dedicated, **170 still on NodeMaven** (US 94, ES 35,
+  FR 27, DE 12, CA 1, GB41) — all on the one profile, all proven — and 12
+  without a proxy: the 4 dead of box-1 (FR4, US2, US42, US8) and 8
+  avatar-less, app-less spares on box-3 (CA1, ES23, ES24, ES33, US109,
+  US128, US139, US144) that wait for ports in their country. box-3's
+  wrong-country Oxylabs exits: **61** left (US 38, ES 12, DE 8, CA 3), the
+  box-scoped `proxy_incoherent` item still lists the 85 of the first sweep
+  until the next full pass of box-3 refreshes it. NodeMaven is retired when
+  those 170 have moved; nothing else depends on it.
 
-What to order (devices on the four online boxes, 26 September 2026, +10 %):
+What to order to finish (26 September 2026, evening; NodeMaven + box-3's
+wrong exits + the 8 spares, +10 %):
 
 | Country | devices | to order | cities the accounts already exit from |
 |---|---:|---:|---|
-| US | 159 | **175** | Boston 50, Avon 18, Westborough 11, Cambridge 8, Windsor 6, New York 5 (Massachusetts for most) |
-| FR | 61 | **67** | Paris 24, Vouillé 4 |
-| GB | 52 | **57** | London 28, Manchester 9 |
-| ES | 51 | **56** | Madrid 23, Albacete 8 |
-| DE | 20 | **22** | Frankfurt 3, Hamburg 2, Essen, Mainz, Nuremberg, Hannover |
+| US | 136 | **150** | Boston, Avon, Westborough, Cambridge (Massachusetts for most), New York |
+| ES | 50 | **55** | Madrid, Albacete |
+| FR | 27 | **30** | Paris |
+| DE | 20 | **22** | Frankfurt, Hamburg, Essen, Mainz, Nuremberg, Hannover |
 | CA | 5 | **6** | — |
-| **total** | **348** | **383** | |
+| AE | 1 | **1** | `GB41` (box-4) — its avatar lives in the Emirates; or re-assign the avatar |
+| **total** | **239** | **264** | |
 
-Four device rows must be fixed before the run, not bought for: `GB41`
-(box-4, `country` column says `CN`, persona is GB), `parked_probe_box2_b`
-(`CN`), and two box-3 rows without a readable country. box-5 (100 devices,
-offline, Oxylabs already) joins when it is reachable again.
+GB is done (5 spare ports left on the list). `GB41` is the one row still to
+decide before the run, not to buy for blindly. box-5 (100 devices, offline,
+recorded on the 100 ports of this very list) is re-provisioned from a new
+list before it ever starts again — `--reclaim-offline` is what made this
+list usable, and what makes that step mandatory.
 
 ## What is implemented vs recommended
 

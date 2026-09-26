@@ -60,6 +60,11 @@ async function main() {
   const { data: devices, error } = await supabase.from("devices").select("id, db_id, account_id, box_id").in("db_id", dbIds);
   if (error) throw error;
   const byDbId = new Map((devices ?? []).map((d) => [d.db_id, d]));
+  type Device = NonNullable<typeof devices>[number] & { account_id: string };
+  // One definition of a device item's target, for opening and for resolving:
+  // the key carries the box, and a resolve built without it matched nothing
+  // (found 26 September 2026 — six items a verification sweep should have closed).
+  const deviceTarget = (device: Device) => ({ accountId: device.account_id, scope: "device" as const, deviceId: device.id, boxId: device.box_id });
 
   const tally = { rows: rows.length, findings: 0, opened: 0, refreshed: 0, resolved: 0, noAccount: [] as string[] };
   const { perDevice, perBox } = planFindings(rows, boxThreshold);
@@ -70,12 +75,7 @@ async function main() {
     if (flagged.has(row.db_id)) continue;
     const device = byDbId.get(row.db_id);
     if (!device?.account_id || dryRun) continue;
-    tally.resolved += await resolveAttentionForTarget(
-      supabase,
-      { accountId: device.account_id, scope: "device", deviceId: device.id },
-      "reprobe",
-      ["boot_dead", "proxy_incoherent"],
-    );
+    tally.resolved += await resolveAttentionForTarget(supabase, deviceTarget(device as Device), "reprobe", ["boot_dead", "proxy_incoherent"]);
   }
   const record = async (input: Parameters<typeof openAttention>[1]) => {
     if (dryRun) return;
@@ -93,10 +93,7 @@ async function main() {
     }
     console.log(`${dryRun ? "[dry-run] " : ""}${f.severity.padEnd(8)} ${f.reason.padEnd(16)} ${row.box.split(".")[0]}/${(row.user_name ?? row.db_id).padEnd(8)} ${f.detail}`);
     await record({
-      accountId: device.account_id,
-      scope: "device",
-      deviceId: device.id,
-      boxId: device.box_id,
+      ...deviceTarget(device as Device),
       reason: f.reason,
       severity: f.severity,
       title: f.title,

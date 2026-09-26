@@ -61,6 +61,22 @@ describe("planAssignments", () => {
     expect(spare).toEqual({ GB: 1 });
   });
 
+  it("a holder sorted after the taker still keeps its proxy; the taker gets the next free one", () => {
+    // US1 is planned before US9 (user_name order) but US9 already holds 8001.
+    const reserved = new Map([[proxyKey("isp.oxylabs.io", 8001), "US9"]]);
+    const { assignments, spare, short } = planAssignments([device("US1"), device("US9"), device("US5")], proxies, { reserved });
+    expect(assignments.map((a) => [a.device.user_name, a.proxy?.port ?? null])).toEqual([["US1", 8002], ["US5", null], ["US9", 8001]]);
+    expect(short).toEqual({ US: 1 });
+    expect(spare).toEqual({ FR: 1, GB: 1 });
+  });
+
+  it("a proxy held by a device of another country is neither handed out nor counted spare", () => {
+    const reserved = new Map([[proxyKey("isp.oxylabs.io", 8201), "GB41"]]); // GB41's row says CN
+    const { assignments, spare } = planAssignments([device("GB41", "CN"), device("GB1")], proxies, { reserved });
+    expect(assignments.map((a) => [a.device.user_name, a.proxy?.port ?? null])).toEqual([["GB1", null], ["GB41", null]]);
+    expect(spare).toEqual({ US: 2, FR: 1 });
+  });
+
   it("a device without a readable country gets nothing and is not counted short", () => {
     const { assignments, short } = planAssignments([device("parked_probe_box2_b")], proxies);
     expect(assignments[0]).toMatchObject({ country: null, proxy: null });

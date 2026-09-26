@@ -10,14 +10,18 @@
  *   US,isp.oxylabs.io,8001,user-cc-US,secret,Boston
  *
  * Plan (`--dry-run` prints it and stops): devices on ONLINE boxes, not
- * removed, ordered by user_name; the persona's country is `devices.country`
+ * removed, not recorded `dead` by the health sweep (a dead device booted sits
+ * in `starting` for hours), ordered by user_name; the persona's country is `devices.country`
  * else the `user_name` prefix (FR90 → FR); each device takes the next unused
- * proxy of its country. A proxy another device (on an online box) already
- * holds is never handed out — a dedicated IP shared by two devices ties two
- * accounts together. A device whose country has no proxy left is listed, not
- * touched. `--box`, `--names` and `--countries` narrow the run; names are
- * NOT unique across boxes (US100 lives on box-3 and box-4), so a name may be
- * box-qualified: `--names box-3:US100,GB3`.
+ * proxy of its country. A proxy another device already holds — on ANY box,
+ * offline ones included — is never handed out: a dedicated IP shared by two
+ * devices ties two accounts together. `--reclaim-offline` releases the
+ * proxies held by devices of OFFLINE boxes (a list re-purposed from a box
+ * that will be re-provisioned before it ever starts again) and says how many.
+ * A device whose country has no proxy left is listed, not touched. `--box`,
+ * `--names` and `--countries` narrow the run; names are NOT unique across
+ * boxes (US100 lives on box-3 and box-4), so a name may be box-qualified:
+ * `--names box-3:US100,GB3`.
  *
  * Apply, per device, two in flight per box: boot → `proxy_set` (product code:
  * `setProxyConfig`, tunnel) → read back until the device reports the written
@@ -40,6 +44,7 @@
  *
  * Usage (from Attila V4/):
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --dry-run
+ *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --reclaim-offline --dry-run
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --box box-3.attila.army
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --names US30,FR22 --report out.json
  *   npx tsx scripts/assign-proxies.ts --reapply --provider nodemaven --box box-2.attila.army
@@ -49,6 +54,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import {
   fetchBusyDeviceIds,
   fetchDevicesOnOnlineBoxes,
+  fetchProxiedDevices,
   fetchRunningDbIds,
   mapWithConcurrency,
   runContainer,
@@ -69,6 +75,7 @@ interface DeviceRow {
   user_name: string | null;
   state: string;
   country?: string | null;
+  boot_health?: string | null;
   proxy_enabled: boolean | null;
   proxy_type?: string | null;
   proxy_host?: string | null;
@@ -76,6 +83,14 @@ interface DeviceRow {
   proxy_account?: string | null;
   proxy_password?: string | null;
   boxes: { name: string; tunnel_hostname: string; status: string };
+}
+
+/** A device holding a proxy in the DB mirror, on any box (`fetchProxiedDevices`). */
+interface ProxyHolder {
+  id: string;
+  proxy_host: string | null;
+  proxy_port: number | null;
+  boxes: { status: string } | null;
 }
 
 interface Assignment {
@@ -88,13 +103,14 @@ const STARTS_IN_FLIGHT_PER_BOX = 2;
 
 function parseArgs(argv: string[]) {
   const args = {
-    csv: "", dryRun: false, reapply: false, provider: null as string | null,
+    csv: "", dryRun: false, reapply: false, reclaimOffline: false, provider: null as string | null,
     box: null as string | null, names: null as Set<string> | null, countries: null as Set<string> | null, report: null as string | null,
   };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--csv") args.csv = argv[++i];
     else if (a === "--dry-run") args.dryRun = true;
+    else if (a === "--reclaim-offline") args.reclaimOffline = true;
     else if (a === "--box") args.box = argv[++i];
     else if (a === "--names") args.names = new Set(argv[++i].split(",").map((s) => s.trim()).filter(Boolean));
     // each entry is `NAME` (any box) or `box-N:NAME`
@@ -190,9 +206,19 @@ async function main() {
   loadDotEnvLocal();
   const proxies = args.csv ? parseProxyCsv(await readFile(args.csv, "utf8")) : [];
 
-  const [all, busy] = await Promise.all([fetchDevicesOnOnlineBoxes() as Promise<DeviceRow[]>, fetchBusyDeviceIds()]);
+  const [all, holders, busy] = await Promise.all([
+    fetchDevicesOnOnlineBoxes() as Promise<DeviceRow[]>,
+    fetchProxiedDevices() as Promise<ProxyHolder[]>,
+    fetchBusyDeviceIds(),
+  ]);
   let devices = all.filter((d) => d.state !== "removed" && !busy.has(d.id));
   if (args.box) devices = devices.filter((d) => d.boxes.tunnel_hostname === args.box);
+  // A device the health sweep recorded `dead` is left alone: booting it parks
+  // it in VMOS `starting` for hours (FR10, box-1, 26 September 2026) and a
+  // device that never boots cannot leak anything. `audit-device-health.mjs
+  // --recheck` is the way to clear the verdict first.
+  const knownDead = devices.filter((d) => d.boot_health === "dead");
+  devices = devices.filter((d) => d.boot_health !== "dead");
   if (args.names) {
     const wanted = args.names;
     const short = (d: DeviceRow) => d.boxes.tunnel_hostname.split(".")[0];
@@ -201,10 +227,19 @@ async function main() {
   if (args.countries) devices = devices.filter((d) => args.countries!.has(expectedCountry(d) ?? ""));
   if (args.provider) devices = devices.filter((d) => (d.proxy_host ?? "").toLowerCase().includes(args.provider!));
 
-  // Proxies already held by a device on an online box (the DB mirror) — the
-  // holder keeps it, nobody else gets it.
+  // Proxies already held by a device (the DB mirror, every box) — the holder
+  // keeps it, nobody else gets it. `--reclaim-offline` frees those held on
+  // offline boxes, and only those.
   const reserved = new Map<string, string>();
-  for (const d of all) if (d.state !== "removed" && d.proxy_host && d.proxy_port) reserved.set(proxyKey(d.proxy_host, d.proxy_port), d.id);
+  let reclaimed = 0;
+  for (const h of holders) {
+    if (!h.proxy_host || !h.proxy_port) continue;
+    if (args.reclaimOffline && h.boxes?.status === "offline") {
+      reclaimed++;
+      continue;
+    }
+    reserved.set(proxyKey(h.proxy_host, h.proxy_port), h.id);
+  }
 
   const { assignments, spare, short, reserved: withheld } = args.reapply
     ? reapplyPlan(devices)
@@ -213,16 +248,27 @@ async function main() {
   const unplanned = assignments.filter((a) => a.proxy === null);
 
   console.log(`=== proxy assignment — ${proxies.length} proxies in the list, ${devices.length} device(s) in scope ===`);
-  console.log(`planned ${planned.length} · without a proxy for their country ${unplanned.length} · withheld (held by another device) ${withheld} · spare ${JSON.stringify(spare)} · short ${JSON.stringify(short)}`);
+  console.log(
+    `planned ${planned.length} · without a proxy for their country ${unplanned.length} · withheld (held by another device) ${withheld}` +
+      `${args.reclaimOffline ? ` · reclaimed from offline boxes ${reclaimed}` : ""} · spare ${JSON.stringify(spare)} · short ${JSON.stringify(short)}`,
+  );
   if (unplanned.length) console.log(`  unplanned: ${unplanned.map((a) => `${a.device.boxes.name}/${a.device.user_name ?? a.device.db_id} (${a.country ?? "no country"})`).join(", ")}`);
+  if (knownDead.length) console.log(`  known dead, left alone: ${knownDead.map((d) => `${d.boxes.name}/${d.user_name ?? d.db_id}`).join(", ")}`);
+  // A device already holding its planned proxy is not touched (it was proven
+  // when it got it; `--reapply` is the way to write it again).
+  const keepsOwn = (a: Assignment & { proxy: ProxyRow }) => !args.reapply && reserved.get(proxyKey(a.proxy.host, a.proxy.port)) === a.device.id;
+  const changes = planned.filter((a) => !keepsOwn(a));
+  console.log(`${planned.length - changes.length} device(s) keep their own proxy (not touched) · ${changes.length} to write`);
   if (args.dryRun) {
-    for (const a of planned) console.log(`  ${a.device.boxes.name}/${(a.device.user_name ?? a.device.db_id).padEnd(8)} ${a.country} ← ${a.proxy.host}:${a.proxy.port}${a.proxy.city ? ` (${a.proxy.city})` : ""}`);
+    for (const a of planned) {
+      console.log(`  ${a.device.boxes.name}/${(a.device.user_name ?? a.device.db_id).padEnd(8)} ${a.country} ${keepsOwn(a) ? "= keeps" : "←"} ${a.proxy.host}:${a.proxy.port}${a.proxy.city ? ` (${a.proxy.city})` : ""}`);
+    }
     return;
   }
 
   // Per box, two in flight; boxes in parallel (each has its own ceiling).
   const byBox = new Map<string, (Assignment & { proxy: ProxyRow })[]>();
-  for (const a of planned) {
+  for (const a of changes) {
     const host = a.device.boxes.tunnel_hostname;
     if (!byBox.has(host)) byBox.set(host, []);
     byBox.get(host)!.push(a);

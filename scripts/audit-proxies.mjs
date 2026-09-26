@@ -47,7 +47,7 @@ async function main() {
   devices = devices.filter((d) => d.boxes && d.boxes.status !== "offline");
   if (args.runningOnly) devices = devices.filter((d) => d.state === "running");
 
-  console.log(`=== proxy routing audit — ${devices.length} proxy-enabled device(s) on online boxes ===\n`);
+  console.log(`=== proxy routing audit — ${devices.length} device(s) with a proxy on online boxes ===\n`);
 
   const rows = await mapWithConcurrency(devices, args.concurrency, async (d) => ({
     device: d,

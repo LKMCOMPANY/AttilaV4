@@ -185,18 +185,23 @@ export async function fetchDevicesWithBoxes() {
   );
 }
 
-/** All proxy-enabled devices with their box hostname + state (proxy audit). */
+/**
+ * Every device holding a proxy (the DB mirror: `proxy_host` set, enabled or
+ * not), on ANY box — offline boxes included, a dedicated IP is held by the
+ * account that used it whether the box is up or not. Proxy audit and the
+ * assignment planner's reservations.
+ */
 export async function fetchProxiedDevices() {
   return supabaseFetch(
-    "devices?select=id,db_id,user_name,state,proxy_type,proxy_host,proxy_port," +
-      "boxes(name,tunnel_hostname,status)&proxy_enabled=is.true&order=user_name.asc",
+    "devices?select=id,db_id,user_name,state,proxy_enabled,proxy_type,proxy_host,proxy_port," +
+      "boxes(name,tunnel_hostname,status)&proxy_host=not.is.null&state=neq.removed&order=user_name.asc",
   );
 }
 
 /** Every device on an ONLINE box (reconcile, ghosts): identity, state, proxy flag, box. */
 export async function fetchDevicesOnOnlineBoxes() {
   return supabaseFetch(
-    "devices?select=id,db_id,user_name,state,country,account_id,proxy_enabled,proxy_type,proxy_host,proxy_port,proxy_account,proxy_password," +
+    "devices?select=id,db_id,user_name,state,country,account_id,boot_health,proxy_enabled,proxy_type,proxy_host,proxy_port,proxy_account,proxy_password," +
       "boxes!inner(name,tunnel_hostname,status,max_concurrent_containers)" +
       "&boxes.status=eq.online&order=user_name.asc",
   );

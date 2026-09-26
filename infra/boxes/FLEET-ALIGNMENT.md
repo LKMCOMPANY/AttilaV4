@@ -253,6 +253,38 @@ underneath — the MCP way was exercised live from Cursor (start, verify,
 stop on US23), the route way on production (US32: `engine host`, `exit
 US/New York City 48.47.5.11`).
 
+## Snapshot — 26 September 2026, proxies, second pass (15:30–17:40 Paris)
+
+- **211 NodeMaven devices re-written on the one profile**, same IP: 210
+  `OK`, 1 `MISMATCH` (`GB41`, row says CN). box-1's Cloudflare tunnel dropped
+  around 14:52 for a few minutes (`cloudflared` "context canceled"; cbs_go up
+  since 25 September 19:38, never restarted) — everything riding it failed in
+  that window (32 devices), all `OK` once re-run; the three devices busy with a
+  maintenance task at plan time and FR5 (slow under load, 15 s alone) `OK`.
+- **48 devices moved onto the list**: 45 GB (incl. the two parked probes,
+  now `GB`) → GB/London, 3 FR → FR/Paris, all proven on the same boot.
+  FR10 (box-1, `dead` since 25 September) refused to boot twice; it sits in
+  `starting` again until reconcile + reaper clear it.
+- **Fleet (352 devices online): 170 on the list, 170 on NodeMaven (US 94,
+  ES 35, FR 27, DE 12, CA 1, GB41), 12 without a proxy (4 dead, 8
+  avatar-less spares on box-3).** box-3 wrong-country exits: 61 left. To
+  order: US 150, ES 55, FR 30, DE 22, CA 6, AE 1 (see `PROXY-STRATEGY.md`).
+- Two defects found by the tooling, fixed and tested before anything ran:
+  the planner could hand a port to a device sorted before its holder
+  (caught by `--dry-run`); reservations are now fleet-wide with
+  `--reclaim-offline` explicit (100 ports recorded on box-5). And
+  `record-sweep-attention.ts` resolved nothing by re-probe since it was
+  written — the resolve target lacked the box the key carries; fixed, 7
+  stale `proxy_incoherent` items closed from the verification sweeps.
+- Measured, not assumed: a host-engine device (FR18) exits through its
+  proxy from the first shell answer (+22 s, before `boot_completed`), 22
+  readings, 0 through the box. The vendor's mihomo config keeps `DIRECT` in
+  the group and resolves with its own DNS list (`223.5.5.5` first) whatever
+  `dnsServers` we send — two questions for VMOS, in `PROXY-STRATEGY.md`.
+- Nothing of ours left running after the passes (checked on the four boxes
+  at 17:40): box-2/3/4 all stopped; box-1 has US36 running for the Maintain
+  worker's own `probe` task and FR10 in `starting`.
+
 ## Snapshot — 26 September 2026, Phase 2 (vendor firmware, 07:55–08:35 Paris)
 
 GO given at 07:56. Three L1 boxes brought to the vendor's last L1 targets,

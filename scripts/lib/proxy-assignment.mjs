@@ -81,18 +81,28 @@ export function planAssignments(devices, proxies, { reserved = new Map() } = {})
   }
   /** @type {Record<string, number>} */
   const short = {};
+  const holderOf = (p) => reserved.get(proxyKey(p.host, p.port));
+  /** Take the device's own proxy if it holds one of its country, else the first one nobody holds. */
+  const take = (list, device) => {
+    const own = list.findIndex((p) => holderOf(p) === device.id);
+    const i = own >= 0 ? own : list.findIndex((p) => !holderOf(p));
+    return i >= 0 ? list.splice(i, 1)[0] : null;
+  };
   const assignments = [...devices]
     .sort((a, b) => (a.user_name ?? a.db_id).localeCompare(b.user_name ?? b.db_id))
     .map((device) => {
       const country = expectedCountry(device);
-      // A device already holding a listed proxy of its country keeps it.
-      const own = country ? (pool.get(country) ?? []).findIndex((p) => reserved.get(proxyKey(p.host, p.port)) === device.id) : -1;
-      const proxy = country ? (own >= 0 ? pool.get(country).splice(own, 1)[0] : pool.get(country)?.shift() ?? null) : null;
+      // A proxy held by another device in scope is that device's — it keeps it
+      // at its own turn, whatever the sort order; nobody else gets it.
+      const proxy = country ? take(pool.get(country) ?? [], device) : null;
       if (country && !proxy) short[country] = (short[country] ?? 0) + 1;
       return { device, proxy, country };
     });
   /** @type {Record<string, number>} */
   const spare = {};
-  for (const [country, rest] of pool) if (rest.length) spare[country] = rest.length;
+  for (const [country, rest] of pool) {
+    const free = rest.filter((p) => !holderOf(p)).length;
+    if (free) spare[country] = free;
+  }
   return { assignments, spare, short, reserved: reservedCount };
 }
