@@ -229,6 +229,49 @@ Commit `ad34715`, Render deploy `dep-darej7gu01pc73e4kuv0` built in 88 s and
   tunnel job of many minutes): ADBKeyboard 338 (96 %), TikTok 144, X 144,
   **208 devices with no social app** — box-3 alone has 107 of them.
 
+## Snapshot — 26 September 2026, Phase 2 (vendor firmware, 07:55–08:35 Paris)
+
+GO given at 07:56. Three L1 boxes brought to the vendor's last L1 targets,
+one at a time, canary first, each under a 2-hour maintenance window (arbiter
+refusing, reaper skipping, status held), all containers stopped, our own copy
+of the running `cbs_go` taken first.
+
+| Box | kernel flash → API back | new lease | CBS upload / restart | containers | validation boots |
+|---|---|---|---|---|---|
+| box-2 | 05:58Z → ~90 s | **.19 → .68** | 19 s / 25 s | 57 / 57 | US23 33 s, GB12 15 s |
+| box-3 | 06:19Z → 34 s | no | 20 s / 25 s | 126 / 126 | GB27 26 s, US118 10 s |
+| box-4 | 06:23Z → 46 s | no | 22 s / 25 s | 73 / 73 | US63 24 s, US85 10 s |
+
+Every validation boot: `/stream-ready` `ready`, v2 agent answers (1.1.1 on
+box-2/3, 1.1.3 on box-4), `/proxy-test` routes (host engine 690–1544 ms;
+GB27's in-guest engine 1204 ms, exit GB/London). Production Operator path on
+box-2 after the window closed: `POST …/start` 200 in 2.1 s, `stop` 200.
+`check-drift`: `cbs OK 1.1.7.17.1`, `kernel OK 2.0.57_marsbox`, all managed
+files current on the three boxes — the overlay upper (`/userdata`, a real
+partition) survived the reboots, as did `/opt`. **3/4 boxes on the vendor
+target**; box-1 stays at CBS 1.1.6.12.1 / kernel 1.0.86 until VMOS answers.
+
+Measured along the way:
+
+- **A kernel flash can change the DHCP lease.** box-2 came back on
+  `192.168.1.68`; nothing noticed except the poll loop that waited on `.19`.
+  The proxy resolved the new address itself (`api_source default_route`), the
+  presence writer recorded it, LAN discovery by MAC found the box. This is
+  the scenario the zero-IP rule was written for; it held.
+- **CBS 1.1.7.17.1 listens on `*:18182`** (1.1.4.x bound the LAN IP only), so
+  `127.0.0.1:18182` answers again on the upgraded boxes; `/v1/systeminfo`
+  now returns `cbs_version`; the updater leaves `cbs_go.backup` = the
+  previous binary (147 MB) next to itself — a real rollback for the CBS step.
+- `/etc/docker/daemon.json` differs per box since provisioning (box-1/2:
+  `data-root /userdata/docker` on the 26 GB eMMC partition; box-3/4:
+  `/container_nswc_lv/docker` on the NVMe). Dated 18 April 2026 on box-2 —
+  not a Phase 2 effect. A fleet-uniformity item for later, not urgent
+  (3.3 GB used, 19 GB free).
+- `proxy_get` exposes the engine placement as `engineType`: **1 = host-side
+  mihomo** (`nodes[]`, `proxyMode: proxy`), **0 = in-guest clash** (the
+  `blockUntilReady` / `proxyDnsServers` family). Our `setProxyConfig` never
+  sent it; the unification pass will send `engineType: 1`.
+
 ## Snapshot — 26 September 2026, Phase 4 (devices, 00:00–01:30 Paris) and Phase 5 (cockpits)
 
 **One boot per device.** `audit-device-health.mjs --with-proxy`, one process

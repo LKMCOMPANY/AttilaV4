@@ -386,6 +386,46 @@ box-2, 1.1.6.12.1 on box-1), REST on the box itself:
   `e4298435…3d94`; `cbs_go_edge_1.1.7.2.1.cbs` 211 039 680 B sha256
   `580cac03…156b`. The vendor publishes no checksums; these are ours.
 
+Done on box-2, box-3, box-4 on 26 September 2026 (FLEET-ALIGNMENT.md, Phase 2
+snapshot). The procedure that worked, ~12 minutes per box:
+
+```bash
+# 1. freeze: maintenance window (admin UI, 2 h) — 0 running, 0 job/task due
+# 2. keep our own copy of the running binary
+ssh root@<box> 'cd /root/armcloud-container-backend-service && cp -p cbs_go cbs_go.<current-version>'
+# 3. kernel — the host reboots by itself; find it again BY MAC, its lease may change
+curl -F "file=@boot-2.0.57-marsbox.img" http://<box-ip>:18182/v1/update_kernel
+# 4. cbs — cbs_go restarts in ~25 s and leaves cbs_go.backup = the previous binary
+curl -F "file=@cbs_go_edge_1.1.7.17.1.cbs" http://<box-ip>:18182/v1/update_cbs
+# 5. verify: get_hardware_cfg (version, kernel_version), list_names unchanged,
+#    two serial boots (boot_ms, /stream-ready, v2 base/version_info, /proxy-test),
+#    close the window, check-drift
+```
+
+CBS rollback: `cp cbs_go.backup cbs_go && supervisorctl restart cbs_go`.
+Kernel rollback: none.
+
+### The question to send to VMOS before touching box-1
+
+To `start@vmoscloud.com` (English, one message):
+
+> We operate VMOS Edge boxes, hardware model **L1** (Rockchip RK3588S,
+> MARSBOX). Three of them were upgraded today through the API to kernel
+> `boot-2.0.57-marsbox.img` and CBS `1.1.7.17.1` without issue. The fourth
+> box differs: it runs firmware **E1.02 (November 2025)**, kernel
+> **1.0.86_marsbox (Linux 5.10.157)**, **without overlayroot**, and CBS
+> **1.1.6.12.1** — a combination your 5 June release note says is not
+> supported (CBS ≥ 1.1.6.5 requires kernel ≥ 2.0.57). Questions:
+> 1. Is `POST /v1/update_kernel` with `boot-2.0.57-marsbox.img` supported
+>    from 1.0.86 / E1.02 on a root filesystem without overlayroot, or does
+>    this box require the full firmware image
+>    (`update_2.0.61_marsbox_20260703.img`)?
+> 2. Does the full firmware flash erase the NVMe (`/container_nswc_lv`,
+>    96 containers) or only the eMMC?
+> 3. Is there a kernel-only image to return to 1.0.86 if the 2.0.57 kernel
+>    fails to boot on this firmware?
+> Device id `6d9d218d5e9f81e8`, MAC `70:b3:d5:1a:75:c9`.
+
 ## 6 bis. Concurrency, the 10-container ceiling and the v2 agent — measured 9 September 2026
 
 Full record in `../../MAINTENANCE-AGENT.md` §2.5.

@@ -99,8 +99,13 @@ Two measurement traps, both paid for the hard way:
 5. **Vendor firmware is per hardware model and one-way.** L1 (box-1..4) and
  K1 (box-5, API `model` says `E1.01`) do not share a kernel; no kernel-only
  image exists to go back to 2.0.30. Read `model` first, canary box-2 first,
- `disk_migration/prepare` before every kernel flash, one box at a time, and a
- written vendor confirmation before touching box-1 (5.10 → 6.1, no overlayroot).
+ one box at a time under a maintenance window, and a written vendor
+ confirmation before touching box-1 (5.10 → 6.1, no overlayroot). There is
+ no vendor safety net: `/disk_migration/*` is 404 on every CBS line we run;
+ what protects the data is that `update_kernel` / `update_cbs` touch neither
+ the NVMe nor the overlay upper (measured on box-2/3/4, 26 September 2026 —
+ kernel 2.0.57 + CBS 1.1.7.17.1, ~12 min per box). A kernel flash can change
+ the DHCP lease: find the box by MAC afterwards, never by its old IP.
 6. **The host is vendor firmware; our layer is `infra/boxes/`.** No `apt
  upgrade`; `logrotate` is the only package we add. Everything we converge is a
  versioned file under `infra/boxes/files/` shipped by `deploy.sh` and verified
