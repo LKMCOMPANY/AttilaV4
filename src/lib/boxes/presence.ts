@@ -100,10 +100,13 @@ function hostHealth(obs: BoxObservation, now: Date, thresholds: HealthThresholds
  * Decide what to write from what was observed. Pure.
  *
  *   - the box answered  → `online`, fresh heartbeat, observed lan_ip, host
- *     sample, firmware facts when they were read;
+ *     sample, firmware facts when they were read — whatever the maintenance
+ *     window says: a box that answers is online, the window is a gate the
+ *     slot arbiter applies, not a status (box-5 came back under an open
+ *     window on 26 September 2026 and read `offline` while it answered);
  *   - the box did not   → `offline` — unless a maintenance window is open, in
  *     which case the status is left alone (a firmware flash reboots the host
- *     and must not read as an outage, nor flip back mid-procedure).
+ *     and must not read as an outage).
  */
 export function decidePresence(
   row: BoxPresenceRow,
@@ -121,11 +124,11 @@ export function decidePresence(
   }
 
   const patch: Record<string, unknown> = {
+    status: "online",
     uptime_seconds: obs.health.uptime ?? null,
     container_count: obs.containers?.list.length ?? obs.health.containers ?? 0,
     last_heartbeat: now.toISOString(),
   };
-  if (!underMaintenance) patch.status = "online";
 
   const lanIp = obs.net?.host_ip ?? obs.health.lan_ip ?? obs.containers?.host_ip ?? null;
   if (lanIp) patch.lan_ip = lanIp;
@@ -141,12 +144,7 @@ export function decidePresence(
   }
   if (obs.image !== undefined) patch.default_image = obs.image;
 
-  const transition: PresenceTransition = underMaintenance
-    ? "held_maintenance"
-    : row.status === "online"
-      ? "unchanged"
-      : "online";
-  return { transition, patch };
+  return { transition: row.status === "online" ? "unchanged" : "online", patch };
 }
 
 /** Is it time to read the (slow-changing) firmware facts again? */

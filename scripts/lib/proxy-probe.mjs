@@ -42,6 +42,22 @@ const ENGINE_STARTING_BUDGET_MS = 45_000;
 const ENGINE_STARTING_POLL_MS = 5_000;
 
 /**
+ * cbs_go forwards proxy calls to a service inside the guest (port 18183) that
+ * comes up a few seconds after `boot_completed`. True once it answers.
+ * @param {string} boxHost
+ * @param {string} dbId
+ * @param {number} [timeoutMs]
+ */
+export async function waitProxyService(boxHost, dbId, timeoutMs = 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fetchProxyConfig(boxHost, dbId).catch(() => null)) return true;
+    await sleep(3000);
+  }
+  return false;
+}
+
+/**
  * Read the configured proxy of a RUNNING device and mirror it in the DB.
  * Returns `{ status: "proxied" | "no_proxy", detail, cfg }`.
  */

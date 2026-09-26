@@ -17,7 +17,11 @@
  * offline ones included — is never handed out: a dedicated IP shared by two
  * devices ties two accounts together. `--reclaim-offline` releases the
  * proxies held by devices of OFFLINE boxes (a list re-purposed from a box
- * that will be re-provisioned before it ever starts again) and says how many.
+ * that will be re-provisioned before it ever starts again) and says how many;
+ * `--reclaim-from <box>` does the same for one named box whatever its status
+ * (box-5 back online on 26 September 2026, its 100 rows still on the ports
+ * the online fleet had taken over — its devices get new ports, the others
+ * keep theirs).
  * A device whose country has no proxy left is listed, not touched. `--box`,
  * `--names` and `--countries` narrow the run; names are NOT unique across
  * boxes (US100 lives on box-3 and box-4), so a name may be box-qualified:
@@ -45,6 +49,7 @@
  * Usage (from Attila V4/):
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --dry-run
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --reclaim-offline --dry-run
+ *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --box box-5.attila.army --reclaim-from box-5.attila.army
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --box box-3.attila.army
  *   npx tsx scripts/assign-proxies.ts --csv proxies.csv --names US30,FR22 --report out.json
  *   npx tsx scripts/assign-proxies.ts --reapply --provider nodemaven --box box-2.attila.army
@@ -62,7 +67,7 @@ import {
   stopContainer,
   waitBootCompleted,
 } from "./lib/fleet.mjs";
-import { probeRouting, readProxyConfig } from "./lib/proxy-probe.mjs";
+import { probeRouting, readProxyConfig, waitProxyService } from "./lib/proxy-probe.mjs";
 import { parseProxyCsv, planAssignments, proxyKey } from "./lib/proxy-assignment.mjs";
 import { expectedCountry } from "./lib/proxy-verdict.mjs";
 import { loadDotEnvLocal } from "./lib/dotenv.mjs";
@@ -90,7 +95,7 @@ interface ProxyHolder {
   id: string;
   proxy_host: string | null;
   proxy_port: number | null;
-  boxes: { status: string } | null;
+  boxes: { status: string; tunnel_hostname: string } | null;
 }
 
 interface Assignment {
@@ -103,7 +108,7 @@ const STARTS_IN_FLIGHT_PER_BOX = 2;
 
 function parseArgs(argv: string[]) {
   const args = {
-    csv: "", dryRun: false, reapply: false, reclaimOffline: false, provider: null as string | null,
+    csv: "", dryRun: false, reapply: false, reclaimOffline: false, reclaimFrom: null as string | null, provider: null as string | null,
     box: null as string | null, names: null as Set<string> | null, countries: null as Set<string> | null, report: null as string | null,
   };
   for (let i = 2; i < argv.length; i++) {
@@ -111,6 +116,7 @@ function parseArgs(argv: string[]) {
     if (a === "--csv") args.csv = argv[++i];
     else if (a === "--dry-run") args.dryRun = true;
     else if (a === "--reclaim-offline") args.reclaimOffline = true;
+    else if (a === "--reclaim-from") args.reclaimFrom = argv[++i];
     else if (a === "--box") args.box = argv[++i];
     else if (a === "--names") args.names = new Set(argv[++i].split(",").map((s) => s.trim()).filter(Boolean));
     // each entry is `NAME` (any box) or `box-N:NAME`
@@ -137,18 +143,8 @@ interface ApplyResult {
   error?: string;
 }
 
-/** cbs_go forwards proxy calls to a service inside the guest (port 18183) that comes up a few seconds after boot_completed. */
-async function waitProxyService(host: string, dbId: string, fetchProxyConfig: (h: string, id: string) => Promise<unknown>): Promise<boolean> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    if (await fetchProxyConfig(host, dbId).catch(() => null)) return true;
-    await sleep(3000);
-  }
-  return false;
-}
-
 async function applyOne(a: Assignment & { proxy: ProxyRow }, alreadyRunning: Set<string>): Promise<ApplyResult> {
-  const { setProxyConfig, fetchProxyConfig, restartContainer } = await import("../src/lib/box-api");
+  const { setProxyConfig, restartContainer } = await import("../src/lib/box-api");
   const host = a.device.boxes.tunnel_hostname;
   const dbId = a.device.db_id;
   // A device that was already up stays up afterwards; it is restarted all the same — the write demands it.
@@ -159,7 +155,7 @@ async function applyOne(a: Assignment & { proxy: ProxyRow }, alreadyRunning: Set
       await runContainer(host, dbId);
       if ((await waitBootCompleted(host, dbId)) === null) return { ...out, result: "boot_timeout" };
     }
-    if (!(await waitProxyService(host, dbId, fetchProxyConfig))) return { ...out, result: "proxy_service_timeout" };
+    if (!(await waitProxyService(host, dbId))) return { ...out, result: "proxy_service_timeout" };
     await setProxyConfig(host, dbId, { proxyType: "socks5", ip: a.proxy.host, port: a.proxy.port, account: a.proxy.username, password: a.proxy.password });
     // cbs_go acknowledges before the engine has reloaded: `proxy_get` can still
     // answer the previous upstream for a few seconds (US32, 26 Sep 2026 — the
@@ -176,7 +172,7 @@ async function applyOne(a: Assignment & { proxy: ProxyRow }, alreadyRunning: Set
     // The guest follows the new upstream only after a boot: restart, then prove.
     await restartContainer(host, dbId);
     if ((await waitBootCompleted(host, dbId)) === null) return { ...out, result: "boot_timeout", configured: config.detail };
-    if (!(await waitProxyService(host, dbId, fetchProxyConfig))) return { ...out, result: "proxy_service_timeout", configured: config.detail };
+    if (!(await waitProxyService(host, dbId))) return { ...out, result: "proxy_service_timeout", configured: config.detail };
     config = await readProxyConfig(host, a.device); // now mirrored to the DB
     const routing = await probeRouting(host, { ...a.device, state: "running" }, { geo: true });
     const exit = routing.geo?.exit ?? null;
@@ -232,14 +228,17 @@ async function main() {
   // offline boxes, and only those.
   const reserved = new Map<string, string>();
   let reclaimed = 0;
+  const reclaimedFrom = (h: ProxyHolder) =>
+    (args.reclaimOffline && h.boxes?.status === "offline") || (args.reclaimFrom !== null && h.boxes?.tunnel_hostname === args.reclaimFrom);
   for (const h of holders) {
     if (!h.proxy_host || !h.proxy_port) continue;
-    if (args.reclaimOffline && h.boxes?.status === "offline") {
+    if (reclaimedFrom(h)) {
       reclaimed++;
       continue;
     }
     reserved.set(proxyKey(h.proxy_host, h.proxy_port), h.id);
   }
+  const reclaiming = args.reclaimOffline || args.reclaimFrom !== null;
 
   const { assignments, spare, short, reserved: withheld } = args.reapply
     ? reapplyPlan(devices)
@@ -250,7 +249,7 @@ async function main() {
   console.log(`=== proxy assignment — ${proxies.length} proxies in the list, ${devices.length} device(s) in scope ===`);
   console.log(
     `planned ${planned.length} · without a proxy for their country ${unplanned.length} · withheld (held by another device) ${withheld}` +
-      `${args.reclaimOffline ? ` · reclaimed from offline boxes ${reclaimed}` : ""} · spare ${JSON.stringify(spare)} · short ${JSON.stringify(short)}`,
+      `${reclaiming ? ` · reclaimed ${reclaimed}` : ""} · spare ${JSON.stringify(spare)} · short ${JSON.stringify(short)}`,
   );
   if (unplanned.length) console.log(`  unplanned: ${unplanned.map((a) => `${a.device.boxes.name}/${a.device.user_name ?? a.device.db_id} (${a.country ?? "no country"})`).join(", ")}`);
   if (knownDead.length) console.log(`  known dead, left alone: ${knownDead.map((d) => `${d.boxes.name}/${d.user_name ?? d.db_id}`).join(", ")}`);

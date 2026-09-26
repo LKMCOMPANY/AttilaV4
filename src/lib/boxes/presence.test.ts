@@ -48,12 +48,14 @@ describe("decidePresence", () => {
     expect(decidePresence(row({ status: "offline" }), { health: null, containers: null }, now)).toEqual({ transition: "unchanged", patch: {} });
   });
 
-  it("holds the status during a maintenance window, in both directions", () => {
+  it("holds a silent box's status during a maintenance window; a box that answers is online whatever the window", () => {
     const m = row({ status: "online", maintenance_until: "2026-09-25T21:00:00Z" });
     expect(decidePresence(m, { health: null, containers: null }, now)).toEqual({ transition: "held_maintenance", patch: {} });
+    // box-5, 26 September 2026: back from four days off under an open window — it answers, so it is online;
+    // the window is the slot arbiter's gate, not a status.
     const back = decidePresence(row({ status: "offline", maintenance_until: "2026-09-25T21:00:00Z" }), answering, now);
-    expect(back.transition).toBe("held_maintenance");
-    expect(back.patch).not.toHaveProperty("status");
+    expect(back.transition).toBe("online");
+    expect(back.patch).toMatchObject({ status: "online" });
     expect(back.patch).toHaveProperty("last_heartbeat");
   });
 
