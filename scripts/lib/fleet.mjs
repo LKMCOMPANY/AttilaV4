@@ -196,7 +196,7 @@ export async function fetchProxiedDevices() {
 /** Every device on an ONLINE box (reconcile, ghosts): identity, state, proxy flag, box. */
 export async function fetchDevicesOnOnlineBoxes() {
   return supabaseFetch(
-    "devices?select=id,db_id,user_name,state,country,account_id,proxy_enabled," +
+    "devices?select=id,db_id,user_name,state,country,account_id,proxy_enabled,proxy_host,proxy_port," +
       "boxes!inner(name,tunnel_hostname,status,max_concurrent_containers)" +
       "&boxes.status=eq.online&order=user_name.asc",
   );
@@ -211,10 +211,17 @@ export async function fetchBusyDeviceIds() {
 }
 
 /** Read the live proxy config of a RUNNING device (VMOS proxy_get). */
+/**
+ * `proxy_get` of a RUNNING device: the config (with `engineType`), or
+ * `{ enabled: false }` for a device with no proxy at all ("未设置代理"), or
+ * `null` when the device could not be asked (stopped, or its in-guest proxy
+ * service not up yet) — the same three answers as `src/lib/box-api/proxy.ts`.
+ */
 export async function fetchProxyConfig(boxHost, dbId) {
   const json = await boxFetch(boxHost, `/android_api/v1/proxy_get/${dbId}`);
   if ((json?.code ?? -1) !== 200) return null;
-  return json?.data?.proxy_config ?? null;
+  if (!json?.data?.proxy_config) return { enabled: false };
+  return { ...json.data.proxy_config, engineType: json.data.engineType };
 }
 
 /** Persist the observed proxy config (or clear it) for a device. */

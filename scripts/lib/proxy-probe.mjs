@@ -85,11 +85,25 @@ export async function probeRouting(boxHost, device, { geo = false } = {}) {
     await sleep(ENGINE_STARTING_POLL_MS);
     result = await proxyTest(boxHost, device.db_id);
   }
+  // A host engine reloading its upstream (just after a `proxy_set`) lets the
+  // guest out through the box for a few seconds — GB35, box-2, 26 Sep 2026:
+  // unproxied at +2 s, GB/London at +8 s. One second look before the verdict.
+  if (result?.error === "unproxied") {
+    await sleep(ENGINE_STARTING_POLL_MS);
+    result = await proxyTest(boxHost, device.db_id);
+  }
   const row = classifyRouting(device, result);
   if (result?.error === "engine_starting") row.detail += ` after ${Math.round((Date.now() - started) / 1000)} s`;
   if (geo && (row.tag === "ROUTES" || row.tag === "UNPROXIED")) {
-    // The guest-engine probe already carries the exit; the host-engine one does not.
-    const exit = row.exit ?? (await fetchExitGeo(boxHost, device.db_id));
+    // The box measures the exit itself (proxy ≥ 1.3.3); right after a
+    // `proxy_set` the host engine reloads and the first read can come back
+    // without one — ask again before falling back to the guest's own curl.
+    let exit = row.exit ?? null;
+    for (let attempt = 0; !exit && attempt < 2; attempt++) {
+      await sleep(4000);
+      exit = classifyRouting(device, await proxyTest(boxHost, device.db_id)).exit ?? null;
+    }
+    exit ??= await fetchExitGeo(boxHost, device.db_id);
     row.geo = geoCoherence(device, exit);
   }
   return row;

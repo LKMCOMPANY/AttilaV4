@@ -100,11 +100,19 @@ async function handleProxyTest(req, res) {
   }
 
   try {
-    const { json } = await delayTest(info);
-    if (json && typeof json.delay === 'number') {
-      return send(200, { ok: true, delayMs: json.delay, engine: 'host' });
+    // The controller's delay test says the upstream answers; the guest's own
+    // egress says where the device actually comes out — and whether it comes
+    // out through the proxy at all (a routing rule sending DIRECT would pass
+    // the delay test and still leak). Both, on every verify (1.3.3).
+    const [{ json }, guest] = await Promise.all([delayTest(info), probeGuestExit(dbId)]);
+    const exit = guest && guest.exit ? guest.exit : null;
+    if (guest && guest.error === 'unproxied') {
+      return send(200, { ok: false, error: 'unproxied', engine: 'host', exit });
     }
-    return send(200, { ok: false, error: (json && json.message) || 'unreachable', engine: 'host' });
+    if (json && typeof json.delay === 'number') {
+      return send(200, { ok: true, delayMs: json.delay, engine: 'host', exit });
+    }
+    return send(200, { ok: false, error: (json && json.message) || 'unreachable', engine: 'host', exit });
   } catch (err) {
     // ECONNREFUSED here means mihomo isn't listening → container stopped /
     // proxy engine down rather than a genuine upstream failure.

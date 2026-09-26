@@ -46,19 +46,36 @@ export function parseProxyCsv(text) {
   });
 }
 
+/** `host:port` — the identity of a dedicated proxy. */
+export function proxyKey(host, port) {
+  return `${host}:${port}`;
+}
+
 /**
  * One proxy per device, by the persona's country, in `user_name` order so a
  * re-run with the same list gives the same device the same proxy. Devices
  * whose country has no proxy left are returned with `proxy: null`.
+ *
+ * `reserved` (`host:port` keys) are proxies another device already holds:
+ * a dedicated IP shared by two devices ties two accounts together, so those
+ * are never handed out — a device keeps its own proxy if it is in the list.
  * @template {DeviceLike} D
  * @param {D[]} devices
  * @param {ProxyRow[]} proxies
- * @returns {{ assignments: { device: D, proxy: ProxyRow | null, country: string | null }[], spare: Record<string, number>, short: Record<string, number> }}
+ * @param {{ reserved?: Map<string, string> }} [options] reserved: proxy key → holder device id
+ * @returns {{ assignments: { device: D, proxy: ProxyRow | null, country: string | null }[], spare: Record<string, number>, short: Record<string, number>, reserved: number }}
  */
-export function planAssignments(devices, proxies) {
+export function planAssignments(devices, proxies, { reserved = new Map() } = {}) {
+  const deviceIds = new Set(devices.map((d) => d.id));
   /** @type {Map<string, ProxyRow[]>} */
   const pool = new Map();
+  let reservedCount = 0;
   for (const p of proxies) {
+    const holder = reserved.get(proxyKey(p.host, p.port));
+    if (holder && !deviceIds.has(holder)) {
+      reservedCount++;
+      continue;
+    }
     if (!pool.has(p.country)) pool.set(p.country, []);
     pool.get(p.country).push(p);
   }
@@ -68,12 +85,14 @@ export function planAssignments(devices, proxies) {
     .sort((a, b) => (a.user_name ?? a.db_id).localeCompare(b.user_name ?? b.db_id))
     .map((device) => {
       const country = expectedCountry(device);
-      const proxy = country ? (pool.get(country)?.shift() ?? null) : null;
+      // A device already holding a listed proxy of its country keeps it.
+      const own = country ? (pool.get(country) ?? []).findIndex((p) => reserved.get(proxyKey(p.host, p.port)) === device.id) : -1;
+      const proxy = country ? (own >= 0 ? pool.get(country).splice(own, 1)[0] : pool.get(country)?.shift() ?? null) : null;
       if (country && !proxy) short[country] = (short[country] ?? 0) + 1;
       return { device, proxy, country };
     });
   /** @type {Record<string, number>} */
   const spare = {};
   for (const [country, rest] of pool) if (rest.length) spare[country] = rest.length;
-  return { assignments, spare, short };
+  return { assignments, spare, short, reserved: reservedCount };
 }

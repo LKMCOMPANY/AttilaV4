@@ -17,12 +17,20 @@ const state = {
   guestBody: '',          // what `curl ipinfo.io/json` prints in the guest
   engineState: '0\n0',    // `ps | grep -c clash; ip rule | grep -c Meta` in the guest
   wanIp: '145.224.95.86', // what the host sees as its own address
+  controllerDelay: 813,   // what the fake mihomo controller answers (null → unreachable)
 };
+
+const HOST_DB_ID = 'EDGE94LPUIBKIB0R'; // has a mihomo.json in the state dir → host engine
 
 function fakeCbsAndWan() {
   return new Promise((resolve) => {
     const srv = http.createServer((req, res) => {
       if (req.url === '/wan') return res.end(state.wanIp);
+      // the fake mihomo controller (host engine): /proxies/<node>/delay
+      if (/^\/proxies\/[^/]+\/delay/.test(req.url)) {
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify(state.controllerDelay == null ? { message: 'unreachable' } : { delay: state.controllerDelay }));
+      }
       if (/^\/android_api\/v1\/shell\/[A-Z0-9]+$/.test(req.url) && req.method === 'POST') {
         let body = '';
         req.on('data', (c) => { body += c; });
@@ -67,7 +75,12 @@ test.before(async () => {
   const port = cbs.address().port;
   process.env.API_HOST = '127.0.0.1';
   process.env.API_PORT = String(port);
-  process.env.CBS_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cbs-state-')); // empty: no mihomo.json
+  process.env.CBS_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cbs-state-')); // empty except the host-engine device
+  fs.mkdirSync(path.join(process.env.CBS_STATE_DIR, HOST_DB_ID));
+  fs.writeFileSync(
+    path.join(process.env.CBS_STATE_DIR, HOST_DB_ID, 'mihomo.json'),
+    JSON.stringify({ 'external-controller': `127.0.0.1:${port}`, secret: 's', proxies: [{ name: 'upstream' }] }),
+  );
   process.env.WAN_IP_URL = `http://127.0.0.1:${port}/wan`;
   process.env.GUEST_EXIT_URL = 'http://ipinfo.test/json';
   process.env.PROXY_TEST_TIMEOUT_MS = '2000';
@@ -142,6 +155,37 @@ test('an invalid db_id is rejected before anything is asked', async () => {
   const { status, json } = await request(proxy, '/proxy-test/not-a-db-id');
   assert.equal(status, fixture.http_status.invalid_db_id);
   sameKeys(json, fixture.variants.invalid_db_id, 'invalid_db_id');
+});
+
+test('host engine: the delay test and the guest exit, together', async () => {
+  guestProbe.resetWanCache();
+  state.shellOk = true;
+  state.engineState = '0\n0';
+  state.controllerDelay = 813;
+  state.guestBody = JSON.stringify({ ip: '75.216.11.213', country: 'US', city: 'Westborough' });
+  const { status, json } = await request(proxy, `/proxy-test/${HOST_DB_ID}`);
+  assert.equal(status, fixture.http_status.host_routes);
+  sameKeys(json, fixture.variants.host_routes, 'host_routes');
+  assert.deepEqual(json, { ok: true, delayMs: 813, engine: 'host', exit: { ip: '75.216.11.213', country: 'US', city: 'Westborough' } });
+});
+
+test('host engine whose guest leaves through the box is unproxied even if the upstream answers', async () => {
+  state.guestBody = JSON.stringify({ ip: state.wanIp, country: 'FR', city: 'Paris' });
+  const { status, json } = await request(proxy, `/proxy-test/${HOST_DB_ID}`);
+  assert.equal(status, fixture.http_status.host_unproxied);
+  sameKeys(json, fixture.variants.host_unproxied, 'host_unproxied');
+  assert.equal(json.error, 'unproxied');
+});
+
+test('host engine whose upstream does not answer is unreachable, exit null when the guest has no internet', async () => {
+  state.controllerDelay = null;
+  state.guestBody = '';
+  const { status, json } = await request(proxy, `/proxy-test/${HOST_DB_ID}`);
+  assert.equal(status, fixture.http_status.host_unreachable);
+  sameKeys(json, fixture.variants.host_unreachable, 'host_unreachable');
+  assert.equal(json.error, 'unreachable');
+  assert.equal(json.exit, null);
+  state.controllerDelay = 813;
 });
 
 test('the fixture keeps the 1.3.0 shape decodable', () => {

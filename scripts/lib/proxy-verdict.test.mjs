@@ -14,7 +14,9 @@ describe("classifyRouting against the proxy fixture", () => {
   const v = fixture.variants;
 
   it("reads every variant as the contract intends", () => {
-    expect(classifyRouting(running, v.host_routes)).toMatchObject({ tag: "ROUTES", detail: "813 ms (host engine)", exit: null });
+    // Since 1.3.3 the host path carries the guest's exit too (null when the guest could not be asked).
+    expect(classifyRouting(running, v.host_routes)).toMatchObject({ tag: "ROUTES", detail: "813 ms (host engine)", exit: v.host_routes.exit });
+    expect(classifyRouting(running, v.host_unproxied)).toMatchObject({ tag: "UNPROXIED", exit: v.host_unproxied.exit });
     expect(classifyRouting(running, v.legacy_1_3_0)).toMatchObject({ tag: "ROUTES", detail: "813 ms" });
     expect(classifyRouting(running, v.guest_routes)).toMatchObject({ tag: "ROUTES", exit: v.guest_routes.exit });
     expect(classifyRouting(running, v.guest_unproxied)).toMatchObject({ tag: "UNPROXIED", exit: v.guest_unproxied.exit });

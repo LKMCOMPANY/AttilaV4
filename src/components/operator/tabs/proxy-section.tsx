@@ -340,10 +340,13 @@ function AppliedResult({
   // Reachability is the REAL routing verdict (mihomo delay), distinct from
   // whether a proxy is merely configured/enabled.
   const routes = reachable?.ok === true;
+  // Since proxy 1.3.1 the box also says where the guest comes out (in-guest
+  // engine) — the one fact that tells a French persona from a German exit.
+  const exit = reachable?.exit ? ` · exits ${reachable.exit.country ?? "?"}${reachable.exit.city ? `/${reachable.exit.city}` : ""}` : "";
   const reachLabel = reachable
     ? routes
-      ? `Routes · ${reachable.delayMs ?? "?"} ms`
-      : reachable.reason ?? "Does not route"
+      ? `Routes · ${reachable.delayMs ?? "?"} ms${exit}`
+      : `${reachable.reason ?? "Does not route"}${exit}`
     : "Reachability not tested";
   return (
     <div className="mt-2 rounded-md border bg-background/60 px-2.5 py-2">

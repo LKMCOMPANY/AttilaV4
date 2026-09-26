@@ -12,8 +12,12 @@
  * Plan (`--dry-run` prints it and stops): devices on ONLINE boxes, not
  * removed, ordered by user_name; the persona's country is `devices.country`
  * else the `user_name` prefix (FR90 → FR); each device takes the next unused
- * proxy of its country. A device whose country has no proxy left is listed,
- * not touched. `--box`, `--names` and `--countries` narrow the run.
+ * proxy of its country. A proxy another device (on an online box) already
+ * holds is never handed out — a dedicated IP shared by two devices ties two
+ * accounts together. A device whose country has no proxy left is listed, not
+ * touched. `--box`, `--names` and `--countries` narrow the run; names are
+ * NOT unique across boxes (US100 lives on box-3 and box-4), so a name may be
+ * box-qualified: `--names box-3:US100,GB3`.
  *
  * Apply, per device, two in flight per box: boot → `proxy_set` (product code:
  * `setProxyConfig`, tunnel) → `/proxy-test` + exit geo from the guest → mirror
@@ -42,7 +46,7 @@ import {
   stopContainer,
 } from "./lib/fleet.mjs";
 import { probeRouting, readProxyConfig } from "./lib/proxy-probe.mjs";
-import { parseProxyCsv, planAssignments } from "./lib/proxy-assignment.mjs";
+import { parseProxyCsv, planAssignments, proxyKey } from "./lib/proxy-assignment.mjs";
 import { expectedCountry } from "./lib/proxy-verdict.mjs";
 import { loadDotEnvLocal } from "./lib/dotenv.mjs";
 
@@ -55,6 +59,8 @@ interface DeviceRow {
   state: string;
   country?: string | null;
   proxy_enabled: boolean | null;
+  proxy_host?: string | null;
+  proxy_port?: number | null;
   boxes: { name: string; tunnel_hostname: string; status: string };
 }
 
@@ -75,6 +81,7 @@ function parseArgs(argv: string[]) {
     else if (a === "--dry-run") args.dryRun = true;
     else if (a === "--box") args.box = argv[++i];
     else if (a === "--names") args.names = new Set(argv[++i].split(",").map((s) => s.trim()).filter(Boolean));
+    // each entry is `NAME` (any box) or `box-N:NAME`
     else if (a === "--countries") args.countries = new Set(argv[++i].split(",").map((s) => s.trim().toUpperCase()).filter(Boolean));
     else if (a === "--report") args.report = argv[++i];
     else throw new Error(`Unknown argument: ${a}`);
@@ -106,8 +113,18 @@ interface ApplyResult {
   error?: string;
 }
 
+/** cbs_go forwards proxy calls to a service inside the guest (port 18183) that comes up a few seconds after boot_completed. */
+async function waitProxyService(host: string, dbId: string, fetchProxyConfig: (h: string, id: string) => Promise<unknown>): Promise<boolean> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    if (await fetchProxyConfig(host, dbId).catch(() => null)) return true;
+    await sleep(3000);
+  }
+  return false;
+}
+
 async function applyOne(a: Assignment & { proxy: ProxyRow }, alreadyRunning: Set<string>): Promise<ApplyResult> {
-  const { setProxyConfig } = await import("../src/lib/box-api");
+  const { setProxyConfig, fetchProxyConfig } = await import("../src/lib/box-api");
   const host = a.device.boxes.tunnel_hostname;
   const dbId = a.device.db_id;
   const startedByUs = !alreadyRunning.has(dbId);
@@ -117,9 +134,21 @@ async function applyOne(a: Assignment & { proxy: ProxyRow }, alreadyRunning: Set
       await runContainer(host, dbId);
       if (!(await waitBooted(host, dbId))) return { ...out, result: "boot_timeout" };
     }
+    if (!(await waitProxyService(host, dbId, fetchProxyConfig))) return { ...out, result: "proxy_service_timeout" };
     await setProxyConfig(host, dbId, { proxyType: "socks5", ip: a.proxy.host, port: a.proxy.port, account: a.proxy.username, password: a.proxy.password });
-    await sleep(2000);
-    const config = await readProxyConfig(host, a.device);
+    // cbs_go acknowledges before the engine has reloaded: `proxy_get` can still
+    // answer the previous upstream for a few seconds (US32, 26 Sep 2026 — the
+    // mirror then kept the old port and the next plan handed its new one to
+    // another device). Read back until the device reports what we wrote.
+    let config = await readProxyConfig(host, a.device, { dryRun: true });
+    for (let attempt = 0; attempt < 5 && !(config.cfg?.ip === a.proxy.host && Number(config.cfg?.port) === a.proxy.port); attempt++) {
+      await sleep(3000);
+      config = await readProxyConfig(host, a.device, { dryRun: true });
+    }
+    if (!(config.cfg?.ip === a.proxy.host && Number(config.cfg?.port) === a.proxy.port)) {
+      return { ...out, result: "set_not_applied", configured: config.detail };
+    }
+    config = await readProxyConfig(host, a.device); // now mirrored to the DB
     const routing = await probeRouting(host, { ...a.device, state: "running" }, { geo: true });
     const exit = routing.geo?.exit ?? null;
     const result = routing.tag !== "ROUTES" ? routing.tag : routing.geo && !routing.geo.coherent ? "MISMATCH" : "OK";
@@ -139,15 +168,24 @@ async function main() {
   const [all, busy] = await Promise.all([fetchDevicesOnOnlineBoxes() as Promise<DeviceRow[]>, fetchBusyDeviceIds()]);
   let devices = all.filter((d) => d.state !== "removed" && !busy.has(d.id));
   if (args.box) devices = devices.filter((d) => d.boxes.tunnel_hostname === args.box);
-  if (args.names) devices = devices.filter((d) => args.names!.has(d.user_name ?? ""));
+  if (args.names) {
+    const wanted = args.names;
+    const short = (d: DeviceRow) => d.boxes.tunnel_hostname.split(".")[0];
+    devices = devices.filter((d) => wanted.has(d.user_name ?? "") || wanted.has(`${short(d)}:${d.user_name ?? ""}`));
+  }
   if (args.countries) devices = devices.filter((d) => args.countries!.has(expectedCountry(d) ?? ""));
 
-  const { assignments, spare, short } = planAssignments(devices, proxies);
+  // Proxies already held by a device on an online box (the DB mirror) — the
+  // holder keeps it, nobody else gets it.
+  const reserved = new Map<string, string>();
+  for (const d of all) if (d.state !== "removed" && d.proxy_host && d.proxy_port) reserved.set(proxyKey(d.proxy_host, d.proxy_port), d.id);
+
+  const { assignments, spare, short, reserved: withheld } = planAssignments(devices, proxies, { reserved });
   const planned = assignments.filter((a): a is Assignment & { proxy: ProxyRow } => a.proxy !== null);
   const unplanned = assignments.filter((a) => a.proxy === null);
 
   console.log(`=== proxy assignment — ${proxies.length} proxies in the list, ${devices.length} device(s) in scope ===`);
-  console.log(`planned ${planned.length} · without a proxy for their country ${unplanned.length} · spare ${JSON.stringify(spare)} · short ${JSON.stringify(short)}`);
+  console.log(`planned ${planned.length} · without a proxy for their country ${unplanned.length} · withheld (held by another device) ${withheld} · spare ${JSON.stringify(spare)} · short ${JSON.stringify(short)}`);
   if (unplanned.length) console.log(`  unplanned: ${unplanned.map((a) => `${a.device.boxes.name}/${a.device.user_name ?? a.device.db_id} (${a.country ?? "no country"})`).join(", ")}`);
   if (args.dryRun) {
     for (const a of planned) console.log(`  ${a.device.boxes.name}/${(a.device.user_name ?? a.device.db_id).padEnd(8)} ${a.country} ← ${a.proxy.host}:${a.proxy.port}${a.proxy.city ? ` (${a.proxy.city})` : ""}`);

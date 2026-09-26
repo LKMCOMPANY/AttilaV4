@@ -9,13 +9,26 @@
 import { boxFetch, getCfHeaders } from "./fetch";
 import type { VmosProxyConfig, VmosResponse } from "./types";
 
-export async function fetchProxyConfig(tunnelHostname: string, dbId: string) {
-  const res = await boxFetch<VmosResponse<{ proxy_config: VmosProxyConfig; [key: string]: unknown }>>(
+/** What `proxy_get` answers for a device that has no proxy at all (`code 200`, "未设置代理", no `proxy_config`). */
+const NO_PROXY: VmosProxyConfig = { enabled: false, proxyType: "", ip: "", port: 0, account: "", password: "" };
+
+/**
+ * The configured proxy of a RUNNING device, with the engine it runs on
+ * (`engineType`: 1 = host-side mihomo, 0 = in-guest clash — PROXY-STRATEGY.md).
+ * A device without any proxy answers `enabled: false` (measured 26 September
+ * 2026 on US56: `code 200`, "未设置代理", no `proxy_config`). `null` only when
+ * the device could not be asked: container down, or its in-guest proxy service
+ * (port 18183) not up yet — cbs_go answers `code 0` "connection refused" for a
+ * few seconds after `sys.boot_completed`.
+ */
+export async function fetchProxyConfig(tunnelHostname: string, dbId: string): Promise<VmosProxyConfig | null> {
+  const res = await boxFetch<VmosResponse<{ proxy_config?: VmosProxyConfig; engineType?: number; [key: string]: unknown } | null>>(
     tunnelHostname,
     `/android_api/v1/proxy_get/${dbId}`,
   );
   if (res.code !== 200) return null;
-  return res.data.proxy_config;
+  if (!res.data?.proxy_config) return NO_PROXY;
+  return { ...res.data.proxy_config, engineType: res.data.engineType };
 }
 
 /**
@@ -30,6 +43,10 @@ export interface ProxyDelayTest {
   ok: boolean;
   delayMs: number | null;
   error: string | null;
+  /** Where the engine runs (proxy ≥ 1.3.1): `host` mihomo or `guest` clash. */
+  engine: "host" | "guest" | null;
+  /** The guest's measured egress, when the box probed it (`guest` engine). */
+  exit: { ip: string; country: string | null; city: string | null } | null;
 }
 
 /**
@@ -51,19 +68,23 @@ export async function fetchProxyDelayTest(
       signal: controller.signal,
     });
     const body = (await res.json().catch(() => null)) as
-      | { ok?: boolean; delayMs?: number; error?: string }
+      | { ok?: boolean; delayMs?: number; error?: string; engine?: string; exit?: { ip?: string; country?: string | null; city?: string | null } }
       | null;
-    if (!body) return { ok: false, delayMs: null, error: `http_${res.status}` };
+    if (!body) return { ok: false, delayMs: null, error: `http_${res.status}`, engine: null, exit: null };
     return {
       ok: !!body.ok,
       delayMs: typeof body.delayMs === "number" ? body.delayMs : null,
       error: body.ok ? null : body.error ?? `http_${res.status}`,
+      engine: body.engine === "host" || body.engine === "guest" ? body.engine : null,
+      exit: body.exit?.ip ? { ip: body.exit.ip, country: body.exit.country ?? null, city: body.exit.city ?? null } : null,
     };
   } catch (err) {
     return {
       ok: false,
       delayMs: null,
       error: err instanceof Error && err.name === "AbortError" ? "timeout" : "transport",
+      engine: null,
+      exit: null,
     };
   } finally {
     clearTimeout(timer);
@@ -148,6 +169,20 @@ export async function setProxyConfig(
   );
 
   if (res.code === 200) return;
+  // The device runs a proxy on the OTHER engine (in-guest clash): cbs_go
+  // refuses to switch under it ("存在不同引擎的代理正在运行中，请先关闭代理",
+  // measured 26 September 2026). Stop that one, then write ours — every
+  // writer (operator route, MCP, migration) moves a device to the one profile
+  // the same way.
+  if (res.code === 0 && /不同引擎|different engine/i.test(res.msg ?? "")) {
+    await clearProxyConfig(tunnelHostname, dbId);
+    const retry = await boxFetch<VmosResponse<unknown>>(tunnelHostname, `/android_api/v1/proxy_set/${dbId}`, {
+      method: "POST",
+      body: JSON.stringify(proxySetPayload(cfg)),
+    });
+    if (retry.code === 200) return;
+    throw new Error(`proxy_set failed after switching engines (code ${retry.code}): ${retry.msg ?? "unknown error"}`);
+  }
   if (res.code === 0 || /not running|未运行/i.test(res.msg ?? "")) {
     throw new ProxyTargetNotRunningError(dbId);
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseProxyCsv, planAssignments } from "./proxy-assignment.mjs";
+import { parseProxyCsv, planAssignments, proxyKey } from "./proxy-assignment.mjs";
 
 const csv = `country,host,port,username,password,city
 US,isp.oxylabs.io,8001,user-cc-US-a,s1,Boston
@@ -47,6 +47,18 @@ describe("planAssignments", () => {
     const a = planAssignments([device("US2"), device("US1")], proxies).assignments.map((x) => x.proxy?.port);
     const b = planAssignments([device("US1"), device("US2")], proxies).assignments.map((x) => x.proxy?.port);
     expect(a).toEqual(b);
+  });
+
+  it("never hands out a proxy another device holds, and lets a device keep its own", () => {
+    const reserved = new Map([
+      [proxyKey("isp.oxylabs.io", 8001), "other-device"], // held elsewhere → withheld
+      [proxyKey("isp.oxylabs.io", 8101), "FR1"], // held by FR1 itself → FR1 keeps it
+    ]);
+    const { assignments, spare, short, reserved: withheld } = planAssignments([device("US1"), device("US2"), device("FR1")], proxies, { reserved });
+    expect(withheld).toBe(1);
+    expect(assignments.map((a) => [a.device.user_name, a.proxy?.port ?? null])).toEqual([["FR1", 8101], ["US1", 8002], ["US2", null]]);
+    expect(short).toEqual({ US: 1 });
+    expect(spare).toEqual({ GB: 1 });
   });
 
   it("a device without a readable country gets nothing and is not counted short", () => {

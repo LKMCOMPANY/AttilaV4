@@ -56,6 +56,8 @@ export interface VmosProxyConfig {
   password: string;
   dnsServers?: string[];
   proxyMode?: string;
+  /** 1 = host-side mihomo (the profile), 0 = in-guest clash ("vpn" mode); read from `proxy_get`. */
+  engineType?: number;
 }
 
 /** Generic v1 envelope: `code` 200 on success, a Chinese `msg` on most failures. */

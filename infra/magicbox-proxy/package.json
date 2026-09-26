@@ -1,6 +1,6 @@
 {
   "name": "magicbox-proxy",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Reverse proxy for MagicBox — routes API and dynamic WebSocket streams",
   "main": "src/index.js",
   "engines": {

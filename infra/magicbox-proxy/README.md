@@ -74,14 +74,17 @@ config and calls the controller locally, returning a tunnel-safe result.
 Note: `cbs_go`'s `proxy_get.healthy` flag is **not** a connectivity signal — it
 reports `true` even for proxies that do not route. Do not use it for that.
 
-### Contract (1.3.2, `test/fixtures/proxy-test.json`)
+### Contract (1.3.3, `test/fixtures/proxy-test.json`)
 
 `GET /proxy-test/{db_id}` →
 
 ```jsonc
-// host-side engine (mihomo.json present): the controller's delay test
-{ "ok": true,  "delayMs": 706, "engine": "host" }
-{ "ok": false, "error": "unreachable", "engine": "host" }      // upstream blocked/down
+// host-side engine (mihomo.json present): the controller's delay test, plus
+// (1.3.3) the guest's own egress — a rule sending traffic DIRECT passes the
+// delay test and still leaks; the exit tells
+{ "ok": true,  "delayMs": 706, "engine": "host", "exit": { "ip": "75.216.11.213", "country": "US", "city": "Westborough" } }
+{ "ok": false, "error": "unreachable", "engine": "host", "exit": null }   // upstream blocked/down
+{ "ok": false, "error": "unproxied",   "engine": "host", "exit": { … } }   // engine up, guest leaves through the box
 // in-guest engine or no proxy at all (no mihomo.json): the guest is asked
 // where it comes out (`curl ipinfo.io/json` through cbs_go's shell) and the
 // answer is compared with the box's own WAN address (read hourly)
@@ -94,7 +97,7 @@ reports `true` even for proxies that do not route. Do not use it for that.
 ```
 
 `ok` + `delayMs` is the 1.x shape; `engine`, `exit` and the errors
-`engine_starting` / `unproxied` are additive (1.3.1–1.3.2). `proxy_not_provisioned` (404) no longer exists.
+`engine_starting` / `unproxied` are additive (1.3.1–1.3.3). `proxy_not_provisioned` (404) no longer exists.
 `db_id` is strictly validated (`^[A-Z0-9]+$`) before touching the filesystem.
 
 ## Configuration (env, all optional)

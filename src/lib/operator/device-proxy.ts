@@ -48,6 +48,9 @@ export interface ProxyReachability {
   ok: boolean;
   delayMs: number | null;
   reason: string | null;
+  /** Additive (proxy ≥ 1.3.1): which engine answered, and the guest's egress when it was measured. */
+  engine: "host" | "guest" | null;
+  exit: { ip: string; country: string | null; city: string | null } | null;
 }
 
 export interface VerifyProxyResult {
@@ -71,6 +74,10 @@ function proxyTestReason(code: string | null): string | null {
       return "Timed out reaching the proxy";
     case "unreachable":
       return "Upstream proxy did not respond";
+    case "engine_starting":
+      return "Proxy engine still starting on the device — retry in a few seconds";
+    case "unproxied":
+      return "Traffic leaves through the box's own address — the proxy is not applied";
     case "transport":
       return "Could not reach the box";
     default:
@@ -154,7 +161,7 @@ export async function verifyDeviceProxyCore(
     return {
       error: null,
       applied,
-      reachable: { ok: delay.ok, delayMs: delay.delayMs, reason: proxyTestReason(delay.error) },
+      reachable: { ok: delay.ok, delayMs: delay.delayMs, reason: proxyTestReason(delay.error), engine: delay.engine, exit: delay.exit },
     };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Unknown error", applied: null, reachable: null };
