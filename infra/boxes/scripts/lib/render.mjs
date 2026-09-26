@@ -88,7 +88,7 @@ function renderHost(out, r) {
   out.push(`  ${"files".padEnd(12)} ${mark(r.filesOk)} ${r.fileDrift == null ? "?" : r.fileDrift.length === 0 ? "all managed files current" : `drift: ${r.fileDrift.join(", ")}   → deploy.sh`}`);
   const pinned = [f.env_file ? "/etc/magicbox-proxy.env" : null, f.proxy_env_pinned ? "systemd Environment=API_HOST" : null].filter(Boolean);
   out.push(`  ${"pinned ip".padEnd(12)} ${mark(r.envFileOk)} ${pinned.length ? `${pinned.join(" + ")} PRESENT   → deploy.sh removes it (the box-4 failure)` : "none"}`);
-  out.push(`  ${"ssh".padEnd(12)} ${mark(r.keyOk)} fleet key ${f.key_authorized ? "authorized" : "MISSING"} · root password ${f.root_password_auth === "no" ? "locked" : "allowed (gated)"} · ipv6 global ${f.ipv6_global}`);
+  out.push(`  ${"ssh".padEnd(12)} ${mark(r.keyOk && r.sshdInetOk)} fleet key ${f.key_authorized ? "authorized" : "MISSING"} · root password ${f.root_password_auth === "no" ? "locked" : "allowed (gated)"} · listens ${f.sshd_address_family === "inet" ? "IPv4 only" : `${f.sshd_address_family || "?"} (IPv6 too ✗)`} · ipv6 global ${f.ipv6_global}`);
   out.push(`  ${"cbs_go".padEnd(12)} ${mark(f.supervisor_cbs === "RUNNING")} supervisord ${f.supervisor_cbs || "?"} · docker root ${f.docker_root} · load1 ${f.load1} · up ${Math.round(f.uptime_s / 3600)} h`);
 }
 
@@ -128,6 +128,7 @@ export function renderSummary(rows, provisioning, { noSsh = false } = {}) {
     "swappiness": pick("swappinessOk"),
     "pinned IP env file": pick("envFileOk"),
     "fleet key missing": pick("keyOk"),
+    "sshd listening on IPv6": pick("sshdInetOk"),
     "unused images": pick("imagesOk"),
     "orphan SSD dirs": pick("orphansOk"),
     "lan_ip stale in DB": pick("lanIpOk"),
@@ -142,7 +143,7 @@ export function renderSummary(rows, provisioning, { noSsh = false } = {}) {
   console.log(`on git proxy version : ${online.filter((r) => r.proxyOk).length}/${online.length}   [actionable]`);
   console.log(`on golden cloudflared: ${online.filter((r) => r.cloudflaredOk).length}/${online.length}   [actionable]`);
   console.log(`on golden node       : ${online.filter((r) => r.nodeOk).length}/${online.length}   [actionable]`);
-  console.log(`hygiene converged    : ${online.filter((r) => [r.filesOk, r.hostnameOk, r.timezoneOk, r.localeOk, r.resolversOk, r.swappinessOk, r.envFileOk, r.keyOk].every((v) => v === true)).length}/${online.length}   [actionable]`);
+  console.log(`hygiene converged    : ${online.filter((r) => [r.filesOk, r.hostnameOk, r.timezoneOk, r.localeOk, r.resolversOk, r.swappinessOk, r.envFileOk, r.keyOk, r.sshdInetOk].every((v) => v === true)).length}/${online.length}   [actionable]`);
   console.log(`on golden image      : ${online.filter((r) => r.imageOk).length}/${online.length}   [vendor, canary-gated]`);
   console.log(`on model CBS target  : ${online.filter((r) => r.cbsOk).length}/${online.length}   [vendor, per hardware model, gated]`);
   console.log(`on model kernel      : ${online.filter((r) => r.kernelOk).length}/${online.length}   [vendor, per hardware model, gated]`);

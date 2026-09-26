@@ -52,13 +52,19 @@ things have to be true, and each has its own column and its own audit script:
 On 31 August 2026 that was 150 of 452 — that number, not the container count,
 is what bounds production. `check-drift.mjs` reports it per box.
 
-These columns are **observed, not enforced**: the pipeline's device selector is
-unchanged and nothing filters on `boot_health` yet. Wiring it in is a deliberate
-follow-up, with the tests that belong to it. Operators do see it — the roster
-and the inspector render the verdict in place of the state dot on both clients
-— via one shared rule, `actionableBootHealth()`, which stays silent unless the
-verdict is bad *and* less than 14 days old. Don't add a second rule; a badge
-that cries wolf gets ignored, and the next dead device with it.
+These columns are **observed by the audits and enforced by one rule** (since
+26 September 2026): `deviceIncapability()` in `src/lib/devices/job-capability.ts`
+answers `boot_dead` / `ime_missing` / `app_missing` / `null`, and the three
+places that hand a device work apply it — the campaign selector
+(`avatar-selector.ts`, counted as `unfit`), the maintenance planner
+(`planner.ts`, `skipped.unfitDevice`) and the directed-action route
+(`directed-actions.ts`, reason `unfit_device`). Two silences are deliberate:
+`null` columns mean "never audited", not "missing" (the audits write `false`
+when they look and find nothing), and a boot verdict counts only while it is
+`dead` *and* recent — the same `actionableBootHealth()` rule (14 days) the
+roster and the inspector use to show the verdict in place of the state dot on
+both clients. Don't add a second rule; a badge that cries wolf gets ignored,
+and the next dead device with it.
 
 Two measurement traps, both paid for the hard way:
 
@@ -110,7 +116,10 @@ Two measurement traps, both paid for the hard way:
 6. **The host is vendor firmware; our layer is `infra/boxes/`.** No `apt
  upgrade`; `logrotate` is the only package we add. Everything we converge is a
  versioned file under `infra/boxes/files/` shipped by `deploy.sh` and verified
- by `check-drift.mjs` (exit 0 = uniform). Hand edits on a box are drift.
+ by `check-drift.mjs` (exit 0 = uniform). Hand edits on a box are drift. sshd
+ listens on IPv4 only (`sshd_config.d/50-attila-inet.conf`): the boxes hold a
+ global IPv6 address with no NAT in front of it, and nothing of ours reaches a
+ box over IPv6.
 7. **One boot per device per sweep.** `scripts/audit-device-health.mjs
  --with-proxy` answers boot health, the configured proxy (mirrored to
  `devices.proxy_*`), routing and exit geo on the same boot; the per-device

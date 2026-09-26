@@ -291,24 +291,51 @@ below the route, so no client can write a proxy any other way.
   until the next full pass of box-3 refreshes it. NodeMaven is retired when
   those 170 have moved; nothing else depends on it.
 
-What to order to finish (26 September 2026, evening; NodeMaven + box-3's
-wrong exits + the 8 spares, +10 %):
+- **26 September 2026, evening — the second hundred (`8101–8200`: FR 30,
+  GB 70, same account, three ports proven from the operator's Mac before any
+  device saw them: FR/Paris, FR/Paris, GB/London).** No US, ES, DE or CA in
+  it, so it went where it is coherent and nowhere else: **15 FR devices with
+  live accounts** left NodeMaven for a dedicated FR/Paris IP (FR13–FR20,
+  FR2francescu, FR3, FR5, FR31, FR52, FR53 and box-3's FR30, one of the
+  wrong-country exits) and **`GB41` got a GB/London port** (its avatar lives
+  in the Emirates; UAE ports do not work at the provider, the operator chose a
+  UK IP over none — row set to `GB`). 13 FR NodeMaven devices remain (the list
+  ran out: FR54–FR63, FR6, FR7, FR8 by name order). The 70 GB ports are
+  **kept for box-5** (56 GB devices), 59 free tonight; a US, ES, DE or CA
+  persona never gets a GB port — the accounts' country matters more than
+  retiring a provider, and the ones still on NodeMaven work.
+- **Same evening — six dead devices of box-1 recreated** (`replace_devinfo`,
+  corrupt `/data`, see `infra/boxes/MAINTENANCE.md` § 2): five boot again
+  (ES8, FR4, US2, US42, US8), FR10 waits for its `starting` phase to clear.
+  The wipe clears the proxy too (ES8 had a GB port; free again). They have no
+  proxy and no port of their country exists — the sweep now opens a
+  `proxy_incoherent` "has no proxy" item for a device that boots without one
+  (`sweep-findings.mjs`), five opened.
+- **box-5**: `maintenance_until = 2027-12-31` set on its row (the arbiter
+  refuses every start of ours the day it answers again); its power-on
+  protocol is in `infra/boxes/MAINTENANCE.md` § 6.
 
-| Country | devices | to order | cities the accounts already exit from |
+What to order to finish (26 September 2026, night; the four online boxes +
+box-5's personas, +10 %):
+
+| Country | devices | to order | why |
 |---|---:|---:|---|
-| US | 136 | **150** | Boston, Avon, Westborough, Cambridge (Massachusetts for most), New York |
-| ES | 50 | **55** | Madrid, Albacete |
-| FR | 27 | **30** | Paris |
-| DE | 20 | **22** | Frankfurt, Hamburg, Essen, Mainz, Nuremberg, Hannover |
-| CA | 5 | **6** | — |
-| AE | 1 | **1** | `GB41` (box-4) — its avatar lives in the Emirates; or re-assign the avatar |
-| **total** | **239** | **264** | |
+| US | 149 | **164** | 94 NodeMaven, 38 wrong exits on box-3, 7 without a proxy (4 spares, US2/US42/US8 recreated), box-5's 10 |
+| ES | 51 | **56** | 35 NodeMaven, 12 wrong exits on box-3, 3 spares, ES8 recreated |
+| FR | 44 | **48** | 13 NodeMaven, FR4 + FR10 recreated, box-5's 29 |
+| DE | 20 | **22** | 12 NodeMaven, 8 wrong exits on box-3 |
+| CA | 5 | **6** | CA5 NodeMaven, 3 wrong exits on box-3, CA1 spare |
+| **total** | **269** | **296** | GB is done: 59 GB ports free, 56 of them box-5's |
 
-GB is done (5 spare ports left on the list). `GB41` is the one row still to
-decide before the run, not to buy for blindly. box-5 (100 devices, offline,
-recorded on the 100 ports of this very list) is re-provisioned from a new
-list before it ever starts again — `--reclaim-offline` is what made this
-list usable, and what makes that step mandatory.
+Where the online fleet stands after this day (352 devices): **184 on the
+list / Oxylabs dedicated, 155 on NodeMaven** (US 94, ES 35, FR 13, DE 12,
+CA 1 — all on the one profile, all proven), 13 without a proxy (8 spares
+without an avatar, 5 recreated tonight), 1 dead (FR10, recreation pending),
+**142 job-capable** (boots + IME + at least one social app).
+
+`--reclaim-offline` is what made the first list usable (box-5 held all 100
+ports on paper) and what makes box-5's re-provisioning mandatory before it
+runs a container again.
 
 ## What is implemented vs recommended
 

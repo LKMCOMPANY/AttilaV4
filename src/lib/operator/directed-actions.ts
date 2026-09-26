@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { RequestSession } from "@/lib/auth/session";
+import { deviceIncapability, JOB_CAPABILITY_COLUMNS, type JobCapabilityFacts } from "@/lib/devices/job-capability";
 import { audit } from "@/lib/maintenance/audit";
 import {
   DEFAULT_SPREAD_HOURS,
@@ -51,7 +52,8 @@ export interface QueuedOrder {
 export interface SkippedAvatar {
   avatar_id: string;
   avatar_name: string;
-  reason: "no_device" | "platform_disabled" | "no_handle" | "blocked";
+  /** `unfit_device`: the sweep found the device dead, without the IME or without the app (`deviceIncapability`). */
+  reason: "no_device" | "platform_disabled" | "no_handle" | "blocked" | "unfit_device";
 }
 
 export interface DirectedRequestResult {
@@ -73,11 +75,10 @@ interface CandidateRow {
   twitter_enabled: boolean;
   tiktok_credentials: { handle?: string | null } | null;
   twitter_credentials: { handle?: string | null } | null;
-  device: { id: string; box_id: string; timezone: string | null } | null;
+  device: ({ id: string; box_id: string; timezone: string | null } & JobCapabilityFacts) | null;
 }
 
-const CANDIDATE_SELECT =
-  "id, account_id, first_name, last_name, device_id, tiktok_enabled, twitter_enabled, tiktok_credentials, twitter_credentials, device:devices(id, box_id, timezone)";
+const CANDIDATE_SELECT = `id, account_id, first_name, last_name, device_id, tiktok_enabled, twitter_enabled, tiktok_credentials, twitter_credentials, device:devices(id, box_id, timezone, ${JOB_CAPABILITY_COLUMNS})`;
 
 /** The avatars the order addresses, as the caller may see them (RLS). */
 async function candidates(ctx: RequestSession, input: DirectedRequestInput): Promise<CandidateRow[]> {
@@ -127,6 +128,9 @@ export async function requestDirectedActionCore(ctx: RequestSession, rawInput: u
     else if (!enabled) skipped.push({ avatar_id: row.id, avatar_name: name, reason: "platform_disabled" });
     else if (!handle) skipped.push({ avatar_id: row.id, avatar_name: name, reason: "no_handle" });
     else if (blocked.has(row.id)) skipped.push({ avatar_id: row.id, avatar_name: name, reason: "blocked" });
+    // A directed action is no shortcut around the device either: dead, no IME
+    // or no app (`deviceIncapability`, the selectors' rule) means no order.
+    else if (deviceIncapability(row.device, input.platform)) skipped.push({ avatar_id: row.id, avatar_name: name, reason: "unfit_device" });
     else eligible.push(row as CandidateRow & { device: NonNullable<CandidateRow["device"]> });
   }
   if (eligible.length === 0) return { error: `No avatar can carry the order (${skipped.map((s) => s.reason).join(", ")})` };

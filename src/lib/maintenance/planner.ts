@@ -1,4 +1,10 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
+import {
+  deviceIncapability,
+  JOB_CAPABILITY_COLUMNS,
+  type DeviceIncapability,
+  type JobCapabilityFacts,
+} from "@/lib/devices/job-capability";
 import type { MaintenanceProfile, MaintenanceTaskKind, SocialPlatform } from "@/types";
 import { localDateString, safeTimezone, zonedInstant, localParts } from "./local-time";
 import { planDay, type PlannedTask } from "./scheduler";
@@ -17,7 +23,7 @@ interface EnabledAvatarRow {
   maintenance_day_zero: string | null;
   tiktok_enabled: boolean;
   twitter_enabled: boolean;
-  device: { id: string; timezone: string | null } | null;
+  device: ({ id: string; timezone: string | null } & JobCapabilityFacts) | null;
 }
 
 interface TodayRow {
@@ -30,7 +36,8 @@ interface TodayRow {
 export interface PlanReport {
   avatars: number;
   planned: number;
-  skipped: { noDevice: number; noPlatform: number };
+  /** `unfitDevice`: avatar-platforms not planned because the device cannot work (`deviceIncapability`). */
+  skipped: { noDevice: number; noPlatform: number; unfitDevice: Record<DeviceIncapability, number> };
 }
 
 /**
@@ -44,13 +51,17 @@ export interface PlanReport {
  */
 export async function planMaintenance(supabase: AdminClient, now = new Date()): Promise<PlanReport> {
   const settings = await loadMaintenanceSettings(supabase);
-  const report: PlanReport = { avatars: 0, planned: 0, skipped: { noDevice: 0, noPlatform: 0 } };
+  const report: PlanReport = {
+    avatars: 0,
+    planned: 0,
+    skipped: { noDevice: 0, noPlatform: 0, unfitDevice: { boot_dead: 0, ime_missing: 0, app_missing: 0 } },
+  };
   if (!settings.globalEnabled) return report;
 
   const { data: avatars, error } = await supabase
     .from("avatars")
     .select(
-      "id, account_id, device_id, maintenance_profile, maintenance_day_zero, tiktok_enabled, twitter_enabled, device:devices(id, timezone)",
+      `id, account_id, device_id, maintenance_profile, maintenance_day_zero, tiktok_enabled, twitter_enabled, device:devices(id, timezone, ${JOB_CAPABILITY_COLUMNS})`,
     )
     .eq("maintenance_enabled", true)
     .eq("status", "active")
@@ -70,6 +81,14 @@ export async function planMaintenance(supabase: AdminClient, now = new Date()): 
       continue;
     }
     for (const platform of platforms) {
+      // A device the sweep found dead, without the IME or without the app gets
+      // no plan: booting it parks it in `starting` for hours and every gesture
+      // would fail — the same rule as the campaign selector.
+      const unfit = deviceIncapability(avatar.device, platform, now.getTime());
+      if (unfit) {
+        report.skipped.unfitDevice[unfit]++;
+        continue;
+      }
       report.planned += await planAvatarPlatform(supabase, settings, avatar, platform, now);
     }
   }

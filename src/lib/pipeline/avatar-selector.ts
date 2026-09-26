@@ -1,10 +1,18 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveBlockedAvatarIds } from "@/lib/account-state/blocks";
+import {
+  deviceIncapability,
+  JOB_CAPABILITY_COLUMNS,
+  type DeviceIncapability,
+  type JobCapabilityFacts,
+} from "@/lib/devices/job-capability";
 import type { CampaignPlatform, PlatformCapacityParams, Avatar } from "@/types";
 import type { SelectedAvatar } from "./types";
 import { pipelineLog } from "./types";
 
 const MIN_COOLDOWN_MINUTES = 5;
+
+type SelectorDevice = JobCapabilityFacts & { id: string; box_id: string; state: string | null };
 
 /**
  * Select available avatars for a campaign post.
@@ -58,7 +66,7 @@ export async function selectAvatars(params: {
 
   const { data: avatars } = await supabase
     .from("avatars")
-    .select("*, device:devices!avatars_device_id_fkey(id, box_id, state)")
+    .select(`*, device:devices!avatars_device_id_fkey(id, box_id, state, ${JOB_CAPABILITY_COLUMNS})`)
     .in("id", armyAvatarIds)
     .eq("status", "active")
     .is("archived_at", null)
@@ -78,19 +86,27 @@ export async function selectAvatars(params: {
   //    single source of truth for "not callable here": on-device failures,
   //    TikHub suspended/notfound and shadow-bans all land there, and only an
   //    operator "Mark resolved" (or a worker auto-recover) clears it.
+  //    Then the device itself: a phone the sweep found dead, without the IME
+  //    or without the app cannot take the job — `deviceIncapability`, the
+  //    same rule the maintenance planner applies (observed columns, one rule).
   const blockedIds = await getActiveBlockedAvatarIds(
     supabase,
     platform,
     avatars.map((a) => a.id),
   );
-  const eligible = avatars.filter(
-    (a) => !excludeAvatarIds.includes(a.id) && !blockedIds.has(a.id),
-  );
+  const unfit: Record<DeviceIncapability, number> = { boot_dead: 0, ime_missing: 0, app_missing: 0 };
+  const eligible = avatars.filter((a) => {
+    if (excludeAvatarIds.includes(a.id) || blockedIds.has(a.id)) return false;
+    const why = deviceIncapability(a.device as SelectorDevice, platform);
+    if (why) unfit[why]++;
+    return why === null;
+  });
 
   if (eligible.length === 0) {
-    pipelineLog("selector", null, "All avatars excluded or blocked", {
+    pipelineLog("selector", null, "All avatars excluded, blocked or on an unfit device", {
       blocked: blockedIds.size,
       excluded: excludeAvatarIds.length,
+      unfit,
     });
     return [];
   }
@@ -164,6 +180,7 @@ export async function selectAvatars(params: {
 
   pipelineLog("selector", null, "Selection complete", {
     eligible: eligible.length,
+    unfit,
     available: scored.length,
     selected: selected.length,
     requested: count,
@@ -172,7 +189,7 @@ export async function selectAvatars(params: {
   return selected.map((s) => ({
     avatar: s.avatar as Avatar,
     device_id: s.avatar.device_id!,
-    box_id: (s.avatar.device as { id: string; box_id: string })?.box_id,
+    box_id: (s.avatar.device as SelectorDevice).box_id,
   }));
 }
 

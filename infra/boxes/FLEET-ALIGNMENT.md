@@ -285,6 +285,51 @@ US/New York City 48.47.5.11`).
   at 17:40): box-2/3/4 all stopped; box-1 has US36 running for the Maintain
   worker's own `probe` task and FR10 in `starting`.
 
+## Snapshot — 26 September 2026, evening (19:30–21:00 Paris): the operator's go on five gates
+
+- **Proxies, second hundred** (`8101–8200`, FR 30 / GB 70, same account,
+  three ports proven from the Mac first): 15 FR devices with live accounts off
+  NodeMaven onto FR/Paris ports, `GB41` onto GB/London (its row `CN` → `GB`;
+  UAE ports do not work at the provider), FR5 alone after a third
+  `boot_timeout` under load (58 s alone: a slow device, not a dead one). GB
+  ports kept for box-5. Online fleet: 184 dedicated / 155 NodeMaven / 13
+  without / 1 dead; **142 job-capable**. Order to finish in
+  `PROXY-STRATEGY.md` (US 164, ES 56, FR 48, DE 22, CA 6).
+- **box-5** (off since 21 September, 100 containers on the first hundred
+  ports): `maintenance_until = 2027-12-31` on its row — the arbiter refuses
+  every start of ours the day it answers; power-on protocol written
+  (`MAINTENANCE.md` § 6). Not on the LAN, tunnel 530.
+- **Six dead devices of box-1**: cause read from inside — corrupt
+  `/data/system/packages.xml`, `system_server` in a crash loop; `reset`
+  refuses a non-booted instance, `recreate_container` keeps the corruption;
+  **`replace_devinfo` (wipe, same identity template `1125` Samsung SM-S9010,
+  persona locale/timezone/country) brought five back** in 150–170 s each
+  (ES8, FR4, US2, US42, US8: 16–22 s boots, ADBKeyboard installed, no social
+  app, no proxy; `boot_dead` items resolved by re-probe, five "has no proxy"
+  items opened). FR10 refuses while in `starting`; one command once it clears.
+  Every delete-class action on a container stays forbidden except this one,
+  on the operator's explicit word.
+- **Device capability enforced**: `deviceIncapability()` (one rule, nine
+  tests) in the campaign selector, the maintenance planner and the
+  directed-action route — a dead device, a device without the IME or without
+  the app is not handed work any more. The Mac decodes the new skip reason
+  `unfit_device` (resilient string).
+- **Point-8 gates**: `box-6` row deleted (0 devices, 0 shares, offline since
+  8 July); the box-4 orphan directory `EDGEUSBP66ZTYMNV` removed (12 KB, an
+  empty `debug_ramdisk` of 18 May, in no container, no mount, no vendor DB);
+  **sshd on IPv4 only on the four boxes** (`50-attila-inet.conf`, deployed
+  canary-first, `[::]:22` gone, tunnel SSH intact; `check-drift` fails on it
+  from now on). `--lock-root-password` still waits for the passphrase-protected
+  key to enter the agent (`ssh-add --apple-use-keychain ~/.ssh/id_ed25519_attila`,
+  the operator's keyboard).
+- **Two tooling lessons paid tonight**: `install-adbkeyboard.mjs` without
+  `--missing-only` boots the whole box one device at a time (aborted after
+  three, containers stopped by hand; the runbook now says so); the boxes'
+  sshd refused the root password on two boxes for ~10 minutes then accepted
+  it again (faillock-like; nothing changed on our side).
+- `check-drift`: hygiene converged 4/4, orphans none; `[!]` box-1 SSD 75 %
+  remains a decision; `(i)` image / CBS / kernel for box-1 (Phase 2 gated).
+
 ## Snapshot — 26 September 2026, Phase 2 (vendor firmware, 07:55–08:35 Paris)
 
 GO given at 07:56. Three L1 boxes brought to the vendor's last L1 targets,

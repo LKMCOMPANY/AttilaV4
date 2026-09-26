@@ -28,6 +28,7 @@ export const MANAGED_FILES = {
   "magicbox-proxy.service": "/etc/systemd/system/magicbox-proxy.service",
   "attila-sysctl.service": "/etc/systemd/system/attila-sysctl.service",
   "attila-sysctl.timer": "/etc/systemd/system/attila-sysctl.timer",
+  "sshd_config.d/50-attila-inet.conf": "/etc/ssh/sshd_config.d/50-attila-inet.conf",
 };
 
 const md5 = (buf) => crypto.createHash("md5").update(buf).digest("hex");
@@ -70,6 +71,7 @@ orphans=\${orphans#,}
 ipv6=$(ip -6 addr show scope global 2>/dev/null | grep -c inet6)
 key=$(grep -c "${FLEET_KEY}" /root/.ssh/authorized_keys 2>/dev/null)
 rootpw=$(sshd -T -C user=root,addr=192.168.1.2,host=x 2>/dev/null | awk '/^passwordauthentication/ {print $2}')
+sshd_af=$(sshd -T 2>/dev/null | awk '/^addressfamily/ {print $2}')
 digests=""
 for f in ${Object.values(MANAGED_FILES).join(" ")} /etc/cloudflared/config.yml; do
   [ -f "$f" ] && digests="$digests,\\"$f\\":\\"$(md5sum "$f" | cut -c1-32)\\""
@@ -83,7 +85,7 @@ cat <<EOF
 "swappiness":$(cat /proc/sys/vm/swappiness),"swap_pct":$swap_pct,"mmc_pct":\${mmc:-null},"ssd_pct":\${ssd:-null},
 "journal":"$journal","varlog_bytes":\${varlog:-0},"mihomo_bytes":\${mihomo:-0},
 "images":"$images","images_in_use":"$inuse","docker_root":"$dataroot","orphans":"$orphans",
-"ipv6_global":$ipv6,"key_authorized":$([ "$key" -ge 1 ] && echo true || echo false),"root_password_auth":"$rootpw",
+"ipv6_global":$ipv6,"key_authorized":$([ "$key" -ge 1 ] && echo true || echo false),"root_password_auth":"$rootpw","sshd_address_family":"$sshd_af",
 "env_file":$([ -f /etc/magicbox-proxy.env ] && echo true || echo false),
 "proxy_env_pinned":$(systemctl show -p Environment --value magicbox-proxy 2>/dev/null | grep -q "API_HOST=" && echo true || echo false),
 "resolvers":"$(grep '^nameserver' /etc/resolv.conf | awk '{print $2}' | paste -sd, -)",

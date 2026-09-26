@@ -684,14 +684,20 @@ conteneurs, qui borne la capacité de production. `check-drift.mjs` le remonte
 par box et en total. Le runbook complet est dans
 [`infra/boxes/MAINTENANCE.md`](infra/boxes/MAINTENANCE.md).
 
-> **Ces colonnes sont observées, pas encore appliquées.** Le pipeline continue de
-> sélectionner ses devices exactement comme avant : le sélecteur n'a pas été
-> modifié et `boot_health` ne filtre rien. C'est délibéré — toucher à la logique
-> de sélection est un chantier distinct de l'assainissement de l'infrastructure,
-> et le mélanger ici aurait rendu toute régression indémêlable. Le gain
-> immédiat est le diagnostic : on sait enfin quels devices sont exploitables et
-> pourquoi les autres ne le sont pas. Le branchement sur le sélecteur est la
-> suite naturelle, à faire avec les tests qui vont avec.
+> **Ces colonnes sont appliquées depuis le 26 septembre 2026, par une seule
+> règle.** `deviceIncapability()` (`src/lib/devices/job-capability.ts`, testée)
+> répond `boot_dead` / `ime_missing` / `app_missing` / `null` à partir des
+> colonnes observées, et les trois endroits qui confient du travail à un device
+> l'appliquent : le sélecteur de campagne (`avatar-selector.ts`, comptés
+> `unfit` dans le journal), le planificateur de maintenance (`planner.ts`,
+> `skipped.unfitDevice`) et la commande dirigée (`directed-actions.ts`, motif
+> `unfit_device`). Deux silences voulus : une colonne `null` signifie « jamais
+> audité », pas « absent » (les audits écrivent `false` quand ils regardent et
+> ne trouvent rien) ; un verdict de boot ne compte que s'il est `dead` *et*
+> récent — la même règle `actionableBootHealth()` (14 jours) que le badge. Un
+> device `unstable` a le droit d'essayer : l'exécuteur rapporte déjà l'échec
+> typé. Avant cette date les colonnes étaient observées, pas appliquées : le
+> sélecteur choisissait des devices dont on savait qu'ils ne démarraient pas.
 
 ### `boot_health` côté opérateur
 

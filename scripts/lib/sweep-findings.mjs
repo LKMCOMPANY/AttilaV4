@@ -4,6 +4,7 @@
  *
  *   dead / unstable device            → boot_dead        (critical)
  *   guest leaves through the box IP   → proxy_incoherent (critical — a leak)
+ *   no proxy at all                   → proxy_incoherent (warning — every boot leaves with the box's address)
  *   proxy configured, not routing     → proxy_incoherent (warning)
  *   proxy exits in the wrong country  → proxy_incoherent (warning)
  */
@@ -30,7 +31,20 @@ export function findingsFor(row) {
     out.push({ reason: "boot_dead", severity: "critical", title: `Device ${name} does not boot`, detail: `${row.health}: ${row.note ?? "no boot_completed"}` });
   }
   const proxy = row.proxy;
-  if (!proxy || proxy.config.status !== "proxied") return out;
+  if (!proxy) return out;
+  if (proxy.config.status === "no_proxy") {
+    // Only a device that boots can leak; a dead one is already reported above.
+    if (row.health === "healthy") {
+      out.push({
+        reason: "proxy_incoherent",
+        severity: "warning",
+        title: `${name} has no proxy`,
+        detail: "every boot leaves with the box's own address — assign one of its country (PROXY-STRATEGY.md § The method)",
+      });
+    }
+    return out;
+  }
+  if (proxy.config.status !== "proxied") return out;
   const routing = proxy.routing;
   if (routing?.tag === "UNPROXIED") {
     out.push({

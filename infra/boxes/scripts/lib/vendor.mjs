@@ -162,6 +162,8 @@ export async function evaluateBox({ plan, box, manifestRow, cfSnap, provisioning
     swappinessOk: hf(() => facts.swappiness === h.swappiness),
     envFileOk: hf(() => facts.env_file === false && facts.proxy_env_pinned !== true),
     keyOk: hf(() => facts.key_authorized === true),
+    // sshd must not listen on the global IPv6 address (no NAT in front of it).
+    sshdInetOk: hf(() => facts.sshd_address_family === "inet"),
     imagesOk: unusedImages == null ? null : unusedImages.length === 0,
     orphansOk: hf(() => !facts.orphans),
     filesOk: fileDrift == null ? null : fileDrift.length === 0,

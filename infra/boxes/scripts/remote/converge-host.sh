@@ -79,6 +79,13 @@ install_files() {
   if [ -L /etc/resolv.conf ] || ! cmp -s "$F/resolv.conf" /etc/resolv.conf; then
     rm -f /etc/resolv.conf; install -m 0644 "$F/resolv.conf" /etc/resolv.conf; changed="$changed resolv.conf"
   fi
+  # sshd on IPv4 only (the global IPv6 address has no NAT in front of it). The
+  # drop-in is validated before sshd reloads; a rejected file is removed, never
+  # left to break the next restart.
+  if [ -n "$(put "$F/sshd_config.d/50-attila-inet.conf" /etc/ssh/sshd_config.d/50-attila-inet.conf)" ]; then
+    if sshd -t; then systemctl reload ssh 2>/dev/null || systemctl reload sshd; changed="$changed sshd.inet"
+    else rm -f /etc/ssh/sshd_config.d/50-attila-inet.conf; say "! sshd -t rejected 50-attila-inet.conf, removed"; fi
+  fi
   # The pinned-IP override file is the box-4 footgun: never again. box-1 also
   # carried a pre-IaC systemd drop-in (April 2026) with Environment=API_HOST=…
   # that survived every deploy since: the unit's drop-in directory is not part

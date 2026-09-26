@@ -134,8 +134,8 @@ re-typed there — one source), each with its proxy at creation
 the same scripts as any other box, **two starts in flight per box**:
 
 ```bash
-node scripts/install-adbkeyboard.mjs --box box-N.attila.army --concurrency 1   # the IME every job types with
 node scripts/audit-device-packages.mjs --box box-N.attila.army                 # offline (debugfs): IME + social apps installed?
+node scripts/install-adbkeyboard.mjs --missing-only --box box-N.attila.army    # the IME every job types with — only where the audit found it missing
 node scripts/tune-scrcpy-offline.mjs --box box-N.attila.army                   # the one scrcpy conf (checks the image is not mounted)
 npx tsx scripts/assign-proxies.ts --csv proxies.csv --box box-N.attila.army --dry-run
 npx tsx scripts/assign-proxies.ts --csv proxies.csv --box box-N.attila.army --report out.json

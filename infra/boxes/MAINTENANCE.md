@@ -239,6 +239,49 @@ Then fill the gaps, targeting only what needs it:
 node scripts/install-adbkeyboard.mjs --missing-only --box box-3.attila.army
 ```
 
+Always `--missing-only` (it reads the offline package audit): without it the
+installer boots every device of the box one by one to ask each — 90 boots for
+the 5 that needed one (26 September 2026, aborted after three).
+
+### A device that never boots: corrupt `/data` and the one-click new phone (26 September 2026)
+
+Six devices of box-1 were `dead` — `run` accepted, docker `Up`, VMOS `starting`
+for hours, never `boot_completed`. Read from inside one of them (`docker exec …
+logcat -d -b system`), the cause was the same every time: `PackageManager:
+Package X was user id 0 but is now user SharedUserSetting{…} … I am not changing
+its files so it will probably fail!` for every system package, then
+`ActivityManager: java.lang.NullPointerException … UsageStatsManagerInternal
+.reportEvent` every five seconds — `/data/system/packages.xml` is corrupt (a
+power loss under a running container will do it) and `system_server` crash-loops.
+Nothing in `/system` is wrong; the image is not the problem.
+
+What does and does not fix it:
+
+| endpoint | verdict |
+|---|---|
+| `recreate_container` | rebuilds the docker container and **keeps** `data.img` — keeps the corruption |
+| `reset` | refuses: `Some instances are not in the 'running' state` — a factory reset needs a booted Android, which is the one thing a dead device cannot offer |
+| `replace_devinfo` (`wipeData: true`) | **the remedy** — "一键新机": stop → wipe the data disk → start, **keeps `db_id`, `user_name`, ports, the DB row and the avatar link**; refuses an instance still in `starting` (wait for the phase to clear, § above) |
+
+```bash
+# per device, two in flight at most (it starts the container):
+POST /container_api/v1/replace_devinfo
+{"db_ids":["EDGE…"],"adiID":1125,"wipeData":true,"country":"FR","locale":"fr-FR","timezone":"Europe/Paris"}
+```
+
+`adiID 1125` is the identity template the siblings run (`Samsung SM-S9010`,
+read with `getprop ro.product.model`; the box lists its templates at
+`GET /v1/get_adi_list`); `country` / `locale` / `timezone` are the persona's.
+Measured on five devices: `stopped` for ~50 s (wipe), `starting` for ~90 s,
+then `boot_completed` — 150–170 s in all, 16–22 s per boot afterwards. The
+phone comes back empty: run the offline package audit, then
+`install-adbkeyboard.mjs --missing-only`, then `audit-device-health.mjs
+--with-proxy --recheck --names …` (the `dead` verdict is not forgotten
+otherwise) and `record-sweep-attention.ts` on its report. What it does **not**
+give back: the social apps and the logins (re-provisioning, an operator's job),
+the proxy (cleared with the data — the sweep opens a `proxy_incoherent` "has no
+proxy" item), and the old device fingerprint (a new one is the point).
+
 ## 3. Screen projection (scrcpy)
 
 `/var/lib/scd/scd.sh` starts scrcpy 3.3.3 with fixed defaults and appends the
@@ -464,3 +507,32 @@ country against the avatar's. Do **not** use `/android_api/v1/ip_geo/{db_id}`
 for this: it geolocates the configured proxy hostname — `disp.oxylabs.io`
 resolves to the dispatcher in Falkenstein — rather than the session's egress.
 Only a request made from inside the guest traverses the proxy.
+
+### box-5 power-on protocol (written 26 September 2026, to run once)
+
+box-5 has been off since 21 September. Its 100 containers are configured on
+Oxylabs ports `8001–8100` — the same dedicated IPs that 170 devices of the
+online boxes now hold and prove daily. Two accounts behind one dedicated IP is
+the one thing the proxy method forbids, so **the box must not run a container
+before its proxies are rewritten**, and VMOS restarts at boot every container
+that was running when the power went. Guards already in place: the row carries
+`maintenance_until = 2027-12-31` (the slot arbiter refuses every start of ours,
+`box_maintenance`); the planner reserves the old ports for their online holders.
+On the day:
+
+1. Plug the box in (LAN, DHCP). Watch `list_names` over the LAN as soon as
+   `:18182` answers; **stop every container VMOS brings back** (`POST
+   /container_api/v1/stop`, then again for those that reach `running` later).
+2. `./scripts/deploy.sh 5` (it has missed the IaC since 25 September:
+   proxy 1.3.3, sshd IPv4-only, hygiene) and `check-drift.mjs`.
+3. `npx tsx scripts/assign-proxies.ts --csv <list> --box box-5.attila.army
+   --dry-run` — the second hundred of the list (`8101–8200`: GB 70, FR 30) was
+   kept for it: 56 GB devices fit the GB ports; the FR ports went to live FR
+   accounts of the online boxes first (15 of 30 on 26 September), the rest of
+   its 29 FR, its 10 US and 5 `CN` probes wait for the order. Then the run,
+   two in flight, restart-then-prove like everywhere else.
+4. A device that still has no port of its country gets `proxy_stop` (an
+   unproxied boot leaks the office address, a shared dedicated IP ties two
+   accounts — the first is the lesser evil for a device without an account;
+   for the 5 with an avatar, wait for the port).
+5. Only then clear `maintenance_until` (admin page › box › maintenance window).

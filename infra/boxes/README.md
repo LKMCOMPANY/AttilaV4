@@ -75,7 +75,10 @@ the box:
    connection profile's DNS at every boot, so the profile is left to it and
    resolv.conf is taken from it), `attila-sysctl.timer` (re-asserts
    `vm.swappiness=10` every minute: Android guests are privileged and their
-   `init.rc` writes 100 through to a 5.10 host).
+   `init.rc` writes 100 through to a 5.10 host), `sshd_config.d/50-attila-inet.conf`
+   (`AddressFamily inet` — the boxes hold a global IPv6 address with no NAT in
+   front of it and sshd listened on `[::]:22`; validated with `sshd -t`,
+   reloaded; since 26 September 2026 on the four boxes).
 4. **Removed**: `/etc/magicbox-proxy.env`, any `magicbox-proxy.service.d/`
    drop-in (a pre-IaC `Environment=API_HOST=` survived on box-1 since April),
    the dead `attila-webapp.service` unit.
@@ -115,7 +118,7 @@ the host over SSH in one round trip, the DB row, and — with
 `CLOUDFLARE_API_TOKEN` — DNS and tunnel state. It **fails (exit 2)** on what we
 control: proxy / Node / cloudflared versions, managed-file digests, hostname /
 timezone / locale / resolvers / swappiness, a pinned IP anywhere, the fleet key,
-unused Android images, orphan container directories on the SSD, a stale
+sshd listening on IPv6, unused Android images, orphan container directories on the SSD, a stale
 `boxes.lan_ip`, DB ↔ box inventory, disk headroom, an unknown host model. A fact
 it could not read is shown as `?` and counted as drift (never as a pass) unless
 `--no-ssh` was asked for. Vendor firmware and the Android image are

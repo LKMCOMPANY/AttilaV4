@@ -9,7 +9,16 @@ describe("findingsFor", () => {
   it("a healthy device with a coherent proxy is nothing to do", () => {
     const geo = { exit: { ip: "1.2.3.4", country: "US", city: "Boston" }, expected: "US", coherent: true };
     expect(findingsFor(row({ proxy: proxied({ tag: "ROUTES", detail: "800 ms", geo }) }))).toEqual([]);
-    expect(findingsFor(row({ proxy: { config: { status: "no_proxy" }, routing: null } }))).toEqual([]);
+  });
+
+  it("a device that boots without any proxy is a warning — every boot leaves with the box's address", () => {
+    const none = { config: { status: "no_proxy", detail: "no proxy configured" }, routing: null };
+    const [f] = findingsFor(row({ proxy: none }));
+    expect(f).toMatchObject({ reason: "proxy_incoherent", severity: "warning", title: "US30 has no proxy" });
+    // A dead device cannot leak: its boot finding is the whole story.
+    expect(findingsFor(row({ health: "dead", note: "run refused", proxy: none })).map((x) => x.reason)).toEqual(["boot_dead"]);
+    // A proxy the probe could not read is not "no proxy".
+    expect(findingsFor(row({ proxy: { config: { status: "error", detail: "timeout" }, routing: null } }))).toEqual([]);
   });
 
   it("a dead device is critical, with the sweep's own words", () => {
