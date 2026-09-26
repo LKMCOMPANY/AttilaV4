@@ -61,10 +61,11 @@ export async function waitProxyService(boxHost, dbId, timeoutMs = 60_000) {
  * Read the configured proxy of a RUNNING device and mirror it in the DB.
  * Returns `{ status: "proxied" | "no_proxy", detail, cfg }`.
  */
-export async function readProxyConfig(boxHost, device, { dryRun = false } = {}) {
+export async function readProxyConfig(boxHost, device, { dryRun = false, recheck = true } = {}) {
   await sleep(PROXY_SETTLE_MS);
   let cfg = await fetchProxyConfig(boxHost, device.db_id).catch(() => null);
-  if (!(cfg && cfg.enabled && cfg.ip) && device.proxy_host) {
+  // `recheck: false` when "no proxy" is the expected answer (a release just cleared it).
+  if (recheck && !(cfg && cfg.enabled && cfg.ip) && device.proxy_host) {
     await sleep(NO_PROXY_RECHECK_MS);
     cfg = await fetchProxyConfig(boxHost, device.db_id).catch(() => null);
   }

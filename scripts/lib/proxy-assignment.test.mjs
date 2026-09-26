@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseProxyCsv, planAssignments, proxyKey } from "./proxy-assignment.mjs";
+import { parseProxyCsv, planAssignments, proxyKey, reserveProxies } from "./proxy-assignment.mjs";
 
 const csv = `country,host,port,username,password,city
 US,isp.oxylabs.io,8001,user-cc-US-a,s1,Boston
@@ -81,5 +81,45 @@ describe("planAssignments", () => {
     const { assignments, short } = planAssignments([device("parked_probe_box2_b")], proxies);
     expect(assignments[0]).toMatchObject({ country: null, proxy: null });
     expect(short).toEqual({});
+  });
+});
+
+describe("reserveProxies", () => {
+  // Holders come sorted by user_name, as the fetch returns them.
+  const holder = (id, port, box = "box-1", status = "online") => ({ id, proxy_host: "isp.oxylabs.io", proxy_port: port, boxes: { tunnel_hostname: box, status } });
+  const onBox5 = (h) => h.boxes.tunnel_hostname === "box-5";
+
+  it("reserves every holding for its holder and reports nothing contested", () => {
+    const { reserved, reclaimed, contested } = reserveProxies([holder("GB1", 8001), holder("GB2", 8002), { id: "none", proxy_host: null, proxy_port: null }]);
+    expect([...reserved]).toEqual([[proxyKey("isp.oxylabs.io", 8001), "GB1"], [proxyKey("isp.oxylabs.io", 8002), "GB2"]]);
+    expect(reclaimed).toBe(0);
+    expect(contested.size).toBe(0);
+  });
+
+  it("a gateway's shared port is neither reserved nor contested — the session is in the username", () => {
+    const gate = (id) => ({ id, proxy_host: "gate.nodemaven.com", proxy_port: 1080, boxes: { tunnel_hostname: "box-1", status: "online" } });
+    const { reserved, contested } = reserveProxies([gate("US1"), gate("US2"), holder("GB1", 8001)]);
+    expect([...reserved.keys()]).toEqual([proxyKey("isp.oxylabs.io", 8001)]);
+    expect(contested.size).toBe(0);
+  });
+
+  it("a contested port goes to the first holder by name and is reported", () => {
+    const { reserved, reclaimed, contested } = reserveProxies([holder("FR25", 8003, "box-3"), holder("FR67", 8003, "box-5")]);
+    expect(reserved.get(proxyKey("isp.oxylabs.io", 8003))).toBe("FR25");
+    expect(reclaimed).toBe(0);
+    expect([...contested.keys()]).toEqual([proxyKey("isp.oxylabs.io", 8003)]);
+  });
+
+  it("with reclaim, the holder outside the reclaimed scope keeps a contested port whatever the order", () => {
+    const { reserved, reclaimed } = reserveProxies([holder("GB52", 8006, "box-5"), holder("GB26", 8006, "box-3")], { reclaim: onBox5 });
+    expect(reserved.get(proxyKey("isp.oxylabs.io", 8006))).toBe("GB26");
+    expect(reclaimed).toBe(1);
+  });
+
+  it("a port the reclaimed box holds alone stays its own; two reclaimed holders — the first keeps it", () => {
+    const { reserved, reclaimed } = reserveProxies([holder("GB100", 8044, "box-5"), holder("GB52", 8044, "box-5"), holder("GB53", 8121, "box-5")], { reclaim: onBox5 });
+    expect(reserved.get(proxyKey("isp.oxylabs.io", 8044))).toBe("GB100");
+    expect(reserved.get(proxyKey("isp.oxylabs.io", 8121))).toBe("GB53");
+    expect(reclaimed).toBe(1);
   });
 });

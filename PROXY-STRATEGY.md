@@ -193,9 +193,12 @@ modes; the measurements above are the bill. From here on:
    trip, a move across the Atlantic is a new person). The list is supplied by
    the operator as a CSV: `country,host,port,username,password[,city]`.
    **One holder per proxy across the whole fleet**, offline boxes included:
-   the planner reserves every `host:port` the DB mirror shows held, whatever
-   the box's status, and hands out only free ones; a device keeps its own at
-   its turn whatever the sort order. `--reclaim-offline` is the one explicit
+   the planner reserves every `host:port` the DB mirror shows held
+   (`reserveProxies`, pure and tested; a gateway such as NodeMaven's is
+   excluded — its port is shared by design, the session is in the username),
+   whatever the box's status, and hands out only free ones; a device keeps
+   its own at its turn whatever the sort order. A port with two holders is
+   *contested*: the plan names it, the first holder by name keeps it. `--reclaim-offline` is the one explicit
    way to re-purpose a list recorded on an offline box, and the run says how
    many it reclaimed; `--reclaim-from <box>` does it for one named box
    whatever its status, and only for its *contested* holdings (the outside

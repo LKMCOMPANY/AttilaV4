@@ -26,7 +26,7 @@
 
 import { writeFile } from "node:fs/promises";
 import { fetchBusyDeviceIds, fetchDevicesOnOnlineBoxes, fetchProxiedDevices, fetchRunningDbIds, mapWithConcurrency, runContainer, stopContainer, waitBootCompleted } from "./lib/fleet.mjs";
-import { proxyKey } from "./lib/proxy-assignment.mjs";
+import { proxyKey, reserveProxies } from "./lib/proxy-assignment.mjs";
 import { readProxyConfig, waitProxyService } from "./lib/proxy-probe.mjs";
 import { loadDotEnvLocal } from "./lib/dotenv.mjs";
 
@@ -75,10 +75,11 @@ async function releaseOne(host: string, d: DeviceRow, alreadyRunning: Set<string
     }
     if (!(await waitProxyService(host, d.db_id))) return { ...out, result: "proxy_service_timeout" };
     await clearProxyConfig(host, d.db_id);
-    let config = await readProxyConfig(host, { ...d, proxy_host: null }, { dryRun: true });
-    for (let attempt = 0; attempt < 5 && config.status !== "no_proxy"; attempt++) config = await readProxyConfig(host, { ...d, proxy_host: null }, { dryRun: true });
+    // Read back until the device reports no proxy (cbs_go acknowledges before the engine has gone), then mirror.
+    let config = await readProxyConfig(host, d, { dryRun: true, recheck: false });
+    for (let attempt = 0; attempt < 5 && config.status !== "no_proxy"; attempt++) config = await readProxyConfig(host, d, { dryRun: true, recheck: false });
     if (config.status !== "no_proxy") return { ...out, result: "still_configured", configured: config.detail };
-    await readProxyConfig(host, { ...d, proxy_host: null }); // mirrors null to the DB
+    await readProxyConfig(host, d, { recheck: false });
     return { ...out, result: "released" };
   } catch (err) {
     return { ...out, result: "error", error: err instanceof Error ? err.message.slice(0, 120) : String(err) };
@@ -98,10 +99,9 @@ async function main() {
   let devices = all.filter((d) => d.boxes.tunnel_hostname === args.box && d.state !== "removed" && !busy.has(d.id) && d.proxy_host);
   if (args.names) devices = devices.filter((d) => args.names!.has(d.user_name ?? ""));
   else {
-    // Contested only: the same host:port on more than one device of the fleet.
-    const holdersByKey = new Map<string, number>();
-    for (const h of holders) if (h.proxy_host && h.proxy_port) holdersByKey.set(proxyKey(h.proxy_host, h.proxy_port), (holdersByKey.get(proxyKey(h.proxy_host, h.proxy_port)) ?? 0) + 1);
-    devices = devices.filter((d) => (holdersByKey.get(proxyKey(d.proxy_host!, d.proxy_port!)) ?? 0) > 1);
+    // Contested only: the same host:port on more than one device of the fleet (the planner's own reading of the mirror).
+    const { contested } = reserveProxies(holders);
+    devices = devices.filter((d) => contested.has(proxyKey(d.proxy_host!, d.proxy_port!)));
   }
   const dead = devices.filter((d) => d.boot_health === "dead");
   devices = devices.filter((d) => d.boot_health !== "dead");

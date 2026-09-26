@@ -52,6 +52,55 @@ export function proxyKey(host, port) {
 }
 
 /**
+ * Gateways hand out a session per username on one shared `host:port`
+ * (NodeMaven: the `sid-…` in the account) — the port is no identity there,
+ * so a gateway holding is neither reserved nor contested. The list of hosts
+ * is the one place this provider knowledge lives.
+ */
+const GATEWAY_HOSTS = new Set(["gate.nodemaven.com"]);
+function isGatewayProxy(host) {
+  return GATEWAY_HOSTS.has(String(host ?? "").toLowerCase());
+}
+
+/**
+ * Who holds what, from the DB mirror (`devices.proxy_*`, every box), for the
+ * planner's reservations. One holder per key: a dedicated IP with two devices
+ * on it is CONTESTED — the same list handed out twice while a box was away.
+ *
+ * The holder that keeps a contested key: the first, in `holders` order (the
+ * fetch sorts by `user_name`), among those `reclaim` does not name; if
+ * `reclaim` names them all, the first of them. A holding nobody contests is
+ * kept whatever `reclaim` says — a port a box holds alone is its own.
+ * `reclaimed` counts the holders that lost their key; `contested` lists the
+ * keys that had more than one holder, for the operator to read.
+ * @template {Holder} H
+ * @param {H[]} holders
+ * @param {{ reclaim?: (holder: H) => boolean }} [options]
+ * @returns {{ reserved: Map<string, string>, reclaimed: number, contested: Map<string, H[]> }}
+ * @typedef {{ id: string, proxy_host: string | null, proxy_port: number | null }} Holder
+ */
+export function reserveProxies(holders, { reclaim = () => false } = {}) {
+  /** @type {Map<string, H[]>} */
+  const byKey = new Map();
+  for (const h of holders) {
+    if (!h.proxy_host || !h.proxy_port || isGatewayProxy(h.proxy_host)) continue;
+    const key = proxyKey(h.proxy_host, h.proxy_port);
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(h);
+  }
+  const reserved = new Map();
+  const contested = new Map();
+  let reclaimed = 0;
+  for (const [key, list] of byKey) {
+    const keeper = list.find((h) => !reclaim(h)) ?? list[0];
+    reserved.set(key, keeper.id);
+    if (list.length > 1) contested.set(key, list);
+    reclaimed += list.filter((h) => h !== keeper && reclaim(h)).length;
+  }
+  return { reserved, reclaimed, contested };
+}
+
+/**
  * One proxy per device, by the persona's country, in `user_name` order so a
  * re-run with the same list gives the same device the same proxy. Devices
  * whose country has no proxy left are returned with `proxy: null`.

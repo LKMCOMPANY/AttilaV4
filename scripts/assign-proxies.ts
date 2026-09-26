@@ -69,7 +69,7 @@ import {
   waitBootCompleted,
 } from "./lib/fleet.mjs";
 import { probeRouting, readProxyConfig, waitProxyService } from "./lib/proxy-probe.mjs";
-import { parseProxyCsv, planAssignments, proxyKey } from "./lib/proxy-assignment.mjs";
+import { parseProxyCsv, planAssignments, proxyKey, reserveProxies } from "./lib/proxy-assignment.mjs";
 import { expectedCountry } from "./lib/proxy-verdict.mjs";
 import { loadDotEnvLocal } from "./lib/dotenv.mjs";
 
@@ -94,6 +94,7 @@ interface DeviceRow {
 /** A device holding a proxy in the DB mirror, on any box (`fetchProxiedDevices`). */
 interface ProxyHolder {
   id: string;
+  user_name: string | null;
   proxy_host: string | null;
   proxy_port: number | null;
   boxes: { status: string; tunnel_hostname: string } | null;
@@ -225,31 +226,12 @@ async function main() {
   if (args.provider) devices = devices.filter((d) => (d.proxy_host ?? "").toLowerCase().includes(args.provider!));
 
   // Proxies already held by a device (the DB mirror, every box) — the holder
-  // keeps it, nobody else gets it. `--reclaim-offline` frees those held on
-  // offline boxes, and only those.
-  const reserved = new Map<string, string>();
-  let reclaimed = 0;
-  const reclaimedFrom = (h: ProxyHolder) =>
-    (args.reclaimOffline && h.boxes?.status === "offline") || (args.reclaimFrom !== null && h.boxes?.tunnel_hostname === args.reclaimFrom);
-  // Only a CONTESTED holding is reclaimed — the same host:port on another
-  // device too, i.e. a list re-purposed while the box was away. A port the
-  // reclaimed box holds alone is its own (GB52's retry took GB100's port
-  // written minutes earlier, 26 September 2026, when every holding was skipped).
-  // Who keeps a contested port: a holder outside the reclaimed scope if there
-  // is one, else the first reclaimed holder by name (holders come sorted by
-  // user_name) — the others are reclaimed and get a new port at their turn.
-  const keyOf = (h: ProxyHolder) => (h.proxy_host && h.proxy_port ? proxyKey(h.proxy_host, h.proxy_port) : null);
-  const outsideHolder = new Set(holders.filter((h) => keyOf(h) && !reclaimedFrom(h)).map((h) => keyOf(h) as string));
-  for (const h of holders) {
-    const key = keyOf(h);
-    if (!key) continue;
-    if (reclaimedFrom(h) && (outsideHolder.has(key) || reserved.has(key))) {
-      reclaimed++;
-      continue;
-    }
-    reserved.set(key, h.id);
-  }
+  // keeps it, nobody else gets it (`reserveProxies`, tested). `--reclaim-*`
+  // names the holders whose CONTESTED holdings are given up.
   const reclaiming = args.reclaimOffline || args.reclaimFrom !== null;
+  const { reserved, reclaimed, contested } = reserveProxies(holders, {
+    reclaim: (h) => (args.reclaimOffline && h.boxes?.status === "offline") || (args.reclaimFrom !== null && h.boxes?.tunnel_hostname === args.reclaimFrom),
+  });
 
   const { assignments, spare, short, reserved: withheld } = args.reapply
     ? reapplyPlan(devices)
@@ -264,6 +246,10 @@ async function main() {
   );
   if (unplanned.length) console.log(`  unplanned: ${unplanned.map((a) => `${a.device.boxes.name}/${a.device.user_name ?? a.device.db_id} (${a.country ?? "no country"})`).join(", ")}`);
   if (knownDead.length) console.log(`  known dead, left alone: ${knownDead.map((d) => `${d.boxes.name}/${d.user_name ?? d.db_id}`).join(", ")}`);
+  if (contested.size) {
+    const named = new Map(holders.map((h) => [h.id, `${h.boxes?.tunnel_hostname.split(".")[0] ?? "?"}:${h.user_name ?? h.id}`]));
+    console.log(`  contested (one dedicated IP, several devices — the first keeps it): ${[...contested].map(([key, list]) => `${key} ${list.map((h) => named.get(h.id)).join(" / ")}`).join("; ")}`);
+  }
   // A device already holding its planned proxy is not touched (it was proven
   // when it got it; `--reapply` is the way to write it again).
   const keepsOwn = (a: Assignment & { proxy: ProxyRow }) => !args.reapply && reserved.get(proxyKey(a.proxy.host, a.proxy.port)) === a.device.id;
